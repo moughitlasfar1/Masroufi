@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="quick_add_expense"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher_round"
+        android:shortcutShortLabel="@string/shortcut_quick_add_short"
+        android:shortcutLongLabel="@string/shortcut_quick_add_long">
+        <intent
+            android:action="com.aistudio.masroufi.ACTION_QUICK_ADD"
+            android:targetPackage="com.aistudio.masroufi.kxmpzq"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+</shortcuts>

@@ -1,0 +1,210 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll([
+               'userId', 'baseBudget', 'payCycleDay', 'rolloverEnabled',
+               'language', 'isDarkTheme', 'seeded', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'baseBudget', 'payCycleDay', 'rolloverEnabled',
+               'language', 'isDarkTheme', 'seeded', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.baseBudget is number && data.baseBudget >= 0 && data.baseBudget <= 100000000 &&
+             data.payCycleDay is int && data.payCycleDay >= 1 && data.payCycleDay <= 31 &&
+             data.rolloverEnabled is bool &&
+             data.language is string && data.language in ['fr', 'ar', 'darija', 'en'] &&
+             data.isDarkTheme is bool &&
+             data.seeded is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTransactionItem(data) {
+      return data.keys().hasAll([
+               'userId', 'type', 'amount', 'category', 'envelopeKey',
+               'accountId', 'toAccountId', 'desc', 'isoDate', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'type', 'amount', 'category', 'envelopeKey',
+               'accountId', 'toAccountId', 'desc', 'isoDate', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.type is string && data.type in ['expense', 'income', 'transfer'] &&
+             data.amount is number && data.amount > 0 && data.amount <= 100000000 &&
+             data.category is string && data.category.size() >= 1 && data.category.size() <= 120 &&
+             data.envelopeKey is string && data.envelopeKey.size() >= 1 && data.envelopeKey.size() <= 60 &&
+             data.accountId is string && data.accountId.size() >= 1 && data.accountId.size() <= 80 &&
+             data.toAccountId is string && data.toAccountId.size() <= 80 &&
+             data.desc is string && data.desc.size() <= 250 &&
+             data.isoDate is string && data.isoDate.size() >= 1 && data.isoDate.size() <= 20 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAccountItem(data) {
+      return data.keys().hasAll([
+               'userId', 'name', 'kind', 'initialBalance', 'colorHex', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'name', 'kind', 'initialBalance', 'colorHex', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.kind is string && data.kind in ['cash', 'bank', 'wallet'] &&
+             data.initialBalance is number && data.initialBalance >= -100000000 && data.initialBalance <= 100000000 &&
+             data.colorHex is string && data.colorHex.size() >= 1 && data.colorHex.size() <= 20 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidEnvelopeConfig(data) {
+      return data.keys().hasAll([
+               'userId', 'key', 'nameFr', 'nameAr', 'nameDarija', 'nameEn',
+               'percentage', 'hasCap', 'colorHex', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'key', 'nameFr', 'nameAr', 'nameDarija', 'nameEn',
+               'percentage', 'hasCap', 'colorHex', 'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.key is string && data.key.size() >= 1 && data.key.size() <= 60 &&
+             data.nameFr is string && data.nameFr.size() >= 1 && data.nameFr.size() <= 100 &&
+             data.nameAr is string && data.nameAr.size() >= 1 && data.nameAr.size() <= 100 &&
+             data.nameDarija is string && data.nameDarija.size() >= 1 && data.nameDarija.size() <= 100 &&
+             data.nameEn is string && data.nameEn.size() >= 1 && data.nameEn.size() <= 100 &&
+             data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
+             data.hasCap is bool &&
+             data.colorHex is string && data.colorHex.size() >= 1 && data.colorHex.size() <= 20 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidFinancialItem(data) {
+      return data.keys().hasAll([
+               'userId', 'itemType', 'name', 'subtitle', 'amount',
+               'secondaryAmount', 'dayOrTurn', 'extraInt', 'dateOrCycle',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'itemType', 'name', 'subtitle', 'amount',
+               'secondaryAmount', 'dayOrTurn', 'extraInt', 'dateOrCycle',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.itemType is string && data.itemType in ['goal', 'bill', 'debt', 'daret', 'seasonal', 'preset'] &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.subtitle is string && data.subtitle.size() <= 160 &&
+             data.amount is number && data.amount >= 0 && data.amount <= 100000000 &&
+             data.secondaryAmount is number && data.secondaryAmount >= 0 && data.secondaryAmount <= 100000000 &&
+             data.dayOrTurn is int && data.dayOrTurn >= 0 && data.dayOrTurn <= 366 &&
+             data.extraInt is int && data.extraInt >= 0 && data.extraInt <= 366 &&
+             data.dateOrCycle is string && data.dateOrCycle.size() <= 200 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'baseBudget', 'payCycleDay', 'rolloverEnabled',
+                         'language', 'isDarkTheme', 'seeded', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /transactions/{txId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(txId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(txId) &&
+                         isValidTransactionItem(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(txId) &&
+                         isValidTransactionItem(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'type', 'amount', 'category', 'envelopeKey',
+                           'accountId', 'toAccountId', 'desc', 'isoDate', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(txId);
+      }
+
+      match /accounts/{accId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(accId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(accId) &&
+                         isValidAccountItem(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(accId) &&
+                         isValidAccountItem(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'name', 'kind', 'initialBalance', 'colorHex', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(accId);
+      }
+
+      match /envelopes/{envId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(envId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(envId) &&
+                         isValidEnvelopeConfig(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(envId) &&
+                         isValidEnvelopeConfig(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'key', 'nameFr', 'nameAr', 'nameDarija', 'nameEn',
+                           'percentage', 'hasCap', 'colorHex', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(envId);
+      }
+
+      match /items/{itemId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
+        allow list: if isOwner(userId) && existing().userId == request.auth.uid;
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(itemId) &&
+                         isValidFinancialItem(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(itemId) &&
+                         isValidFinancialItem(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'itemType', 'name', 'subtitle', 'amount',
+                           'secondaryAmount', 'dayOrTurn', 'extraInt', 'dateOrCycle', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
+      }
+    }
+  }
+}

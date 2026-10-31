@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Masroufi</string>
+    <string name="shortcut_quick_add_short">Zid Dépense</string>
+    <string name="shortcut_quick_add_long">Ajouter une dépense rapide</string>
+</resources>

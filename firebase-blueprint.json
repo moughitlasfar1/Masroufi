@@ -1,0 +1,115 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User budget settings, pay cycle start day, rollover toggle, language, and theme preferences.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "baseBudget": { "type": "number", "description": "Monthly base salary/budget in DH" },
+        "payCycleDay": { "type": "integer", "description": "Day of month (1-31) when the salary pay cycle starts" },
+        "rolloverEnabled": { "type": "boolean", "description": "Whether unused envelope budget rolls over to the next cycle" },
+        "language": { "type": "string", "enum": ["fr", "ar", "darija", "en"] },
+        "isDarkTheme": { "type": "boolean", "description": "Whether dark mode is active" },
+        "seeded": { "type": "boolean", "description": "Whether initial starter data has been seeded" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": ["userId", "baseBudget", "payCycleDay", "rolloverEnabled", "language", "isDarkTheme", "seeded", "createdAt", "updatedAt"]
+    },
+    "TransactionItem": {
+      "title": "TransactionItem",
+      "description": "An expense, income, or inter-account transfer in DH.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["expense", "income", "transfer"] },
+        "amount": { "type": "number" },
+        "category": { "type": "string" },
+        "envelopeKey": { "type": "string" },
+        "accountId": { "type": "string" },
+        "toAccountId": { "type": "string" },
+        "desc": { "type": "string" },
+        "isoDate": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "amount", "category", "envelopeKey", "accountId", "toAccountId", "desc", "isoDate", "createdAt", "updatedAt"]
+    },
+    "AccountItem": {
+      "title": "AccountItem",
+      "description": "A user financial account such as Cash, Bank, or Mobile Wallet.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "kind": { "type": "string", "enum": ["cash", "bank", "wallet"] },
+        "initialBalance": { "type": "number" },
+        "colorHex": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "kind", "initialBalance", "colorHex", "createdAt", "updatedAt"]
+    },
+    "EnvelopeConfig": {
+      "title": "EnvelopeConfig",
+      "description": "Customizable budget envelope with multilingual names and percentage allocation.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "key": { "type": "string" },
+        "nameFr": { "type": "string" },
+        "nameAr": { "type": "string" },
+        "nameDarija": { "type": "string" },
+        "nameEn": { "type": "string" },
+        "percentage": { "type": "number" },
+        "hasCap": { "type": "boolean" },
+        "colorHex": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "key", "nameFr", "nameAr", "nameDarija", "nameEn", "percentage", "hasCap", "colorHex", "createdAt", "updatedAt"]
+    },
+    "FinancialItem": {
+      "title": "FinancialItem",
+      "description": "Savings goals, recurring bills, debts/loans, Moroccan Daret circles, seasonal planners, and quick-add presets.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "itemType": { "type": "string", "enum": ["goal", "bill", "debt", "daret", "seasonal", "preset"] },
+        "name": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "amount": { "type": "number" },
+        "secondaryAmount": { "type": "number" },
+        "dayOrTurn": { "type": "integer" },
+        "extraInt": { "type": "integer" },
+        "dateOrCycle": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "itemType", "name", "subtitle", "amount", "secondaryAmount", "dayOrTurn", "extraInt", "dateOrCycle", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile and budget configuration document."
+    },
+    "/users/{userId}/transactions/{txId}": {
+      "schema": { "$ref": "#/entities/TransactionItem" },
+      "description": "User expenses, incomes, and account transfers."
+    },
+    "/users/{userId}/accounts/{accId}": {
+      "schema": { "$ref": "#/entities/AccountItem" },
+      "description": "User cash, bank, and mobile wallet accounts."
+    },
+    "/users/{userId}/envelopes/{envId}": {
+      "schema": { "$ref": "#/entities/EnvelopeConfig" },
+      "description": "User customizable budget envelopes."
+    },
+    "/users/{userId}/items/{itemId}": {
+      "schema": { "$ref": "#/entities/FinancialItem" },
+      "description": "User goals, recurring bills, debts, Daret trackers, seasonal planners, and quick presets."
+    }
+  }
+}

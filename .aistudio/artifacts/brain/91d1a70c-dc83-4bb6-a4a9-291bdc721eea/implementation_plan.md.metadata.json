@@ -1,0 +1,6 @@
+{
+  "summary":  "Comprehensive implementation plan for Masroufi 2.0 Android app in Jetpack Compose with Firebase Firestore cloud sync, Google Sign-In, multi-account management, custom pay cycles, customizable envelopes with rollover, Daret & debt tracking, insights simulator, seasonal planners, and multilingual (FR/AR/Darija/EN) Dark/Light M3 Expressive UI.",
+  "updatedAt":  "2026-10-31T10:36:08.423307483Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

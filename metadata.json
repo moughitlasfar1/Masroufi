@@ -1,0 +1,6 @@
+{
+  "name": "Masroufi",
+  "description": "Smart Moroccan expense, budget envelope, multi-account, and Daret tracker in Dirhams (DH) with cloud sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
