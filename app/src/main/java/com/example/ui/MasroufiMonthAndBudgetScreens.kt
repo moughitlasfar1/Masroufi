@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
@@ -165,7 +166,102 @@ fun MonthScreen(
             }
         }
 
-        // 2. "What-If" Savings Simulator Card
+        // 2. Advanced Analytics Card (Month-over-Month Comparison & Trends)
+        item {
+            Card(
+                shape = RoundedCornerShape(28.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("advanced_analytics_card")
+            ) {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Analytics,
+                            contentDescription = null,
+                            tint = AccentViolet
+                        )
+                        Column {
+                            Text(
+                                text = when (state.profile.language) {
+                                    "darija" -> "تحليلات متقدمة ومقارنة الشهر"
+                                    "ar" -> "تحليلات متقدمة ومقارنة الأشهر"
+                                    "en" -> "Advanced Analytics & Month Comparison"
+                                    else -> "Analytique Avancée & Comparaison Mensuelle"
+                                },
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            val projectedDelta = state.totalAvailableBudget - state.projectedCycleSpend
+                            Text(
+                                text = if (projectedDelta >= 0) {
+                                    "Projection fin de cycle : Excédent estimé de +${PayCycleEngine.formatDh(projectedDelta)} $cur"
+                                } else {
+                                    "Projection fin de cycle : Déficit estimé de -${PayCycleEngine.formatDh(abs(projectedDelta))} $cur"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (projectedDelta >= 0) AccentEmerald else AccentCoral
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    state.envelopes.forEach { env ->
+                        val curSpent = env.spent
+                        val prevSpent = env.previousSpent
+                        val diff = curSpent - prevSpent
+                        val badgeText = when {
+                            prevSpent <= 0.0 && curSpent <= 0.0 -> "Stable (0 $cur)"
+                            prevSpent <= 0.0 -> "Nouveau (${PayCycleEngine.formatDh(curSpent)} $cur)"
+                            diff <= 0.0 -> "-${PayCycleEngine.formatDh(abs(diff))} $cur vs mois préc."
+                            else -> "+${PayCycleEngine.formatDh(diff)} $cur vs mois préc."
+                        }
+                        val badgeColor = if (diff <= 0.0) AccentEmerald else AccentCoral
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = env.config.localizedName(state.profile.language),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        text = "Actuel: ${PayCycleEngine.formatDh(curSpent)} $cur · Préc.: ${PayCycleEngine.formatDh(prevSpent)} $cur",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Text(
+                                    text = badgeText,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = badgeColor,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. "What-If" Savings Simulator Card
         item {
             Card(
                 shape = RoundedCornerShape(28.dp),
@@ -253,7 +349,7 @@ fun MonthScreen(
             }
         }
 
-        // 3. Seasonal & Yearly Planners (Ramadan, Eid, Rentrée, Vignette)
+        // 4. Seasonal & Yearly Planners (Ramadan, Eid, Rentrée, Vignette)
         item {
             Card(
                 shape = RoundedCornerShape(28.dp),
@@ -792,7 +888,7 @@ fun BudgetAndDaretScreen(
                                             )
                                         }
                                         Text(
-                                            text = "${PayCycleEngine.formatDh(goal.secondaryAmount)} / ${PayCycleEngine.formatDh(goal.amount)} $cur",
+                                            text = "${PayCycleEngine.formatDh(goal.secondaryAmount)} / ${PayCycleEngine.formatDh(goal.amount)} $cur (${(prog * 100f).safeRoundToInt()}%)",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )

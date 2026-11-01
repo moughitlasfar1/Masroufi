@@ -14,7 +14,8 @@ import com.example.domain.AccountWithBalance
 import com.example.domain.EnvelopeStatus
 import com.example.domain.PayCycleEngine
 import com.example.domain.PayCycleWindow
-import java.util.Calendar
+import com.example.domain.SmartInsight
+import com.example.domain.SmartReminder
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
@@ -41,6 +42,281 @@ data class WhatIfSimulatorState(
     val selectedEnvelopeKey: String = "cafe",
     val cutPercentage: Int = 30
 )
+
+data class ParsedBackupPayload(
+    val backupVersion: Int,
+    val profile: UserProfile?,
+    val customPrefs: CustomizationPrefs?,
+    val accounts: List<AccountItem>,
+    val envelopes: List<EnvelopeConfig>,
+    val financialItems: List<FinancialItem>,
+    val transactions: List<TransactionItem>
+)
+
+object BackupSerializer {
+    fun encodeV2Backup(state: DashboardState): String {
+        val root = JSONObject().apply {
+            put("backupVersion", 2)
+            put("exportedAtIso", PayCycleEngine.todayIso())
+            // Keep top-level keys for backward compatibility with v1 readers
+            put("baseBudget", state.profile.baseBudget)
+            put("payCycleDay", state.profile.payCycleDay)
+            put("rolloverEnabled", state.profile.rolloverEnabled)
+
+            put(
+                "profile",
+                JSONObject().apply {
+                    put("baseBudget", state.profile.baseBudget)
+                    put("payCycleDay", state.profile.payCycleDay)
+                    put("rolloverEnabled", state.profile.rolloverEnabled)
+                    put("language", state.profile.language)
+                    put("isDarkTheme", state.profile.isDarkTheme)
+                }
+            )
+
+            put(
+                "customPrefs",
+                JSONObject().apply {
+                    put("accentPalette", state.customPrefs.accentPalette)
+                    put("currencySymbol", state.customPrefs.currencySymbol)
+                    put("customTitle", state.customPrefs.customTitle)
+                    put("customSubtitle", state.customPrefs.customSubtitle)
+                    put("visibilityMask", state.customPrefs.toVisibilityMask())
+                }
+            )
+
+            val accArr = JSONArray()
+            state.accounts.forEach { accWithBal ->
+                val a = accWithBal.account
+                accArr.put(
+                    JSONObject().apply {
+                        put("id", a.id)
+                        put("name", a.name)
+                        put("kind", a.kind)
+                        put("initialBalance", a.initialBalance)
+                        put("colorHex", a.colorHex)
+                    }
+                )
+            }
+            put("accounts", accArr)
+
+            val envArr = JSONArray()
+            state.envelopes.forEach { envStatus ->
+                val e = envStatus.config
+                envArr.put(
+                    JSONObject().apply {
+                        put("id", e.id)
+                        put("key", e.key)
+                        put("nameFr", e.nameFr)
+                        put("nameAr", e.nameAr)
+                        put("nameDarija", e.nameDarija)
+                        put("nameEn", e.nameEn)
+                        put("percentage", e.percentage)
+                        put("hasCap", e.hasCap)
+                        put("colorHex", e.colorHex)
+                    }
+                )
+            }
+            put("envelopes", envArr)
+
+            val itemsArr = JSONArray()
+            val allFinItems = state.presets + state.goals + state.bills + state.debts + state.darets + state.seasonals
+            allFinItems.forEach { item ->
+                itemsArr.put(
+                    JSONObject().apply {
+                        put("id", item.id)
+                        put("itemType", item.itemType)
+                        put("name", item.name)
+                        put("subtitle", item.subtitle)
+                        put("amount", item.amount)
+                        put("secondaryAmount", item.secondaryAmount)
+                        put("dayOrTurn", item.dayOrTurn)
+                        put("extraInt", item.extraInt)
+                        put("dateOrCycle", item.dateOrCycle)
+                    }
+                )
+            }
+            put("financialItems", itemsArr)
+
+            val txArr = JSONArray()
+            state.allTransactions.forEach { t ->
+                txArr.put(
+                    JSONObject().apply {
+                        put("id", t.id)
+                        put("type", t.type)
+                        put("amount", t.amount)
+                        put("category", t.category)
+                        put("envelopeKey", t.envelopeKey)
+                        put("accountId", t.accountId)
+                        put("toAccountId", t.toAccountId)
+                        put("desc", t.desc)
+                        put("iso", t.isoDate)
+                    }
+                )
+            }
+            put("transactions", txArr)
+        }
+        return root.toString(2)
+    }
+
+    fun decodeBackup(rawJson: String, currentUserId: String, fallbackProfile: UserProfile): ParsedBackupPayload {
+        val trimmed = rawJson.trim()
+        if (trimmed.startsWith("[")) {
+            val txArray = JSONArray(trimmed)
+            return ParsedBackupPayload(
+                backupVersion = 1,
+                profile = null,
+                customPrefs = null,
+                accounts = emptyList(),
+                envelopes = emptyList(),
+                financialItems = emptyList(),
+                transactions = parseTransactionsArray(txArray, currentUserId)
+            )
+        }
+
+        val obj = JSONObject(trimmed)
+        val version = obj.optInt("backupVersion", 1)
+
+        val profileObj = obj.optJSONObject("profile")
+        val restoredProfile = UserProfile(
+            id = currentUserId,
+            userId = currentUserId,
+            baseBudget = (profileObj?.optDouble("baseBudget", obj.optDouble("baseBudget", fallbackProfile.baseBudget))
+                ?: obj.optDouble("baseBudget", fallbackProfile.baseBudget)).coerceAtLeast(100.0),
+            payCycleDay = (profileObj?.optInt("payCycleDay", obj.optInt("payCycleDay", fallbackProfile.payCycleDay))
+                ?: obj.optInt("payCycleDay", fallbackProfile.payCycleDay)).coerceIn(1, 28),
+            rolloverEnabled = profileObj?.optBoolean("rolloverEnabled", obj.optBoolean("rolloverEnabled", true))
+                ?: obj.optBoolean("rolloverEnabled", true),
+            language = profileObj?.optString("language", fallbackProfile.language)?.ifBlank { "fr" } ?: fallbackProfile.language,
+            isDarkTheme = profileObj?.optBoolean("isDarkTheme", fallbackProfile.isDarkTheme) ?: fallbackProfile.isDarkTheme,
+            seeded = true
+        )
+
+        val customObj = obj.optJSONObject("customPrefs")
+        val restoredCustomPrefs = if (customObj != null) {
+            val mask = customObj.optInt("visibilityMask", 63)
+            CustomizationPrefs(
+                accentPalette = customObj.optString("accentPalette", "emerald").ifBlank { "emerald" },
+                currencySymbol = customObj.optString("currencySymbol", "DH").ifBlank { "DH" },
+                customTitle = customObj.optString("customTitle", ""),
+                customSubtitle = customObj.optString("customSubtitle", ""),
+                showSafeToSpend = (mask and 1) != 0,
+                showAccountsCard = (mask and 2) != 0,
+                showQuickPresetsCard = (mask and 4) != 0,
+                showWeekSummaryRow = (mask and 8) != 0,
+                showMonthlyReviewCard = (mask and 16) != 0,
+                showBillsCard = (mask and 32) != 0
+            )
+        } else null
+
+        val accountsList = mutableListOf<AccountItem>()
+        val accArr = obj.optJSONArray("accounts")
+        if (accArr != null) {
+            for (i in 0 until accArr.length()) {
+                val a = accArr.optJSONObject(i) ?: continue
+                accountsList.add(
+                    AccountItem(
+                        id = a.optString("id", "acc_restored_$i"),
+                        userId = currentUserId,
+                        name = a.optString("name", "Compte"),
+                        kind = a.optString("kind", "cash"),
+                        initialBalance = a.optDouble("initialBalance", 0.0),
+                        colorHex = a.optString("colorHex", "#10B981")
+                    )
+                )
+            }
+        }
+
+        val envelopesList = mutableListOf<EnvelopeConfig>()
+        val envArr = obj.optJSONArray("envelopes")
+        if (envArr != null) {
+            for (i in 0 until envArr.length()) {
+                val e = envArr.optJSONObject(i) ?: continue
+                val nFr = e.optString("nameFr", "Catégorie")
+                envelopesList.add(
+                    EnvelopeConfig(
+                        id = e.optString("id", "env_restored_$i"),
+                        userId = currentUserId,
+                        key = e.optString("key", "custom_$i"),
+                        nameFr = nFr,
+                        nameAr = e.optString("nameAr", nFr),
+                        nameDarija = e.optString("nameDarija", nFr),
+                        nameEn = e.optString("nameEn", nFr),
+                        percentage = e.optDouble("percentage", 0.0),
+                        hasCap = e.optBoolean("hasCap", true),
+                        colorHex = e.optString("colorHex", "#10B981")
+                    )
+                )
+            }
+        }
+
+        val itemsList = mutableListOf<FinancialItem>()
+        val itemsArr = obj.optJSONArray("financialItems")
+        if (itemsArr != null) {
+            for (i in 0 until itemsArr.length()) {
+                val itObj = itemsArr.optJSONObject(i) ?: continue
+                itemsList.add(
+                    FinancialItem(
+                        id = itObj.optString("id", "item_restored_$i"),
+                        userId = currentUserId,
+                        itemType = itObj.optString("itemType", "goal"),
+                        name = itObj.optString("name", "Élément"),
+                        subtitle = itObj.optString("subtitle", ""),
+                        amount = itObj.optDouble("amount", 0.0),
+                        secondaryAmount = itObj.optDouble("secondaryAmount", 0.0),
+                        dayOrTurn = itObj.optInt("dayOrTurn", 1),
+                        extraInt = itObj.optInt("extraInt", 0),
+                        dateOrCycle = itObj.optString("dateOrCycle", "")
+                    )
+                )
+            }
+        }
+
+        val txArr = obj.optJSONArray("transactions") ?: JSONArray()
+        val txsList = parseTransactionsArray(txArr, currentUserId)
+
+        return ParsedBackupPayload(
+            backupVersion = version,
+            profile = restoredProfile,
+            customPrefs = restoredCustomPrefs,
+            accounts = accountsList,
+            envelopes = envelopesList,
+            financialItems = itemsList,
+            transactions = txsList
+        )
+    }
+
+    private fun parseTransactionsArray(txArray: JSONArray, currentUserId: String): List<TransactionItem> {
+        val list = mutableListOf<TransactionItem>()
+        for (i in 0 until txArray.length()) {
+            val item = txArray.optJSONObject(i) ?: continue
+            val amt = item.optDouble("amount", item.optDouble("montant", 0.0))
+            if (amt > 0.0) {
+                val cat = item.optString("category", "Autre / Imprévus")
+                val desc = item.optString("desc", "Transaction")
+                val iso = item.optString("iso", item.optString("isoDate", PayCycleEngine.todayIso()))
+                list.add(
+                    TransactionItem(
+                        id = item.optString("id", "tx_${System.currentTimeMillis()}_$i"),
+                        userId = currentUserId,
+                        type = item.optString("type", "expense"),
+                        amount = amt,
+                        category = cat,
+                        envelopeKey = item.optString(
+                            "envelopeKey",
+                            PayCycleEngine.resolveEnvelopeKey(cat, desc, emptyList())
+                        ),
+                        accountId = item.optString("accountId", "acc_cash"),
+                        toAccountId = item.optString("toAccountId", ""),
+                        desc = desc,
+                        isoDate = iso
+                    )
+                )
+            }
+        }
+        return list
+    }
+}
 
 data class DashboardState(
     val isLoading: Boolean = true,
@@ -79,6 +355,9 @@ data class DashboardState(
     val debts: List<FinancialItem> = emptyList(),
     val darets: List<FinancialItem> = emptyList(),
     val seasonals: List<FinancialItem> = emptyList(),
+    val smartInsights: List<SmartInsight> = emptyList(),
+    val smartReminders: List<SmartReminder> = emptyList(),
+    val isCleanFreshAccount: Boolean = false,
     val filterState: FilterState = FilterState(),
     val whatIfState: WhatIfSimulatorState = WhatIfSimulatorState(),
     val errorMessage: String? = null
@@ -98,6 +377,7 @@ class MasroufiViewModel(
     // Instant optimistic local overrides so UI never lags or reverts on rapid clicks
     private val _optimisticProfile = MutableStateFlow<UserProfile?>(null)
     private val _optimisticCustomPrefs = MutableStateFlow<CustomizationPrefs?>(null)
+    private val _errorMessage = MutableStateFlow<String?>(null)
 
     init {
         safeLaunch("ensureSeeded") {
@@ -109,23 +389,38 @@ class MasroufiViewModel(
         viewModelScope.launch {
             try {
                 block()
+                _errorMessage.value = null
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
                 Log.w("MasroufiVM", "Non-fatal error in $tag: ${e.message}", e)
+                _errorMessage.value = "Synchronisation hors-ligne ou erreur réseau (${e.localizedMessage?.take(60) ?: tag}). Vos modifications seront resynchronisées."
             }
+        }
+    }
+
+    fun dismissError() {
+        _errorMessage.value = null
+    }
+
+    fun retrySync() {
+        _errorMessage.value = null
+        safeLaunch("retrySync") {
+            repository.ensureSeeded()
         }
     }
 
     private val profileFlow = repository.observeProfile(currentUserId)
         .catch { e ->
             Log.w("MasroufiVM", "Error observing profile", e)
+            _errorMessage.value = "Connexion cloud momentanément indisponible. Mode cache actif."
             emit(UserProfile(userId = currentUserId))
         }
 
     private val transactionsFlow = repository.observeTransactions(currentUserId)
         .catch { e ->
             Log.w("MasroufiVM", "Error observing transactions", e)
+            _errorMessage.value = "Impossible de charger les transactions en direct. Vérifiez votre connexion."
             emit(emptyList())
         }
 
@@ -150,18 +445,20 @@ class MasroufiViewModel(
     val uiState: StateFlow<DashboardState> = combine(
         combine(profileFlow, _optimisticProfile, transactionsFlow) { p, optP, t -> Triple(optP ?: p, t, Unit) },
         combine(accountsFlow, envelopesFlow, itemsFlow) { a, e, i -> Triple(a, e, i) },
-        combine(_selectedCycleKey, _filterState, _whatIfState, _optimisticCustomPrefs) { c, f, w, cp ->
-             listOf(c, f, w, cp)
+        combine(_selectedCycleKey, _filterState, _whatIfState, _optimisticCustomPrefs, _errorMessage) { c, f, w, cp, err ->
+            listOf(c, f, w, cp, err)
         }
     ) { (profileOpt, txs, _), (accs, envs, finItems), extraList ->
         val selCycle = extraList[0] as? String
         val filter = extraList[1] as FilterState
         val whatIf = extraList[2] as WhatIfSimulatorState
         val optCustomPrefs = extraList[3] as? CustomizationPrefs
+        val errMsg = extraList[4] as? String
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find { it.itemType == "custom_prefs" || it.id == "custom_prefs" }
         val customPrefs = optCustomPrefs ?: CustomizationPrefs.fromFinancialItem(storedPrefsItem)
+        val curSymbol = customPrefs.currencySymbol.ifBlank { "DH" }
 
         val defaultCycle = PayCycleEngine.currentCycleKey(profile.payCycleDay)
         val activeCycleKey = selCycle ?: defaultCycle
@@ -196,6 +493,11 @@ class MasroufiViewModel(
         val remaining = totalAvailable - cycleExpenses
 
         val bills = finItems.filter { it.itemType == "bill" }.sortedBy { it.dayOrTurn }
+        val goals = finItems.filter { it.itemType == "goal" }
+        val debts = finItems.filter { it.itemType == "debt" }
+        val darets = finItems.filter { it.itemType == "daret" }
+        val seasonals = finItems.filter { it.itemType == "seasonal" }
+
         val unpaidBills = bills.filter { !PayCycleEngine.isBillPaidInCycle(it, activeCycleKey) }
             .sumOf { it.amount }
 
@@ -204,7 +506,7 @@ class MasroufiViewModel(
         val dailyAvg = cycleExpenses / max(1, window.daysElapsed)
         val projectedSpend = if (window.isCurrentCycle) dailyAvg * window.totalDays else cycleExpenses
 
-        // Weekly calculations (Monday - Sunday of anchor date)
+        // Timezone/DST-safe weekly calculations (Monday - Sunday of anchor date)
         val anchorIso = if (window.isCurrentCycle) PayCycleEngine.todayIso() else window.endIso
         val (weekSpend, prevWeekSpend, weekLabel) = computeWeeklyBreakdown(anchorIso, txs)
         val weekTotal = weekSpend.sum()
@@ -216,6 +518,26 @@ class MasroufiViewModel(
         val bestEnv = cappedEnvs.minByOrNull { it.usagePercent }
         val worstEnv = cappedEnvs.maxByOrNull { it.usagePercent }
         val topEnv = envelopeStatuses.filter { it.spent > 0 }.maxByOrNull { it.spent }
+
+        val smartInsights = PayCycleEngine.computeSmartInsights(
+            lang = profile.language,
+            currency = curSymbol,
+            window = window,
+            totalAvailableBudget = totalAvailable,
+            cycleExpenses = cycleExpenses,
+            previousCycleExpenses = prevCycleExpenses,
+            safeToSpendToday = safeToday,
+            dailyAverageSpend = dailyAvg,
+            envelopes = envelopeStatuses
+        )
+
+        val smartReminders = PayCycleEngine.computeSmartReminders(
+            cycleKey = activeCycleKey,
+            currency = curSymbol,
+            bills = bills,
+            darets = darets,
+            debts = debts
+        )
 
         val filteredList = cycleTxs.filter { tx ->
             val q = filter.searchQuery.trim().lowercase()
@@ -267,13 +589,17 @@ class MasroufiViewModel(
             bestControlledEnvelope = bestEnv,
             worstControlledEnvelope = worstEnv,
             presets = finItems.filter { it.itemType == "preset" },
-            goals = finItems.filter { it.itemType == "goal" },
+            goals = goals,
             bills = bills,
-            debts = finItems.filter { it.itemType == "debt" },
-            darets = finItems.filter { it.itemType == "daret" },
-            seasonals = finItems.filter { it.itemType == "seasonal" },
+            debts = debts,
+            darets = darets,
+            seasonals = seasonals,
+            smartInsights = smartInsights,
+            smartReminders = smartReminders,
+            isCleanFreshAccount = txs.isEmpty() && netWorth == 0.0,
             filterState = filter,
-            whatIfState = whatIf
+            whatIfState = whatIf,
+            errorMessage = errMsg
         )
     }.stateIn(
         scope = viewModelScope,
@@ -285,20 +611,7 @@ class MasroufiViewModel(
         anchorIso: String,
         txs: List<TransactionItem>
     ): Triple<List<Double>, List<Double>, String> {
-        val parts = anchorIso.split("-").mapNotNull { it.toIntOrNull() }
-        val cal = Calendar.getInstance()
-        if (parts.size == 3) {
-            cal.set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
-        }
-        cal.set(Calendar.MILLISECOND, 0)
-        val dow = cal.get(Calendar.DAY_OF_WEEK) // Sun=1 .. Sat=7
-        val offsetFromMonday = (dow + 5) % 7
-        cal.add(Calendar.DAY_OF_MONTH, -offsetFromMonday)
-        val mondayEpochDay = cal.timeInMillis / 86_400_000L
-        val monStr = "%02d/%02d".format(cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1)
-        cal.add(Calendar.DAY_OF_MONTH, 6)
-        val sunStr = "%02d/%02d".format(cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1)
-
+        val (mondayEpochDay, rangeLabel) = PayCycleEngine.computeMondayEpochDayAndLabel(anchorIso)
         val curWeek = DoubleArray(7)
         val prevWeek = DoubleArray(7)
         for (tx in txs) {
@@ -311,7 +624,7 @@ class MasroufiViewModel(
                 prevWeek[diff + 7] += tx.amount
             }
         }
-        return Triple(curWeek.toList(), prevWeek.toList(), "$monStr → $sunStr")
+        return Triple(curWeek.toList(), prevWeek.toList(), rangeLabel)
     }
 
     fun shiftCycle(delta: Int) {
@@ -353,7 +666,14 @@ class MasroufiViewModel(
 
     fun saveCustomizationPrefs(prefs: CustomizationPrefs) {
         _optimisticCustomPrefs.value = prefs
-        val item = FinancialItem(
+        val item = buildCustomPrefsFinancialItem(prefs)
+        safeLaunch("saveCustomizationPrefs") {
+            repository.upsertFinancialItem(item)
+        }
+    }
+
+    private fun buildCustomPrefsFinancialItem(prefs: CustomizationPrefs): FinancialItem {
+        return FinancialItem(
             id = "custom_prefs",
             userId = currentUserId,
             itemType = "custom_prefs",
@@ -365,8 +685,27 @@ class MasroufiViewModel(
             extraInt = 0,
             dateOrCycle = prefs.customSubtitle.take(200)
         )
-        safeLaunch("saveCustomizationPrefs") {
-            repository.upsertFinancialItem(item)
+    }
+
+    fun loadDemoData(onDone: () -> Unit = {}) {
+        safeLaunch("loadDemoData") {
+            repository.loadDemoData()
+            onDone()
+        }
+    }
+
+    fun resetToCleanAccount(onDone: () -> Unit = {}) {
+        val s = uiState.value
+        val txIds = s.allTransactions.map { it.id }
+        val itemIds = (s.goals + s.bills + s.debts + s.darets + s.seasonals).map { it.id }
+        val accIds = s.accounts.map { it.account.id }
+        safeLaunch("resetToCleanAccount") {
+            repository.resetToCleanAccount(
+                existingTxIds = txIds,
+                existingItemIdsToClear = itemIds,
+                existingAccountIds = accIds
+            )
+            onDone()
         }
     }
 
@@ -484,14 +823,12 @@ class MasroufiViewModel(
         if (capped.isEmpty()) return
         val sum = capped.sumOf { it.percentage }
         safeLaunch("autoBalanceEnvelopesTo100") {
-            if (sum <= 0.0) {
+            val updatedList = if (sum <= 0.0) {
                 val equalShare = (100.0 / capped.size * 10.0).roundToInt() / 10.0
-                capped.forEach { env ->
-                    repository.upsertEnvelope(env.copy(percentage = equalShare))
-                }
+                capped.map { env -> env.copy(percentage = equalShare) }
             } else {
                 var running = 0.0
-                capped.forEachIndexed { idx, env ->
+                capped.mapIndexed { idx, env ->
                     val normalized = if (idx == capped.lastIndex) {
                         max(0.0, ((100.0 - running) * 10.0).roundToInt() / 10.0)
                     } else {
@@ -499,9 +836,10 @@ class MasroufiViewModel(
                         running += v
                         v
                     }
-                    repository.upsertEnvelope(env.copy(percentage = normalized))
+                    env.copy(percentage = normalized)
                 }
             }
+            repository.upsertEnvelopesAtomically(updatedList)
         }
     }
 
@@ -522,59 +860,59 @@ class MasroufiViewModel(
         val cycleKey = uiState.value.activeWindow.cycleKey
         if (PayCycleEngine.isBillPaidInCycle(bill, cycleKey)) return
         val updatedCycles = (bill.dateOrCycle.split(",").filter { it.isNotBlank() } + cycleKey).distinct().joinToString(",")
+        val updatedBill = bill.copy(dateOrCycle = updatedCycles)
+        val tx = TransactionItem(
+            id = "tx_bill_${bill.id}_$cycleKey",
+            userId = currentUserId,
+            type = "expense",
+            amount = bill.amount.coerceAtLeast(1.0),
+            category = "Charges fixes & Maison",
+            envelopeKey = "charges",
+            accountId = "acc_bank",
+            desc = bill.name,
+            isoDate = PayCycleEngine.todayIso()
+        )
         safeLaunch("payRecurringBill") {
-            repository.upsertFinancialItem(bill.copy(dateOrCycle = updatedCycles))
-            repository.upsertTransaction(
-                TransactionItem(
-                    userId = currentUserId,
-                    type = "expense",
-                    amount = bill.amount.coerceAtLeast(1.0),
-                    category = "Charges fixes & Maison",
-                    envelopeKey = "charges",
-                    accountId = "acc_bank",
-                    desc = bill.name,
-                    isoDate = PayCycleEngine.todayIso()
-                )
-            )
+            repository.upsertItemAndTransactionAtomically(updatedBill, tx)
         }
     }
 
     fun contributeToGoalOrSeasonal(item: FinancialItem, addAmount: Double) {
         if (addAmount <= 0.0 || addAmount.isNaN()) return
+        val updatedItem = item.copy(secondaryAmount = item.secondaryAmount + addAmount)
+        val tx = TransactionItem(
+            id = "tx_contrib_${item.id}_${System.currentTimeMillis()}",
+            userId = currentUserId,
+            type = "expense",
+            amount = addAmount,
+            category = "Épargne & Investissement",
+            envelopeKey = "epargne",
+            accountId = "acc_bank",
+            desc = item.name,
+            isoDate = PayCycleEngine.todayIso()
+        )
         safeLaunch("contributeToGoalOrSeasonal") {
-            repository.upsertFinancialItem(item.copy(secondaryAmount = item.secondaryAmount + addAmount))
-            repository.upsertTransaction(
-                TransactionItem(
-                    userId = currentUserId,
-                    type = "expense",
-                    amount = addAmount,
-                    category = "Épargne & Investissement",
-                    envelopeKey = "epargne",
-                    accountId = "acc_bank",
-                    desc = item.name,
-                    isoDate = PayCycleEngine.todayIso()
-                )
-            )
+            repository.upsertItemAndTransactionAtomically(updatedItem, tx)
         }
     }
 
     fun payDaretRound(daret: FinancialItem) {
         val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
         val nextPaid = (daret.extraInt + 1).coerceAtMost(totalMembers)
+        val updatedDaret = daret.copy(extraInt = nextPaid)
+        val tx = TransactionItem(
+            id = "tx_daret_${daret.id}_round_$nextPaid",
+            userId = currentUserId,
+            type = "expense",
+            amount = daret.amount.coerceAtLeast(1.0),
+            category = "Épargne & Investissement",
+            envelopeKey = "epargne",
+            accountId = "acc_bank",
+            desc = "Cotisation ${daret.name} ($nextPaid/$totalMembers)",
+            isoDate = PayCycleEngine.todayIso()
+        )
         safeLaunch("payDaretRound") {
-            repository.upsertFinancialItem(daret.copy(extraInt = nextPaid))
-            repository.upsertTransaction(
-                TransactionItem(
-                    userId = currentUserId,
-                    type = "expense",
-                    amount = daret.amount.coerceAtLeast(1.0),
-                    category = "Épargne & Investissement",
-                    envelopeKey = "epargne",
-                    accountId = "acc_bank",
-                    desc = "Cotisation ${daret.name} ($nextPaid/$totalMembers)",
-                    isoDate = PayCycleEngine.todayIso()
-                )
-            )
+            repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
         }
     }
 
@@ -582,20 +920,20 @@ class MasroufiViewModel(
         if (payment <= 0.0 || payment.isNaN()) return
         val newPaid = (debt.secondaryAmount + payment).coerceAtMost(debt.amount)
         val isLent = debt.dateOrCycle != "borrowed"
+        val updatedDebt = debt.copy(secondaryAmount = newPaid)
+        val tx = TransactionItem(
+            id = "tx_debt_${debt.id}_${System.currentTimeMillis()}",
+            userId = currentUserId,
+            type = if (isLent) "income" else "expense",
+            amount = payment,
+            category = "Autre / Imprévus",
+            envelopeKey = "autre",
+            accountId = "acc_cash",
+            desc = "Remboursement: ${debt.name}",
+            isoDate = PayCycleEngine.todayIso()
+        )
         safeLaunch("settleDebt") {
-            repository.upsertFinancialItem(debt.copy(secondaryAmount = newPaid))
-            repository.upsertTransaction(
-                TransactionItem(
-                    userId = currentUserId,
-                    type = if (isLent) "income" else "expense",
-                    amount = payment,
-                    category = "Autre / Imprévus",
-                    envelopeKey = "autre",
-                    accountId = "acc_cash",
-                    desc = "Remboursement: ${debt.name}",
-                    isoDate = PayCycleEngine.todayIso()
-                )
-            )
+            repository.upsertItemAndTransactionAtomically(updatedDebt, tx)
         }
     }
 
@@ -607,31 +945,12 @@ class MasroufiViewModel(
         _whatIfState.value = WhatIfSimulatorState(envelopeKey, cutPct.coerceIn(5, 80))
     }
 
+    /**
+     * Complete Version 2 JSON Backup (profile, customPrefs, accounts, envelopes,
+     * financialItems [goals, bills, debts, darets, seasonals, presets], and transactions).
+     */
     fun exportBackupJson(): String {
-        val s = uiState.value
-        val root = JSONObject().apply {
-            put("baseBudget", s.profile.baseBudget)
-            put("payCycleDay", s.profile.payCycleDay)
-            put("rolloverEnabled", s.profile.rolloverEnabled)
-            val txArr = JSONArray()
-            s.allTransactions.forEach { t ->
-                txArr.put(
-                    JSONObject().apply {
-                        put("id", t.id)
-                        put("type", t.type)
-                        put("amount", t.amount)
-                        put("category", t.category)
-                        put("envelopeKey", t.envelopeKey)
-                        put("accountId", t.accountId)
-                        put("toAccountId", t.toAccountId)
-                        put("desc", t.desc)
-                        put("iso", t.isoDate)
-                    }
-                )
-            }
-            put("transactions", txArr)
-        }
-        return root.toString(2)
+        return BackupSerializer.encodeV2Backup(uiState.value)
     }
 
     fun exportCsv(): String {
@@ -647,42 +966,31 @@ class MasroufiViewModel(
     fun restoreFromJson(rawJson: String, onResult: (Boolean) -> Unit) {
         safeLaunch("restoreFromJson") {
             try {
-                val trimmed = rawJson.trim()
-                val txArray = if (trimmed.startsWith("[")) {
-                    JSONArray(trimmed)
-                } else {
-                    val obj = JSONObject(trimmed)
-                    val b = obj.optDouble("baseBudget", uiState.value.profile.baseBudget)
-                    val pDay = obj.optInt("payCycleDay", uiState.value.profile.payCycleDay)
-                    saveBudgetSettings(b, pDay, obj.optBoolean("rolloverEnabled", true))
-                    obj.optJSONArray("transactions") ?: JSONArray()
+                val parsed = BackupSerializer.decodeBackup(
+                    rawJson = rawJson,
+                    currentUserId = currentUserId,
+                    fallbackProfile = uiState.value.profile
+                )
+                if (parsed.profile != null) {
+                    _optimisticProfile.value = parsed.profile
                 }
-                for (i in 0 until txArray.length()) {
-                    val item = txArray.getJSONObject(i)
-                    val amt = item.optDouble("amount", item.optDouble("montant", 0.0))
-                    if (amt > 0.0) {
-                        val cat = item.optString("category", "Autre / Imprévus")
-                        val desc = item.optString("desc", "Transaction")
-                        val iso = item.optString("iso", PayCycleEngine.todayIso())
-                        repository.upsertTransaction(
-                            TransactionItem(
-                                id = item.optString("id", "tx_${System.currentTimeMillis()}_$i"),
-                                userId = currentUserId,
-                                type = item.optString("type", "expense"),
-                                amount = amt,
-                                category = cat,
-                                envelopeKey = item.optString("envelopeKey", PayCycleEngine.resolveEnvelopeKey(cat, desc, emptyList())),
-                                accountId = item.optString("accountId", "acc_cash"),
-                                toAccountId = item.optString("toAccountId", ""),
-                                desc = desc,
-                                isoDate = iso
-                            )
-                        )
-                    }
-                }
+                val customPrefsItem = if (parsed.customPrefs != null) {
+                    _optimisticCustomPrefs.value = parsed.customPrefs
+                    buildCustomPrefsFinancialItem(parsed.customPrefs)
+                } else null
+
+                repository.restoreFullBackupAtomically(
+                    profile = parsed.profile,
+                    customPrefsItem = customPrefsItem,
+                    accounts = parsed.accounts,
+                    envelopes = parsed.envelopes,
+                    financialItems = parsed.financialItems,
+                    transactions = parsed.transactions
+                )
                 onResult(true)
             } catch (e: Exception) {
                 Log.e("MasroufiVM", "Restore JSON failed", e)
+                _errorMessage.value = "Erreur lors de la restauration JSON : format invalide."
                 onResult(false)
             }
         }

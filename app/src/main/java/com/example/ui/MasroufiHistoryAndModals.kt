@@ -306,14 +306,32 @@ fun HistoryScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = strings.backupTitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.backupTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = AccentEmerald.copy(alpha = 0.16f)
+                        ) {
+                            Text(
+                                text = "Format Complet v2.0",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = AccentEmerald,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = strings.backupSub,
+                        text = "${strings.backupSub} • Inclut comptes, enveloppes, objectifs, Daret, dettes, factures & préférences.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -596,6 +614,8 @@ fun SettingsBottomSheet(
     onDismiss: () -> Unit,
     onSaveSettings: (Double, Int, Boolean) -> Unit,
     onOpenCustomizationStudio: () -> Unit,
+    onLoadDemoData: () -> Unit = {},
+    onResetCleanAccount: () -> Unit = {},
     onSignOut: () -> Unit
 ) {
     var budgetText by remember { mutableStateOf(state.profile.baseBudget.safeRoundToInt().toString()) }
@@ -659,6 +679,54 @@ fun SettingsBottomSheet(
                 Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Studio de Personnalisation (Thèmes, Cartes, Devise)", fontWeight = FontWeight.Bold)
+            }
+
+            // Clean Account vs Optional Demo Data Mode
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Données du compte & Mode Démo",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                onLoadDemoData()
+                                onDismiss()
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("settings_load_demo_btn")
+                        ) {
+                            Text("Mode Démo", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                onResetCleanAccount()
+                                onDismiss()
+                            },
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("settings_reset_clean_btn")
+                        ) {
+                            Text("Compte Vierge (0 DH)", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
 
             Button(
@@ -1339,6 +1407,33 @@ fun AddFinancialItemSheet(
                         label = { Text("Je dois (Dette)") }
                     )
                 }
+            } else if (itemType == "goal") {
+                Text(
+                    text = "Cibles rapides :",
+                    style = MaterialTheme.typography.labelLarge
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("5000", "10000", "20000", "50000").forEach { target ->
+                        FilterChip(
+                            selected = amountText == target,
+                            onClick = { amountText = target },
+                            label = { Text("${PayCycleEngine.formatDh(target.toDouble())} $cur") }
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = if (existingItem != null) secondaryText else secondaryText.takeIf { it != "10" }.orEmpty(),
+                    onValueChange = { secondaryText = it },
+                    label = { Text("Déjà épargné ($cur)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             } else if (itemType == "seasonal") {
                 OutlinedTextField(
                     value = dateOrDirText,
@@ -1406,6 +1501,7 @@ fun AddFinancialItemSheet(
                                         amount = amt.coerceAtLeast(0.01),
                                         secondaryAmount = when (itemType) {
                                             "daret" -> (secondaryText.replace(",", ".").toDoubleOrNull() ?: 10.0)
+                                            "goal" -> (secondaryText.takeIf { it != "10" || existingItem != null }?.replace(",", ".")?.toDoubleOrNull() ?: existingItem?.secondaryAmount ?: 0.0)
                                             else -> existingItem?.secondaryAmount ?: 0.0
                                         },
                                         dayOrTurn = (dayOrTurnText.toIntOrNull() ?: 1).coerceIn(1, 365),

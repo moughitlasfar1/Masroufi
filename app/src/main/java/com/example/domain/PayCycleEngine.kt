@@ -7,8 +7,10 @@ import com.example.data.TransactionItem
 import java.text.NumberFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
+import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 data class PayCycleWindow(
@@ -34,12 +36,32 @@ data class EnvelopeStatus(
     val rolloverAmount: Double,
     val totalAvailable: Double,
     val spent: Double,
+    val previousSpent: Double = 0.0,
     val remaining: Double,
     val usagePercent: Int,
     val isOver90Percent: Boolean
 )
 
+data class SmartInsight(
+    val id: String,
+    val title: String,
+    val body: String,
+    val severity: String // "good", "warn", "info"
+)
+
+data class SmartReminder(
+    val id: String,
+    val kind: String, // "bill", "daret", "debt"
+    val title: String,
+    val subtitle: String,
+    val amount: Double,
+    val actionLabel: String,
+    val item: FinancialItem
+)
+
 object PayCycleEngine {
+
+    private val UTC_TZ: TimeZone = TimeZone.getTimeZone("UTC")
 
     fun todayIso(): String {
         val cal = Calendar.getInstance()
@@ -69,7 +91,8 @@ object PayCycleEngine {
         val parts = cycleKey.split("-").mapNotNull { it.toIntOrNull() }
         val year = parts.getOrElse(0) { 2026 }
         val month = parts.getOrElse(1) { 10 }
-        val cal = Calendar.getInstance().apply {
+        val cal = Calendar.getInstance(UTC_TZ).apply {
+            clear()
             set(Calendar.YEAR, year)
             set(Calendar.MONTH, month - 1)
             set(Calendar.DAY_OF_MONTH, 1)
@@ -80,6 +103,16 @@ object PayCycleEngine {
             cal.get(Calendar.YEAR),
             cal.get(Calendar.MONTH) + 1
         )
+    }
+
+    fun computeCycleWindow(
+        payCycleDay: Int,
+        monthOffset: Int = 0,
+        nowIso: String = todayIso()
+    ): PayCycleWindow {
+        val baseKey = currentCycleKey(payCycleDay, nowIso)
+        val targetKey = if (monthOffset == 0) baseKey else shiftCycleKey(baseKey, monthOffset)
+        return computeWindow(targetKey, payCycleDay, nowIso)
     }
 
     fun computeWindow(
@@ -141,7 +174,6 @@ object PayCycleEngine {
         envelopes: List<EnvelopeConfig>
     ): String {
         val text = "$category $desc".lowercase(Locale.ROOT)
-        // Check custom envelope match first
         for (env in envelopes) {
             if (env.key.isNotBlank() && (
                     category.equals(env.nameFr, ignoreCase = true) ||
@@ -212,12 +244,13 @@ object PayCycleEngine {
                 .filter { (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == key }
                 .sumOf { it.amount }
 
+            val spentPrev = prevExpenses
+                .filter { (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == key }
+                .sumOf { it.amount }
+
             val baseAllocated = if (env.hasCap) (baseBudget * (env.percentage / 100.0)) else 0.0
 
             val rolloverAmount = if (rolloverEnabled && env.hasCap && prevExpenses.isNotEmpty()) {
-                val spentPrev = prevExpenses
-                    .filter { (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == key }
-                    .sumOf { it.amount }
                 max(0.0, baseAllocated - spentPrev)
             } else {
                 0.0
@@ -239,6 +272,7 @@ object PayCycleEngine {
                 rolloverAmount = rolloverAmount,
                 totalAvailable = totalAvailable,
                 spent = spentCurrent,
+                previousSpent = spentPrev,
                 remaining = remaining,
                 usagePercent = usagePct,
                 isOver90Percent = env.hasCap && usagePct >= 90
@@ -246,12 +280,210 @@ object PayCycleEngine {
         }
     }
 
+    fun computeSmartInsights(
+        lang: String,
+        currency: String,
+        window: PayCycleWindow,
+        totalAvailableBudget: Double,
+        cycleExpenses: Double,
+        previousCycleExpenses: Double,
+        safeToSpendToday: Double,
+        dailyAverageSpend: Double,
+        envelopes: List<EnvelopeStatus>
+    ): List<SmartInsight> {
+        val insights = mutableListOf<SmartInsight>()
+        val timeProgressPct = ((window.daysElapsed.toDouble() / max(1, window.totalDays)) * 100.0).roundToInt()
+        val budgetProgressPct = if (totalAvailableBudget > 0) {
+            ((cycleExpenses / totalAvailableBudget) * 100.0).roundToInt()
+        } else 0
+
+        // 1. Pace vs Cycle Time Insight
+        if (cycleExpenses <= 0.0) {
+            insights.add(
+                SmartInsight(
+                    id = "clean_start",
+                    title = when (lang) {
+                        "darija" -> "بداية نقية لهاد الشهر"
+                        "ar" -> "بداية جديدة لهذا الشهر"
+                        "en" -> "Fresh cycle — no expenses logged yet"
+                        else -> "Cycle vierge — aucune dépense enregistrée"
+                    },
+                    body = when (lang) {
+                        "darija" -> "يمكن ليك تزيد أول مصروف بـ زر + أو تستعمل أزرار الشراء السريع (1-Tap)."
+                        "ar" -> "سجل أول عملية عبر زر الإضافة أو أزرار الشراء السريع."
+                        "en" -> "Tap + or use 1-Tap Quick Presets to record your first expense."
+                        else -> "Ajoutez votre première opération via + ou utilisez les achats rapides 1-Tap."
+                    },
+                    severity = "info"
+                )
+            )
+            return insights
+        }
+
+        if (budgetProgressPct > timeProgressPct + 12) {
+            val projectedDiff = max(0.0, (dailyAverageSpend * window.totalDays) - totalAvailableBudget)
+            insights.add(
+                SmartInsight(
+                    id = "pace_fast",
+                    title = when (lang) {
+                        "darija" -> "تنبيه: المصروف غادي بسرعة ($budgetProgressPct% فـ ${window.daysElapsed} يوم)"
+                        "ar" -> "تنبيه: وتيرة الإنفاق مرتفعة ($budgetProgressPct%)"
+                        "en" -> "Spending pace alert ($budgetProgressPct% used in ${window.daysElapsed}d)"
+                        else -> "Rythme rapide : $budgetProgressPct% consommé en ${window.daysElapsed}j"
+                    },
+                    body = when (lang) {
+                        "darija" -> "إلى كملتي بهاد الريتم غادي تفوت الميزانية بـ ${formatDh(projectedDiff)} $currency. حاول متفوتش ${formatDh(safeToSpendToday)} $currency/نهار."
+                        "ar" -> "بهذه الوتيرة قد تتجاوز الميزانية بـ ${formatDh(projectedDiff)} $currency. التزم بـ ${formatDh(safeToSpendToday)} $currency/يوم."
+                        "en" -> "At this pace you may exceed budget by ${formatDh(projectedDiff)} $currency. Aim for ${formatDh(safeToSpendToday)} $currency/day."
+                        else -> "À ce rythme, projection à +${formatDh(projectedDiff)} $currency au-dessus du budget. Visez max ${formatDh(safeToSpendToday)} $currency/jour."
+                    },
+                    severity = "warn"
+                )
+            )
+        } else {
+            val potentialSave = max(0.0, totalAvailableBudget - (dailyAverageSpend * window.totalDays))
+            insights.add(
+                SmartInsight(
+                    id = "pace_good",
+                    title = when (lang) {
+                        "darija" -> "إيقاع مزيان! راك متحكم فـ الميزانية ($budgetProgressPct%)"
+                        "ar" -> "وتيرة ممتازة! أنت ضمن حدود الميزانية ($budgetProgressPct%)"
+                        "en" -> "Great pace! You're well within budget ($budgetProgressPct%)"
+                        else -> "Excellent rythme : $budgetProgressPct% utilisé ($timeProgressPct% du mois écoulé)"
+                    },
+                    body = when (lang) {
+                        "darija" -> "إلى بقيتي هاكا تقدر توفر تقريباً ${formatDh(potentialSave)} $currency فـ اللخر ديال الشهر."
+                        "ar" -> "إذا استمررت هكذا يمكنك ادخار حوالي ${formatDh(potentialSave)} $currency نهاية الشهر."
+                        "en" -> "Keep this pace to save ~${formatDh(potentialSave)} $currency by the end of the cycle."
+                        else -> "En gardant ce cap, vous pourrez épargner environ ${formatDh(potentialSave)} $currency en fin de cycle."
+                    },
+                    severity = "good"
+                )
+            )
+        }
+
+        // 2. Top Spending Category & Savings Suggestion
+        val topEnv = envelopes.filter { it.spent > 0 }.maxByOrNull { it.spent }
+        if (topEnv != null) {
+            val share = if (cycleExpenses > 0) ((topEnv.spent / cycleExpenses) * 100.0).roundToInt() else 0
+            val save20 = topEnv.spent * 0.20
+            val envName = topEnv.config.localizedName(lang)
+            insights.add(
+                SmartInsight(
+                    id = "top_driver",
+                    title = when (lang) {
+                        "darija" -> "فين كيمشي الفلوس: $envName ($share%)"
+                        "ar" -> "أكبر باب للصرف: $envName ($share%)"
+                        "en" -> "Top spending driver: $envName ($share%)"
+                        else -> "Où va votre argent : $envName ($share%)"
+                    },
+                    body = when (lang) {
+                        "darija" -> "صرفتي فيها ${formatDh(topEnv.spent)} $currency. غير تنقص 20% غادي تربح ${formatDh(save20)} $currency فـ الشهر (${formatDh(save20 * 12)} $currency فـ العام)."
+                        "ar" -> "أنفقت ${formatDh(topEnv.spent)} $currency. خفض 20% يوفر لك ${formatDh(save20)} $currency شهرياً."
+                        "en" -> "Spent ${formatDh(topEnv.spent)} $currency. Cutting 20% saves ${formatDh(save20)} $currency/mo (${formatDh(save20 * 12)} $currency/yr)."
+                        else -> "Vous y avez dépensé ${formatDh(topEnv.spent)} $currency. Réduire de 20% libère +${formatDh(save20)} $currency/mois (+${formatDh(save20 * 12)} $currency/an)."
+                    },
+                    severity = if (topEnv.isOver90Percent) "warn" else "info"
+                )
+            )
+        }
+
+        // 3. Month-over-Month Trend Insight
+        if (previousCycleExpenses > 0.0) {
+            val delta = cycleExpenses - previousCycleExpenses
+            val deltaPct = ((delta / previousCycleExpenses) * 100.0).roundToInt()
+            insights.add(
+                SmartInsight(
+                    id = "mom_trend",
+                    title = if (delta <= 0) {
+                        "Tendance mensuelle : ${deltaPct}% vs cycle précédent"
+                    } else {
+                        "Tendance mensuelle : +${deltaPct}% vs cycle précédent"
+                    },
+                    body = if (delta <= 0) {
+                        "Vous avez dépensé ${formatDh(abs(delta))} $currency de moins que le cycle dernier (${formatDh(previousCycleExpenses)} $currency)."
+                    } else {
+                        "Vos dépenses dépassent le cycle précédent de ${formatDh(delta)} $currency (${formatDh(previousCycleExpenses)} $currency)."
+                    },
+                    severity = if (delta <= 0) "good" else "warn"
+                )
+            )
+        }
+
+        return insights
+    }
+
+    fun computeSmartReminders(
+        cycleKey: String,
+        currency: String,
+        bills: List<FinancialItem>,
+        darets: List<FinancialItem>,
+        debts: List<FinancialItem>
+    ): List<SmartReminder> {
+        val list = mutableListOf<SmartReminder>()
+        // 1. Unpaid bills in active cycle
+        bills.filter { !isBillPaidInCycle(it, cycleKey) }
+            .sortedBy { it.dayOrTurn }
+            .forEach { bill ->
+                list.add(
+                    SmartReminder(
+                        id = "rem_bill_${bill.id}",
+                        kind = "bill",
+                        title = "Facture à régler : ${bill.name}",
+                        subtitle = "Échéance jour ${bill.dayOrTurn} · ${formatDh(bill.amount)} $currency",
+                        amount = bill.amount,
+                        actionLabel = "Payer",
+                        item = bill
+                    )
+                )
+            }
+
+        // 2. Active Darets with remaining rounds
+        darets.forEach { daret ->
+            val totalMembers = daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+            if (daret.extraInt < totalMembers) {
+                list.add(
+                    SmartReminder(
+                        id = "rem_daret_${daret.id}",
+                        kind = "daret",
+                        title = "Cotisation Daret : ${daret.name}",
+                        subtitle = "Tour payé ${daret.extraInt}/$totalMembers · ${formatDh(daret.amount)} $currency/mois",
+                        amount = daret.amount,
+                        actionLabel = "Cotiser",
+                        item = daret
+                    )
+                )
+            }
+        }
+
+        // 3. Unsettled Debts / Loans
+        debts.forEach { debt ->
+            val rem = max(0.0, debt.amount - debt.secondaryAmount)
+            if (rem > 0.0) {
+                val isLent = debt.dateOrCycle != "borrowed"
+                list.add(
+                    SmartReminder(
+                        id = "rem_debt_${debt.id}",
+                        kind = "debt",
+                        title = if (isLent) "Crédit à encaisser : ${debt.name}" else "Dette à rembourser : ${debt.name}",
+                        subtitle = "Reste ${formatDh(rem)} $currency sur ${formatDh(debt.amount)} $currency",
+                        amount = rem,
+                        actionLabel = "+ 100 $currency",
+                        item = debt
+                    )
+                )
+            }
+        }
+        return list
+    }
+
     fun isBillPaidInCycle(bill: FinancialItem, cycleKey: String): Boolean {
         return bill.dateOrCycle.split(",").map { it.trim() }.contains(cycleKey)
     }
 
     private fun daysInMonth(year: Int, month: Int): Int {
-        val cal = Calendar.getInstance().apply {
+        val cal = Calendar.getInstance(UTC_TZ).apply {
+            clear()
             set(Calendar.YEAR, year)
             set(Calendar.MONTH, month - 1)
             set(Calendar.DAY_OF_MONTH, 1)
@@ -269,17 +501,47 @@ object PayCycleEngine {
         return max(1, (e - s + 1).toInt())
     }
 
+    /**
+     * Timezone- and DST-independent epoch day calculation using pure UTC calendar midnight.
+     */
     fun parseEpochDays(iso: String): Long {
-        val parts = iso.split("-").mapNotNull { it.toIntOrNull() }
+        val parts = iso.trim().split("-").mapNotNull { it.toIntOrNull() }
         if (parts.size < 3) return 0L
-        val cal = Calendar.getInstance().apply {
+        val cal = Calendar.getInstance(UTC_TZ).apply {
+            clear()
             set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
             set(Calendar.MILLISECOND, 0)
         }
         return cal.timeInMillis / 86_400_000L
     }
 
+    /**
+     * Computes Monday epoch day and formatted Monday->Sunday range label using UTC so DST
+     * transitions never shift day-of-week buckets.
+     */
+    fun computeMondayEpochDayAndLabel(anchorIso: String): Pair<Long, String> {
+        val parts = anchorIso.trim().split("-").mapNotNull { it.toIntOrNull() }
+        val cal = Calendar.getInstance(UTC_TZ).apply {
+            clear()
+            if (parts.size >= 3) {
+                set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
+            } else {
+                set(2026, 9, 30, 0, 0, 0)
+            }
+            set(Calendar.MILLISECOND, 0)
+        }
+        val dow = cal.get(Calendar.DAY_OF_WEEK) // Sun=1 .. Sat=7
+        val offsetFromMonday = (dow + 5) % 7
+        cal.add(Calendar.DAY_OF_MONTH, -offsetFromMonday)
+        val mondayEpochDay = cal.timeInMillis / 86_400_000L
+        val monStr = "%02d/%02d".format(Locale.US, cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1)
+        cal.add(Calendar.DAY_OF_MONTH, 6)
+        val sunStr = "%02d/%02d".format(Locale.US, cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1)
+        return mondayEpochDay to "$monStr → $sunStr"
+    }
+
     fun formatDh(value: Double): String {
+        if (value.isNaN() || value.isInfinite()) return "0"
         val nf = NumberFormat.getIntegerInstance(Locale.FRANCE)
         return nf.format(value.roundToLong())
     }

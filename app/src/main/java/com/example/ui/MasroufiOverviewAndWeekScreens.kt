@@ -26,13 +26,16 @@ import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Button
@@ -66,10 +69,12 @@ import com.example.data.AccountItem
 import com.example.data.FinancialItem
 import com.example.domain.AppStrings
 import com.example.domain.PayCycleEngine
+import com.example.domain.SmartReminder
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
+import com.example.ui.theme.AccentViolet
 import com.example.ui.theme.heroGradientColors
 import kotlin.math.ceil
 import kotlin.math.max
@@ -100,7 +105,9 @@ fun OverviewScreen(
     onPayBill: (FinancialItem) -> Unit,
     onAddPresetModal: (FinancialItem?) -> Unit,
     onDeletePreset: (String) -> Unit,
-    onOpenCustomizationModal: () -> Unit
+    onOpenCustomizationModal: () -> Unit,
+    onLoadDemoData: () -> Unit = {},
+    onTriggerReminderAction: (SmartReminder) -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val pct = if (state.totalAvailableBudget > 0) {
@@ -116,6 +123,68 @@ fun OverviewScreen(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 0. Clean First-Time Onboarding / Optional Demo Mode Card
+        if (state.isCleanFreshAccount) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(26.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("clean_onboarding_card")
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Bienvenue sur Masroufi 2.0 — Compte Vierge Prêt (0 $cur)",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Vos comptes démarrent à 0 $cur sans fausses transactions. Touchez une carte de compte ci-dessous pour définir votre solde réel, ou chargez le Mode Démo pour explorer toutes les fonctions.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    val firstAcc = state.accounts.firstOrNull()?.account
+                                    onOpenAccountModal(firstAcc)
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Saisir mon solde", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            FilledTonalButton(
+                                onClick = onLoadDemoData,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("btn_load_demo_data")
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Mode Démo", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. Hero Expressive Card (Cycle Spend + Safe to Spend Today)
         item {
             Box(
@@ -518,7 +587,138 @@ fun OverviewScreen(
             }
         }
 
-        // 4. This Week & Daily Average Row
+        // 4. Smart Financial Assistant (Conseiller Intelligent — Insights & Savings Tips)
+        if (state.smartInsights.isNotEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("smart_assistant_card")
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = AccentAmber,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = when (state.profile.language) {
+                                    "darija" -> "المستشار الذكي (Smart Assistant)"
+                                    "ar" -> "المساعد المالي الذكي"
+                                    "en" -> "Smart Financial Assistant"
+                                    else -> "Assistant Financier Intelligent"
+                                },
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        state.smartInsights.forEach { insight ->
+                            val badgeColor = when (insight.severity) {
+                                "warn" -> AccentCoral
+                                "good" -> AccentEmerald
+                                else -> AccentSkyBlue
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(14.dp)) {
+                                    Text(
+                                        text = insight.title,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = badgeColor,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = insight.body,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Smart Reminders (Factures, Daret & Crédits à régler)
+        if (state.customPrefs.showBillsCard && state.smartReminders.isNotEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("smart_reminders_card")
+                ) {
+                    Column(modifier = Modifier.padding(18.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                tint = AccentViolet,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = when (state.profile.language) {
+                                    "darija" -> "تذكيرات ذكية (الفواتير، دارت، الكريدي)"
+                                    "ar" -> "تذكيرات ذكية (الفواتير، دارت، الديون)"
+                                    "en" -> "Smart Reminders (Bills, Daret, Debts)"
+                                    else -> "Rappels Intelligents (Factures, Daret, Crédits)"
+                                },
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        state.smartReminders.take(5).forEach { rem ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = rem.title,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                    Text(
+                                        text = rem.subtitle,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                FilledTonalButton(
+                                    onClick = { onTriggerReminderAction(rem) },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(text = rem.actionLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. This Week & Daily Average Row
         if (state.customPrefs.showWeekSummaryRow) {
             item {
                 Row(
@@ -582,7 +782,7 @@ fun OverviewScreen(
             }
         }
 
-        // 5. Monthly Review ("Bilan du mois" — Best & Worst Category)
+        // 7. Monthly Review ("Bilan du mois" — Best & Worst Category)
         if (state.customPrefs.showMonthlyReviewCard) {
             item {
                 Card(
@@ -709,80 +909,7 @@ fun OverviewScreen(
             }
         }
 
-        // 6. Upcoming Bills Card
-        if (state.customPrefs.showBillsCard && state.bills.isNotEmpty()) {
-            item {
-                Card(
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Text(
-                            text = strings.billsTitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                        state.bills.forEach { bill ->
-                            val isPaid = PayCycleEngine.isBillPaidInCycle(bill, state.activeWindow.cycleKey)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = bill.name,
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                    Text(
-                                        text = "${PayCycleEngine.formatDh(bill.amount)} $cur · Jour ${bill.dayOrTurn}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                if (isPaid) {
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.primaryContainer
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Check,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                text = "Payé",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    FilledTonalButton(
-                                        onClick = { onPayBill(bill) },
-                                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                                    ) {
-                                        Text(text = strings.payBillBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 7. Hero Add Expense Button + Customization Studio Shortcut
+        // 8. Hero Add Expense Button + Customization Studio Shortcut
         item {
             Button(
                 onClick = { onOpenAddModal("expense") },

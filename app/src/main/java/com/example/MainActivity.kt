@@ -33,14 +33,18 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -96,13 +100,18 @@ import com.example.ui.SettingsBottomSheet
 import com.example.ui.TransactionEditorSheet
 import com.example.ui.WeekScreen
 import com.example.ui.signOutUser
+import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.paletteForKey
 import com.google.firebase.Firebase
+import com.google.firebase.appcheck.appCheck
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreSettings
+import com.google.firebase.firestore.PersistentCacheSettings
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -120,9 +129,28 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        initFirebaseSecurityAndOfflineCache()
         val launchedFromQuickAdd = intent?.action == "com.aistudio.masroufi.ACTION_QUICK_ADD"
         setContent {
             AppNavigation(openQuickAddOnLaunch = launchedFromQuickAdd)
+        }
+    }
+
+    private fun initFirebaseSecurityAndOfflineCache() {
+        runCatching {
+            if (BuildConfig.DEBUG) {
+                Firebase.appCheck.installAppCheckProviderFactory(
+                    DebugAppCheckProviderFactory.getInstance()
+                )
+            }
+        }
+        runCatching {
+            val databaseId = getString(R.string.firestore_database_id)
+            val db = FirebaseFirestore.getInstance(databaseId)
+            val settings = FirebaseFirestoreSettings.Builder()
+                .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
+                .build()
+            db.firestoreSettings = settings
         }
     }
 }
@@ -266,7 +294,66 @@ fun MainFeatureScreen(
                         .padding(innerPadding),
                     contentAlignment = Alignment.TopCenter
                 ) {
-                    Box(modifier = Modifier.widthIn(max = 600.dp)) {
+                    Column(modifier = Modifier.widthIn(max = 600.dp)) {
+                        val currentError = state.errorMessage
+                        if (!currentError.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = AccentCoral.copy(alpha = 0.14f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                                    .testTag("sync_error_banner")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudOff,
+                                        contentDescription = null,
+                                        tint = AccentCoral,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = currentError,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    FilledTonalButton(
+                                        onClick = { viewModel.retrySync() },
+                                        modifier = Modifier.testTag("retry_sync_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "Réessayer",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(start = 4.dp)
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { viewModel.dismissError() },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Fermer",
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         when (activeTab) {
                             "vue" -> OverviewScreen(
                                 state = state,
@@ -302,7 +389,21 @@ fun MainFeatureScreen(
                                     activeItemSheetType = "preset"
                                 },
                                 onDeletePreset = { id -> viewModel.deleteFinancialItem(id) },
-                                onOpenCustomizationModal = { showCustomizationSheet = true }
+                                onOpenCustomizationModal = { showCustomizationSheet = true },
+                                onLoadDemoData = {
+                                    viewModel.loadDemoData {
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Mode Démo activé !")
+                                        }
+                                    }
+                                },
+                                onTriggerReminderAction = { reminder ->
+                                    when (reminder.kind) {
+                                        "bill" -> viewModel.payRecurringBill(reminder.item)
+                                        "daret" -> viewModel.payDaretRound(reminder.item)
+                                        "debt" -> viewModel.settleDebt(reminder.item, 100.0)
+                                    }
+                                }
                             )
 
                             "semaine" -> WeekScreen(
@@ -428,6 +529,20 @@ fun MainFeatureScreen(
                         viewModel.saveBudgetSettings(b, day, roll)
                     },
                     onOpenCustomizationStudio = { showCustomizationSheet = true },
+                    onLoadDemoData = {
+                        viewModel.loadDemoData {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Mode Démo chargé avec succès !")
+                            }
+                        }
+                    },
+                    onResetCleanAccount = {
+                        viewModel.resetToCleanAccount {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Compte réinitialisé à 0 DH !")
+                            }
+                        }
+                    },
                     onSignOut = {
                         signOutUser(context, onSignOutComplete = {}, scope = scope)
                     }
