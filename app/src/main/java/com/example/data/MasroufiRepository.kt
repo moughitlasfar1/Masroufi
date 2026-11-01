@@ -37,7 +37,21 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             docRef.snapshots()
                 .map { snapshot ->
                     if (snapshot.exists()) {
-                        snapshot.toObject(UserProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        val isDark = snapshot.getBoolean("isDarkTheme")
+                            ?: snapshot.getBoolean("darkTheme")
+                            ?: true
+                        UserProfile(
+                            id = snapshot.id,
+                            userId = snapshot.getString("userId") ?: userId,
+                            baseBudget = snapshot.getDouble("baseBudget") ?: 6400.0,
+                            payCycleDay = (snapshot.getLong("payCycleDay") ?: 1L).toInt().coerceIn(1, 28),
+                            rolloverEnabled = snapshot.getBoolean("rolloverEnabled") ?: true,
+                            language = snapshot.getString("language") ?: "fr",
+                            isDarkTheme = isDark,
+                            seeded = snapshot.getBoolean("seeded") ?: true,
+                            createdAt = snapshot.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+                            updatedAt = snapshot.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        )
                     } else {
                         null
                     }
@@ -82,7 +96,23 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         emitAll(
             colRef.whereEqualTo("userId", userId).snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(EnvelopeConfig::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    snapshot.documents.mapNotNull { doc ->
+                        val hasCapVal = doc.getBoolean("hasCap") ?: true
+                        EnvelopeConfig(
+                            id = doc.id,
+                            userId = doc.getString("userId") ?: userId,
+                            key = doc.getString("key") ?: "",
+                            nameFr = doc.getString("nameFr") ?: "",
+                            nameAr = doc.getString("nameAr") ?: "",
+                            nameDarija = doc.getString("nameDarija") ?: "",
+                            nameEn = doc.getString("nameEn") ?: "",
+                            percentage = doc.getDouble("percentage") ?: 0.0,
+                            hasCap = hasCapVal,
+                            colorHex = doc.getString("colorHex") ?: "#10B981",
+                            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+                            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        )
+                    }
                 }
                 .catch { error ->
                     if (error is Exception) handleFirestoreError(error, OperationType.LIST, colRef.path)
@@ -109,27 +139,18 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid)
         try {
-            val existing = docRef.get().await()
-            if (existing.exists()) {
-                val created = existing.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                docRef.set(
-                    profile.copy(
-                        id = uid,
-                        userId = uid,
-                        createdAt = created,
-                        updatedAt = null
-                    )
-                ).await()
-            } else {
-                docRef.set(
-                    profile.copy(
-                        id = uid,
-                        userId = uid,
-                        createdAt = null,
-                        updatedAt = null
-                    )
-                ).await()
-            }
+            val payload = mapOf(
+                "userId" to uid,
+                "baseBudget" to profile.baseBudget.coerceIn(0.0, 100000000.0),
+                "payCycleDay" to profile.payCycleDay.coerceIn(1, 28),
+                "rolloverEnabled" to profile.rolloverEnabled,
+                "language" to (if (profile.language in listOf("fr", "ar", "darija", "en")) profile.language else "fr"),
+                "isDarkTheme" to profile.isDarkTheme,
+                "seeded" to true,
+                "createdAt" to (profile.createdAt ?: FieldValue.serverTimestamp()),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -141,26 +162,24 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     suspend fun upsertTransaction(tx: TransactionItem): String {
         val uid = requireUserId()
         val colRef = db.collection("users").document(uid).collection("transactions")
-        val docRef = if (tx.id.isNotBlank()) colRef.document(tx.id) else colRef.document("tx_${System.currentTimeMillis()}")
+        val cleanId = tx.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+        val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("tx_${System.currentTimeMillis()}")
         try {
-            if (tx.id.isNotBlank() && tx.createdAt != null) {
-                docRef.set(
-                    tx.copy(
-                        id = docRef.id,
-                        userId = uid,
-                        updatedAt = null
-                    )
-                ).await()
-            } else {
-                docRef.set(
-                    tx.copy(
-                        id = docRef.id,
-                        userId = uid,
-                        createdAt = null,
-                        updatedAt = null
-                    )
-                ).await()
-            }
+            val safeType = if (tx.type in listOf("expense", "income", "transfer")) tx.type else "expense"
+            val payload = mapOf(
+                "userId" to uid,
+                "type" to safeType,
+                "amount" to tx.amount.coerceIn(0.01, 100000000.0),
+                "category" to tx.category.ifBlank { "Général" }.take(120),
+                "envelopeKey" to tx.envelopeKey.ifBlank { "autre" }.take(60),
+                "accountId" to tx.accountId.ifBlank { "acc_cash" }.take(80),
+                "toAccountId" to tx.toAccountId.take(80),
+                "desc" to tx.desc.take(250),
+                "isoDate" to tx.isoDate.ifBlank { "2026-11-01" }.take(20),
+                "createdAt" to (tx.createdAt ?: FieldValue.serverTimestamp()),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
             return docRef.id
         } catch (e: CancellationException) {
             throw e
@@ -184,6 +203,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     }
 
     suspend fun deleteTransaction(txId: String) {
+        if (txId.isBlank()) return
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid).collection("transactions").document(txId)
         try {
@@ -199,13 +219,20 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     suspend fun upsertAccount(account: AccountItem): String {
         val uid = requireUserId()
         val colRef = db.collection("users").document(uid).collection("accounts")
-        val docRef = if (account.id.isNotBlank()) colRef.document(account.id) else colRef.document("acc_${System.currentTimeMillis()}")
+        val cleanId = account.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+        val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("acc_${System.currentTimeMillis()}")
         try {
-            if (account.id.isNotBlank() && account.createdAt != null) {
-                docRef.set(account.copy(id = docRef.id, userId = uid, updatedAt = null)).await()
-            } else {
-                docRef.set(account.copy(id = docRef.id, userId = uid, createdAt = null, updatedAt = null)).await()
-            }
+            val safeKind = if (account.kind in listOf("cash", "bank", "wallet")) account.kind else "cash"
+            val payload = mapOf(
+                "userId" to uid,
+                "name" to account.name.ifBlank { "Compte" }.take(80),
+                "kind" to safeKind,
+                "initialBalance" to account.initialBalance.coerceIn(-100000000.0, 100000000.0),
+                "colorHex" to account.colorHex.ifBlank { "#10B981" }.take(20),
+                "createdAt" to (account.createdAt ?: FieldValue.serverTimestamp()),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
             return docRef.id
         } catch (e: CancellationException) {
             throw e
@@ -216,6 +243,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     }
 
     suspend fun deleteAccount(accId: String) {
+        if (accId.isBlank()) return
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid).collection("accounts").document(accId)
         try {
@@ -231,13 +259,24 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     suspend fun upsertEnvelope(envelope: EnvelopeConfig): String {
         val uid = requireUserId()
         val colRef = db.collection("users").document(uid).collection("envelopes")
-        val docRef = if (envelope.id.isNotBlank()) colRef.document(envelope.id) else colRef.document("env_${System.currentTimeMillis()}")
+        val cleanId = envelope.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+        val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("env_${System.currentTimeMillis()}")
         try {
-            if (envelope.id.isNotBlank() && envelope.createdAt != null) {
-                docRef.set(envelope.copy(id = docRef.id, userId = uid, updatedAt = null)).await()
-            } else {
-                docRef.set(envelope.copy(id = docRef.id, userId = uid, createdAt = null, updatedAt = null)).await()
-            }
+            val safeName = envelope.nameFr.ifBlank { "Catégorie" }.take(100)
+            val payload = mapOf(
+                "userId" to uid,
+                "key" to envelope.key.ifBlank { "custom" }.take(60),
+                "nameFr" to safeName,
+                "nameAr" to envelope.nameAr.ifBlank { safeName }.take(100),
+                "nameDarija" to envelope.nameDarija.ifBlank { safeName }.take(100),
+                "nameEn" to envelope.nameEn.ifBlank { safeName }.take(100),
+                "percentage" to envelope.percentage.coerceIn(0.0, 100.0),
+                "hasCap" to envelope.hasCap,
+                "colorHex" to envelope.colorHex.ifBlank { "#10B981" }.take(20),
+                "createdAt" to (envelope.createdAt ?: FieldValue.serverTimestamp()),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
             return docRef.id
         } catch (e: CancellationException) {
             throw e
@@ -248,6 +287,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     }
 
     suspend fun deleteEnvelope(envId: String) {
+        if (envId.isBlank()) return
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid).collection("envelopes").document(envId)
         try {
@@ -263,13 +303,25 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     suspend fun upsertFinancialItem(item: FinancialItem): String {
         val uid = requireUserId()
         val colRef = db.collection("users").document(uid).collection("items")
-        val docRef = if (item.id.isNotBlank()) colRef.document(item.id) else colRef.document("item_${System.currentTimeMillis()}")
+        val cleanId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+        val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("item_${System.currentTimeMillis()}")
         try {
-            if (item.id.isNotBlank() && item.createdAt != null) {
-                docRef.set(item.copy(id = docRef.id, userId = uid, updatedAt = null)).await()
-            } else {
-                docRef.set(item.copy(id = docRef.id, userId = uid, createdAt = null, updatedAt = null)).await()
-            }
+            val allowedTypes = listOf("goal", "bill", "debt", "daret", "seasonal", "preset", "custom_prefs")
+            val safeType = if (item.itemType in allowedTypes) item.itemType else "goal"
+            val payload = mapOf(
+                "userId" to uid,
+                "itemType" to safeType,
+                "name" to item.name.ifBlank { "Élément" }.take(120),
+                "subtitle" to item.subtitle.take(250),
+                "amount" to item.amount.coerceIn(0.0, 100000000.0),
+                "secondaryAmount" to item.secondaryAmount.coerceIn(0.0, 100000000.0),
+                "dayOrTurn" to item.dayOrTurn.coerceIn(0, 366),
+                "extraInt" to item.extraInt.coerceIn(0, 366),
+                "dateOrCycle" to item.dateOrCycle.take(250),
+                "createdAt" to (item.createdAt ?: FieldValue.serverTimestamp()),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
             return docRef.id
         } catch (e: CancellationException) {
             throw e
@@ -280,6 +332,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     }
 
     suspend fun deleteFinancialItem(itemId: String) {
+        if (itemId.isBlank()) return
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid).collection("items").document(itemId)
         try {

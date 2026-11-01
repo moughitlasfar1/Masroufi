@@ -60,8 +60,8 @@ import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.AccentViolet
+import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.roundToInt
 
 @Composable
 fun MonthScreen(
@@ -69,11 +69,12 @@ fun MonthScreen(
     strings: AppStrings,
     onUpdateWhatIf: (String, Int) -> Unit,
     onContributeSeasonal: (FinancialItem) -> Unit,
-    onOpenNewSeasonal: () -> Unit,
+    onOpenNewSeasonal: (FinancialItem?) -> Unit,
     onDeleteItem: (String) -> Unit
 ) {
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val pct = if (state.totalAvailableBudget > 0) {
-        ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).roundToInt()
+        ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).safeRoundToInt()
     } else 0
     val isOver = state.remainingBudget < 0
 
@@ -113,19 +114,19 @@ fun MonthScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${strings.incomes}: ${PayCycleEngine.formatDh(state.totalAvailableBudget)} DH",
+                            text = "${strings.incomes}: ${PayCycleEngine.formatDh(state.totalAvailableBudget)} $cur",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "${strings.expenses}: ${PayCycleEngine.formatDh(state.cycleExpenses)} DH",
+                            text = "${strings.expenses}: ${PayCycleEngine.formatDh(state.cycleExpenses)} $cur",
                             style = MaterialTheme.typography.labelLarge,
                             color = AccentCoral
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
                     LinearProgressIndicator(
-                        progress = { (pct / 100f).coerceIn(0f, 1f) },
+                        progress = { (pct / 100f).safeFraction() },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(10.dp)
@@ -140,7 +141,7 @@ fun MonthScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "${if (isOver) "-" else ""}${PayCycleEngine.formatDh(kotlin.math.abs(state.remainingBudget))} DH",
+                        text = "${if (isOver) "-" else ""}${PayCycleEngine.formatDh(abs(state.remainingBudget))} $cur",
                         style = MaterialTheme.typography.displayMedium,
                         color = if (isOver) AccentCoral else AccentEmerald
                     )
@@ -150,12 +151,12 @@ fun MonthScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${strings.extraIncome}: ${PayCycleEngine.formatDh(state.cycleIncomes)} DH",
+                            text = "${strings.extraIncome}: ${PayCycleEngine.formatDh(state.cycleIncomes)} $cur",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "${strings.endOfMonthProj}: ${PayCycleEngine.formatDh(state.projectedCycleSpend)} DH",
+                            text = "${strings.endOfMonthProj}: ${PayCycleEngine.formatDh(state.projectedCycleSpend)} $cur",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -222,11 +223,11 @@ fun MonthScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Slider(
-                        value = state.whatIfState.cutPercentage.toFloat(),
+                        value = state.whatIfState.cutPercentage.toFloat().coerceIn(5f, 70f),
                         onValueChange = { newVal ->
                             onUpdateWhatIf(
                                 selectedEnv?.config?.key ?: "cafe",
-                                newVal.roundToInt()
+                                newVal.safeRoundToInt().coerceIn(5, 70)
                             )
                         },
                         valueRange = 5f..70f,
@@ -289,7 +290,7 @@ fun MonthScreen(
                             }
                         }
                         FilledTonalButton(
-                            onClick = onOpenNewSeasonal,
+                            onClick = { onOpenNewSeasonal(null) },
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
                             Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -299,13 +300,15 @@ fun MonthScreen(
                     Spacer(modifier = Modifier.height(12.dp))
 
                     state.seasonals.forEach { item ->
-                        val prog = if (item.amount > 0) (item.secondaryAmount / item.amount).toFloat().coerceIn(0f, 1f) else 0f
+                        val prog = if (item.amount > 0) (item.secondaryAmount / item.amount).toFloat().safeFraction() else 0f
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 5.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable { onOpenNewSeasonal(item) }
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Row(
@@ -314,9 +317,20 @@ fun MonthScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(text = item.name, style = MaterialTheme.typography.labelLarge)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(text = item.name, style = MaterialTheme.typography.labelLarge)
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                         Text(
-                                            text = "${PayCycleEngine.formatDh(item.secondaryAmount)} / ${PayCycleEngine.formatDh(item.amount)} DH · ${item.dateOrCycle}",
+                                            text = "${PayCycleEngine.formatDh(item.secondaryAmount)} / ${PayCycleEngine.formatDh(item.amount)} $cur · ${item.dateOrCycle}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -326,7 +340,7 @@ fun MonthScreen(
                                             onClick = { onContributeSeasonal(item) },
                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                                         ) {
-                                            Text("+ 200 DH", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text("+ 200 $cur", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                         IconButton(onClick = { onDeleteItem(item.id) }) {
                                             Icon(
@@ -363,15 +377,16 @@ fun BudgetAndDaretScreen(
     strings: AppStrings,
     onOpenCustomizeEnvelopes: () -> Unit,
     onPayDaretRound: (FinancialItem) -> Unit,
-    onOpenNewDaret: () -> Unit,
+    onOpenNewDaret: (FinancialItem?) -> Unit,
     onSettleDebt: (FinancialItem) -> Unit,
-    onOpenNewDebt: () -> Unit,
+    onOpenNewDebt: (FinancialItem?) -> Unit,
     onContributeGoal: (FinancialItem) -> Unit,
-    onOpenNewGoal: () -> Unit,
-    onOpenNewBill: () -> Unit,
+    onOpenNewGoal: (FinancialItem?) -> Unit,
+    onOpenNewBill: (FinancialItem?) -> Unit,
     onPayBill: (FinancialItem) -> Unit,
     onDeleteItem: (String) -> Unit
 ) {
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -419,7 +434,8 @@ fun BudgetAndDaretScreen(
                     CategoryDonutChart(
                         envelopes = state.envelopes,
                         totalSpent = state.cycleExpenses,
-                        lang = state.profile.language
+                        lang = state.profile.language,
+                        currencySymbol = cur
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -431,6 +447,8 @@ fun BudgetAndDaretScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 5.dp)
+                                .clip(RoundedCornerShape(22.dp))
+                                .clickable { onOpenCustomizeEnvelopes() }
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Row(
@@ -445,7 +463,7 @@ fun BudgetAndDaretScreen(
                                     )
                                     Text(
                                         text = if (envStatus.config.hasCap) {
-                                            "${PayCycleEngine.formatDh(envStatus.totalAvailable)} DH (${envStatus.config.percentage}%)"
+                                            "${PayCycleEngine.formatDh(envStatus.totalAvailable)} $cur (${envStatus.config.percentage.safeRoundToInt()}%)"
                                         } else {
                                             strings.noCap
                                         },
@@ -470,7 +488,7 @@ fun BudgetAndDaretScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "${strings.expenses}: ${PayCycleEngine.formatDh(envStatus.spent)} DH",
+                                        text = "${strings.expenses}: ${PayCycleEngine.formatDh(envStatus.spent)} $cur",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
@@ -484,7 +502,7 @@ fun BudgetAndDaretScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
 
                                 LinearProgressIndicator(
-                                    progress = { (envStatus.usagePercent / 100f).coerceIn(0f, 1f) },
+                                    progress = { (envStatus.usagePercent / 100f).safeFraction() },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(10.dp)
@@ -531,7 +549,7 @@ fun BudgetAndDaretScreen(
                                 )
                             }
                         }
-                        FilledTonalButton(onClick = onOpenNewDaret) {
+                        FilledTonalButton(onClick = { onOpenNewDaret(null) }) {
                             Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         }
                     }
@@ -539,15 +557,17 @@ fun BudgetAndDaretScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     state.darets.forEach { daret ->
-                        val totalMembers = daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+                        val totalMembers = daret.secondaryAmount.safeRoundToInt().coerceAtLeast(1)
                         val totalPot = daret.amount * totalMembers
-                        val progress = (daret.extraInt.toFloat() / totalMembers.toFloat()).coerceIn(0f, 1f)
+                        val progress = (daret.extraInt.toFloat() / totalMembers.toFloat()).safeFraction()
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 5.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable { onOpenNewDaret(daret) }
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Row(
@@ -556,7 +576,18 @@ fun BudgetAndDaretScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(text = daret.name, style = MaterialTheme.typography.labelLarge)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(text = daret.name, style = MaterialTheme.typography.labelLarge)
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                         Text(
                                             text = strings.daretTurnLabel
                                                 .replace("{turn}", daret.dayOrTurn.toString())
@@ -566,7 +597,7 @@ fun BudgetAndDaretScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            text = "${PayCycleEngine.formatDh(daret.amount)} DH/mois · Payé: ${daret.extraInt}/$totalMembers · Réception: ${daret.dateOrCycle}",
+                                            text = "${PayCycleEngine.formatDh(daret.amount)} $cur/mois · Payé: ${daret.extraInt}/$totalMembers · Réception: ${daret.dateOrCycle}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontSize = 11.5.sp,
                                             color = AccentViolet
@@ -624,7 +655,7 @@ fun BudgetAndDaretScreen(
                                 color = AccentSkyBlue
                             )
                         }
-                        FilledTonalButton(onClick = onOpenNewDebt) {
+                        FilledTonalButton(onClick = { onOpenNewDebt(null) }) {
                             Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         }
                     }
@@ -634,13 +665,15 @@ fun BudgetAndDaretScreen(
                     state.debts.forEach { debt ->
                         val isLent = debt.dateOrCycle != "borrowed"
                         val remDebt = max(0.0, debt.amount - debt.secondaryAmount)
-                        val prog = if (debt.amount > 0) (debt.secondaryAmount / debt.amount).toFloat().coerceIn(0f, 1f) else 0f
+                        val prog = if (debt.amount > 0) (debt.secondaryAmount / debt.amount).toFloat().safeFraction() else 0f
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 5.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable { onOpenNewDebt(debt) }
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Row(
@@ -649,12 +682,23 @@ fun BudgetAndDaretScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "${debt.name} (${if (isLent) strings.debtsLent else strings.debtsBorrowed})",
+                                                style = MaterialTheme.typography.labelLarge
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                         Text(
-                                            text = "${debt.name} (${if (isLent) strings.debtsLent else strings.debtsBorrowed})",
-                                            style = MaterialTheme.typography.labelLarge
-                                        )
-                                        Text(
-                                            text = "Reste: ${PayCycleEngine.formatDh(remDebt)} DH / ${PayCycleEngine.formatDh(debt.amount)} DH",
+                                            text = "Reste: ${PayCycleEngine.formatDh(remDebt)} $cur / ${PayCycleEngine.formatDh(debt.amount)} $cur",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -706,10 +750,10 @@ fun BudgetAndDaretScreen(
                             Text(text = strings.goalsTitle, style = MaterialTheme.typography.labelSmall)
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilledTonalButton(onClick = onOpenNewGoal) {
+                            FilledTonalButton(onClick = { onOpenNewGoal(null) }) {
                                 Text("+ Objectif", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
-                            FilledTonalButton(onClick = onOpenNewBill) {
+                            FilledTonalButton(onClick = { onOpenNewBill(null) }) {
                                 Text("+ Facture", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
                         }
@@ -718,13 +762,15 @@ fun BudgetAndDaretScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     state.goals.forEach { goal ->
-                        val prog = if (goal.amount > 0) (goal.secondaryAmount / goal.amount).toFloat().coerceIn(0f, 1f) else 0f
+                        val prog = if (goal.amount > 0) (goal.secondaryAmount / goal.amount).toFloat().safeFraction() else 0f
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 5.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .clickable { onOpenNewGoal(goal) }
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Row(
@@ -733,9 +779,20 @@ fun BudgetAndDaretScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(text = goal.name, style = MaterialTheme.typography.labelLarge)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(text = goal.name, style = MaterialTheme.typography.labelLarge)
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                         Text(
-                                            text = "${PayCycleEngine.formatDh(goal.secondaryAmount)} / ${PayCycleEngine.formatDh(goal.amount)} DH",
+                                            text = "${PayCycleEngine.formatDh(goal.secondaryAmount)} / ${PayCycleEngine.formatDh(goal.amount)} $cur",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -744,7 +801,7 @@ fun BudgetAndDaretScreen(
                                         onClick = { onContributeGoal(goal) },
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                                     ) {
-                                        Text("+ 200 DH", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                        Text("+ 200 $cur", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                                     }
                                     IconButton(onClick = { onDeleteItem(goal.id) }) {
                                         Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete")
@@ -774,7 +831,8 @@ fun BudgetAndDaretScreen(
 fun CategoryDonutChart(
     envelopes: List<EnvelopeStatus>,
     totalSpent: Double,
-    lang: String
+    lang: String,
+    currencySymbol: String = "DH"
 ) {
     val palette = listOf(AccentEmerald, AccentSkyBlue, AccentAmber, AccentViolet, AccentCoral)
     Row(
@@ -803,14 +861,16 @@ fun CategoryDonutChart(
                     envelopes.forEachIndexed { index, env ->
                         if (env.spent > 0) {
                             val sweep = ((env.spent / totalSpent) * 360.0).toFloat()
-                            drawArc(
-                                color = palette[index % palette.size],
-                                startAngle = startAngle,
-                                sweepAngle = sweep,
-                                useCenter = false,
-                                style = stroke
-                            )
-                            startAngle += sweep
+                            if (sweep.isFinite() && sweep > 0f) {
+                                drawArc(
+                                    color = palette[index % palette.size],
+                                    startAngle = startAngle,
+                                    sweepAngle = sweep,
+                                    useCenter = false,
+                                    style = stroke
+                                )
+                                startAngle += sweep
+                            }
                         }
                     }
                 }
@@ -822,7 +882,7 @@ fun CategoryDonutChart(
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = "DH",
+                    text = currencySymbol,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -834,7 +894,7 @@ fun CategoryDonutChart(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             envelopes.forEachIndexed { index, env ->
-                val sharePct = if (totalSpent > 0) ((env.spent / totalSpent) * 100.0).roundToInt() else 0
+                val sharePct = if (totalSpent > 0) ((env.spent / totalSpent) * 100.0).safeRoundToInt() else 0
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)

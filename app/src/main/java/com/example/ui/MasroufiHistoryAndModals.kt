@@ -1,8 +1,11 @@
 package com.example.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -19,10 +22,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -47,11 +54,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.AccountItem
+import com.example.data.CustomizationPrefs
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.TransactionItem
@@ -60,6 +71,7 @@ import com.example.domain.PayCycleEngine
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
+import com.example.ui.theme.MasroufiPalettes
 
 @Composable
 fun HistoryScreen(
@@ -73,6 +85,7 @@ fun HistoryScreen(
     onShareCsv: () -> Unit,
     onOpenRestoreModal: () -> Unit
 ) {
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -265,7 +278,7 @@ fun HistoryScreen(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
-                            text = "$prefix${PayCycleEngine.formatDh(tx.amount)} DH",
+                            text = "$prefix${PayCycleEngine.formatDh(tx.amount)} $cur",
                             style = MaterialTheme.typography.titleMedium,
                             color = amountColor,
                             fontWeight = FontWeight.ExtraBold
@@ -358,6 +371,7 @@ fun TransactionEditorSheet(
     onSave: (String, String, Double, String, String, String, String, String, String) -> Unit,
     onDelete: ((TransactionItem) -> Unit)? = null
 ) {
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     var txType by remember { mutableStateOf(existingTx?.type ?: initialType) }
     var amountText by remember { mutableStateOf(existingTx?.amount?.let { if (it > 0) it.toString() else "" } ?: "") }
     var isoDate by remember { mutableStateOf(existingTx?.isoDate ?: PayCycleEngine.todayIso()) }
@@ -391,6 +405,7 @@ fun TransactionEditorSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -421,7 +436,7 @@ fun TransactionEditorSheet(
             OutlinedTextField(
                 value = amountText,
                 onValueChange = { amountText = it },
-                label = { Text("${strings.amountLabel} (DH)") },
+                label = { Text("${strings.amountLabel} ($cur)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
@@ -580,9 +595,10 @@ fun SettingsBottomSheet(
     strings: AppStrings,
     onDismiss: () -> Unit,
     onSaveSettings: (Double, Int, Boolean) -> Unit,
+    onOpenCustomizationStudio: () -> Unit,
     onSignOut: () -> Unit
 ) {
-    var budgetText by remember { mutableStateOf(state.profile.baseBudget.toInt().toString()) }
+    var budgetText by remember { mutableStateOf(state.profile.baseBudget.safeRoundToInt().toString()) }
     var payDayText by remember { mutableStateOf(state.profile.payCycleDay.toString()) }
     var rolloverEnabled by remember { mutableStateOf(state.profile.rolloverEnabled) }
 
@@ -590,6 +606,7 @@ fun SettingsBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -632,9 +649,21 @@ fun SettingsBottomSheet(
                 )
             }
 
+            FilledTonalButton(
+                onClick = {
+                    onDismiss()
+                    onOpenCustomizationStudio()
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Studio de Personnalisation (Thèmes, Cartes, Devise)", fontWeight = FontWeight.Bold)
+            }
+
             Button(
                 onClick = {
-                    val b = budgetText.toDoubleOrNull() ?: 6400.0
+                    val b = budgetText.replace(",", ".").toDoubleOrNull() ?: 6400.0
                     val d = (payDayText.toIntOrNull() ?: 1).coerceIn(1, 28)
                     onSaveSettings(b, d, rolloverEnabled)
                     onDismiss()
@@ -666,55 +695,394 @@ fun SettingsBottomSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CustomizeEnvelopesSheet(
+fun CustomizationStudioSheet(
     state: DashboardState,
     onDismiss: () -> Unit,
-    onSaveEnvelope: (EnvelopeConfig) -> Unit
+    onSaveCustomPrefs: (CustomizationPrefs) -> Unit
 ) {
-    var newName by remember { mutableStateOf("") }
-    var newPct by remember { mutableStateOf("10") }
+    var selectedPalette by remember { mutableStateOf(state.customPrefs.accentPalette) }
+    var currencySymbol by remember { mutableStateOf(state.customPrefs.currencySymbol.ifBlank { "DH" }) }
+    var customTitle by remember { mutableStateOf(state.customPrefs.customTitle) }
+    var customSubtitle by remember { mutableStateOf(state.customPrefs.customSubtitle) }
+    var showSafeToSpend by remember { mutableStateOf(state.customPrefs.showSafeToSpend) }
+    var showAccountsCard by remember { mutableStateOf(state.customPrefs.showAccountsCard) }
+    var showQuickPresetsCard by remember { mutableStateOf(state.customPrefs.showQuickPresetsCard) }
+    var showWeekSummaryRow by remember { mutableStateOf(state.customPrefs.showWeekSummaryRow) }
+    var showMonthlyReviewCard by remember { mutableStateOf(state.customPrefs.showMonthlyReviewCard) }
+    var showBillsCard by remember { mutableStateOf(state.customPrefs.showBillsCard) }
+
+    val lang = state.profile.language
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Palette,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = when (lang) {
+                        "darija" -> "تخصيص التطبيق والواجهة (Gostimazation)"
+                        "ar" -> "تخصيص المظهر والواجهة"
+                        "en" -> "App & UI Customization Studio"
+                        else -> "Studio de Personnalisation"
+                    },
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
+
+            // 1. Accent Color Palette Picker
             Text(
-                text = "Personnaliser les Enveloppes (%)",
-                style = MaterialTheme.typography.titleLarge
+                text = when (lang) {
+                    "darija" -> "1. ستيل والألوان (Palette Maroc)"
+                    "ar" -> "1. لوحة الألوان"
+                    "en" -> "1. Moroccan Accent Theme"
+                    else -> "1. Palette de Couleurs & Thème"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
             )
 
-            state.envelopes.filter { it.config.hasCap }.forEach { envStatus ->
-                var pctInput by remember(envStatus.config.id) {
-                    mutableStateOf(envStatus.config.percentage.toString())
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                MasroufiPalettes.forEach { pal ->
+                    val isSelected = selectedPalette == pal.key
+                    val label = pal.labelFr
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .width(142.dp)
+                            .clip(RoundedCornerShape(18.dp))
+                            .border(
+                                width = if (isSelected) 2.dp else 1.dp,
+                                color = if (isSelected) pal.primaryDark else Color.Transparent,
+                                shape = RoundedCornerShape(18.dp)
+                            )
+                            .clickable { selectedPalette = pal.key }
+                            .testTag("palette_option_${pal.key}")
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(34.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Brush.linearGradient(listOf(pal.heroStart, pal.heroEnd))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+                    }
                 }
+            }
+
+            // 2. Currency Symbol
+            Text(
+                text = when (lang) {
+                    "darija" -> "2. رمز العملة (Devise)"
+                    "ar" -> "2. رمز العملة"
+                    "en" -> "2. Currency Symbol"
+                    else -> "2. Symbole de Devise"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("DH", "MAD", "د.م.", "€", "$").forEach { sym ->
+                    FilterChip(
+                        selected = currencySymbol == sym,
+                        onClick = { currencySymbol = sym },
+                        label = { Text(sym, fontWeight = FontWeight.ExtraBold) }
+                    )
+                }
+            }
+
+            // 3. Custom App Title & Subtitle
+            Text(
+                text = when (lang) {
+                    "darija" -> "3. سمية التطبيق والعنوان الفرعي"
+                    "ar" -> "3. اسم التطبيق والعنوان الفرعي"
+                    "en" -> "3. Custom App Header & Tagline"
+                    else -> "3. Titre & Sous-titre personnalisés"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            OutlinedTextField(
+                value = customTitle,
+                onValueChange = { customTitle = it.take(40) },
+                label = { Text("Nom personnalisé (ex: Masroufi Pro, Budget Dari)") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = customSubtitle,
+                onValueChange = { customSubtitle = it.take(80) },
+                label = { Text("Sous-titre personnalisé (optionnel)") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // 4. Home Dashboard Layout Visibility Toggles
+            Text(
+                text = when (lang) {
+                    "darija" -> "4. الكارطات اللي يبانو فـ الصفحة الرئيسية"
+                    "ar" -> "4. البطاقات المعروضة في الصفحة الرئيسية"
+                    "en" -> "4. Visible Home Screen Cards"
+                    else -> "4. Sections visibles sur l'écran d'accueil"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            val toggles = listOf(
+                Triple("Afficher Safe-to-Spend / Rythme par jour", showSafeToSpend) { v: Boolean -> showSafeToSpend = v },
+                Triple("Afficher Mes Comptes (Cash, Banque, Wallet)", showAccountsCard) { v: Boolean -> showAccountsCard = v },
+                Triple("Afficher les Achats Rapides (1-Tap)", showQuickPresetsCard) { v: Boolean -> showQuickPresetsCard = v },
+                Triple("Afficher le Résumé de la Semaine", showWeekSummaryRow) { v: Boolean -> showWeekSummaryRow = v },
+                Triple("Afficher le Bilan Mensuel automatique", showMonthlyReviewCard) { v: Boolean -> showMonthlyReviewCard = v },
+                Triple("Afficher les Factures & Abonnements", showBillsCard) { v: Boolean -> showBillsCard = v }
+            )
+
+            toggles.forEach { (title, checked, onChange) ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = envStatus.config.localizedName(state.profile.language),
+                        text = title,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f)
                     )
-                    OutlinedTextField(
-                        value = pctInput,
-                        onValueChange = { pctInput = it },
-                        suffix = { Text("%") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.width(100.dp)
+                    Switch(
+                        checked = checked,
+                        onCheckedChange = onChange
                     )
-                    FilledTonalButton(
-                        onClick = {
-                            val p = pctInput.replace(",", ".").toDoubleOrNull() ?: envStatus.config.percentage
-                            onSaveEnvelope(envStatus.config.copy(percentage = p.coerceIn(0.0, 100.0)))
-                        }
+                }
+            }
+
+            Button(
+                onClick = {
+                    onSaveCustomPrefs(
+                        CustomizationPrefs(
+                            accentPalette = selectedPalette,
+                            currencySymbol = currencySymbol.ifBlank { "DH" },
+                            customTitle = customTitle.trim(),
+                            customSubtitle = customSubtitle.trim(),
+                            showSafeToSpend = showSafeToSpend,
+                            showAccountsCard = showAccountsCard,
+                            showQuickPresetsCard = showQuickPresetsCard,
+                            showWeekSummaryRow = showWeekSummaryRow,
+                            showMonthlyReviewCard = showMonthlyReviewCard,
+                            showBillsCard = showBillsCard
+                        )
+                    )
+                    onDismiss()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .testTag("save_customization_btn")
+            ) {
+                Text("Appliquer la personnalisation", fontWeight = FontWeight.ExtraBold)
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CustomizeEnvelopesSheet(
+    state: DashboardState,
+    onDismiss: () -> Unit,
+    onSaveEnvelope: (EnvelopeConfig) -> Unit,
+    onDeleteEnvelope: (String) -> Unit,
+    onAutoBalance100: () -> Unit
+) {
+    var newName by remember { mutableStateOf("") }
+    var newPct by remember { mutableStateOf("10") }
+    val totalPct = state.envelopes.filter { it.config.hasCap }.sumOf { it.config.percentage }.safeRoundToInt()
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Personnaliser les Enveloppes",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Text(
+                        text = "Total alloué : $totalPct% (Recommandé : 100%)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (totalPct == 100) AccentEmerald else AccentCoral
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onAutoBalance100,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("100%", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            state.envelopes.forEach { envStatus ->
+                var nameInput by remember(envStatus.config.id, state.profile.language) {
+                    mutableStateOf(envStatus.config.localizedName(state.profile.language))
+                }
+                var pctInput by remember(envStatus.config.id, envStatus.config.percentage) {
+                    mutableStateOf(envStatus.config.percentage.safeRoundToInt().toString())
+                }
+                var hasCapToggle by remember(envStatus.config.id, envStatus.config.hasCap) {
+                    mutableStateOf(envStatus.config.hasCap)
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("OK")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = nameInput,
+                                onValueChange = { nameInput = it },
+                                label = { Text("Nom") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (hasCapToggle) {
+                                OutlinedTextField(
+                                    value = pctInput,
+                                    onValueChange = { pctInput = it },
+                                    label = { Text("%") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.width(78.dp)
+                                )
+                            }
+                            FilledTonalButton(
+                                onClick = {
+                                    val cleanName = nameInput.trim().ifBlank { envStatus.config.nameFr }
+                                    val p = if (hasCapToggle) {
+                                        (pctInput.replace(",", ".").toDoubleOrNull() ?: envStatus.config.percentage).coerceIn(0.0, 100.0)
+                                    } else 0.0
+                                    onSaveEnvelope(
+                                        envStatus.config.copy(
+                                            nameFr = cleanName,
+                                            nameAr = cleanName,
+                                            nameDarija = cleanName,
+                                            nameEn = cleanName,
+                                            percentage = p,
+                                            hasCap = hasCapToggle
+                                        )
+                                    )
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Text("OK", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Switch(
+                                    checked = hasCapToggle,
+                                    onCheckedChange = { checked ->
+                                        hasCapToggle = checked
+                                        val p = if (checked) {
+                                            (pctInput.replace(",", ".").toDoubleOrNull() ?: 10.0).coerceIn(1.0, 100.0)
+                                        } else 0.0
+                                        onSaveEnvelope(
+                                            envStatus.config.copy(
+                                                hasCap = checked,
+                                                percentage = p
+                                            )
+                                        )
+                                    }
+                                )
+                                Text(
+                                    text = if (hasCapToggle) "Plafond actif" else "Sans plafond",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            if (state.envelopes.size > 1) {
+                                IconButton(
+                                    onClick = { onDeleteEnvelope(envStatus.config.id) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteOutline,
+                                        contentDescription = "Supprimer enveloppe",
+                                        tint = AccentCoral,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -744,7 +1112,7 @@ fun CustomizeEnvelopesSheet(
                 Button(
                     onClick = {
                         val n = newName.trim()
-                        val p = newPct.toDoubleOrNull() ?: 10.0
+                        val p = newPct.replace(",", ".").toDoubleOrNull() ?: 10.0
                         if (n.isNotEmpty()) {
                             val key = n.lowercase().replace(Regex("[^a-z0-9]"), "_").take(20)
                             onSaveEnvelope(
@@ -776,31 +1144,79 @@ fun CustomizeEnvelopesSheet(
 @Composable
 fun AddFinancialItemSheet(
     itemType: String, // "goal", "bill", "debt", "daret", "seasonal", "preset", "account"
+    existingItem: FinancialItem? = null,
+    existingAccount: AccountItem? = null,
+    state: DashboardState,
     onDismiss: () -> Unit,
     onSaveItem: (FinancialItem) -> Unit,
-    onSaveAccount: (String, String, Double) -> Unit
+    onSaveAccount: (String, String, String, Double, String) -> Unit,
+    onDeleteAccount: ((String) -> Unit)? = null,
+    onDeleteItem: ((String) -> Unit)? = null
 ) {
-    var name by remember { mutableStateOf("") }
-    var amountText by remember { mutableStateOf("") }
-    var secondaryText by remember { mutableStateOf("10") }
-    var dayOrTurnText by remember { mutableStateOf("1") }
-    var dateOrDirText by remember { mutableStateOf("2027-01-01") }
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    var name by remember {
+        mutableStateOf(existingAccount?.name ?: existingItem?.name ?: "")
+    }
+    var amountText by remember {
+        mutableStateOf(
+            when {
+                existingAccount != null -> existingAccount.initialBalance.toString()
+                existingItem != null -> existingItem.amount.toString()
+                else -> ""
+            }
+        )
+    }
+    var secondaryText by remember {
+        mutableStateOf(existingItem?.secondaryAmount?.let { if (it > 0) it.toString() else "10" } ?: "10")
+    }
+    var dayOrTurnText by remember {
+        mutableStateOf((existingItem?.dayOrTurn ?: 1).toString())
+    }
+    var dateOrDirText by remember {
+        mutableStateOf(existingItem?.dateOrCycle?.ifBlank { "2027-01-01" } ?: "2027-01-01")
+    }
+
+    // Account customization fields
+    var selectedAccountKind by remember {
+        mutableStateOf(existingAccount?.kind ?: "bank")
+    }
+    var selectedAccountColor by remember {
+        mutableStateOf(existingAccount?.colorHex ?: "#38BDF8")
+    }
+
+    // Preset customization fields
+    var selectedPresetEnvelopeKey by remember {
+        mutableStateOf(
+            existingItem?.subtitle?.ifBlank { null }
+                ?: state.envelopes.firstOrNull()?.config?.key
+                ?: "cafe"
+        )
+    }
+    var selectedPresetAccountId by remember {
+        mutableStateOf(
+            existingItem?.dateOrCycle?.ifBlank { null }
+                ?: state.accounts.firstOrNull()?.account?.id
+                ?: "acc_cash"
+        )
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            val isEditing = existingAccount != null || existingItem != null
             val title = when (itemType) {
-                "account" -> "Nouveau Compte (Cash / Banque / Wallet)"
-                "daret" -> "Nouvelle Daret (Tontine)"
-                "debt" -> "Nouveau Crédit / Dette"
-                "seasonal" -> "Planificateur Saisonnier"
-                "bill" -> "Nouvelle Facture Récurrente"
-                "preset" -> "Nouveau Bouton d'Achat Rapide"
-                else -> "Nouvel Objectif d'Épargne"
+                "account" -> if (isEditing) "Modifier le Compte" else "Nouveau Compte (Cash / Banque / Wallet)"
+                "daret" -> if (isEditing) "Modifier la Daret" else "Nouvelle Daret (Tontine)"
+                "debt" -> if (isEditing) "Modifier Crédit / Dette" else "Nouveau Crédit / Dette"
+                "seasonal" -> if (isEditing) "Modifier Planificateur Saisonnier" else "Planificateur Saisonnier"
+                "bill" -> if (isEditing) "Modifier Facture Récurrente" else "Nouvelle Facture Récurrente"
+                "preset" -> if (isEditing) "Modifier Achat Rapide (1-Tap)" else "Nouveau Bouton d'Achat Rapide"
+                else -> if (isEditing) "Modifier Objectif d'Épargne" else "Nouvel Objectif d'Épargne"
             }
             Text(text = title, style = MaterialTheme.typography.titleLarge)
 
@@ -818,9 +1234,9 @@ fun AddFinancialItemSheet(
                 label = {
                     Text(
                         when (itemType) {
-                            "account" -> "Solde initial (DH)"
-                            "daret" -> "Cotisation mensuelle (DH)"
-                            else -> "Montant (DH)"
+                            "account" -> "Solde initial ($cur)"
+                            "daret" -> "Cotisation mensuelle ($cur)"
+                            else -> "Montant ($cur)"
                         }
                     )
                 },
@@ -829,7 +1245,63 @@ fun AddFinancialItemSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            if (itemType == "daret") {
+            if (itemType == "account") {
+                Text(text = "Type de compte :", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        "cash" to "Cash (Espèces)",
+                        "bank" to "Banque",
+                        "wallet" to "Wallet Mobile"
+                    ).forEach { (kindKey, label) ->
+                        FilterChip(
+                            selected = selectedAccountKind == kindKey,
+                            onClick = {
+                                selectedAccountKind = kindKey
+                                selectedAccountColor = when (kindKey) {
+                                    "cash" -> "#10B981"
+                                    "wallet" -> "#F59E0B"
+                                    else -> "#38BDF8"
+                                }
+                            },
+                            label = { Text(label, fontSize = 11.5.sp) }
+                        )
+                    }
+                }
+            } else if (itemType == "preset") {
+                Text(text = "Catégorie / Enveloppe associée :", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.envelopes.forEach { env ->
+                        FilterChip(
+                            selected = selectedPresetEnvelopeKey == env.config.key,
+                            onClick = { selectedPresetEnvelopeKey = env.config.key },
+                            label = { Text(env.config.localizedName(state.profile.language).take(20)) }
+                        )
+                    }
+                }
+                Text(text = "Compte débité par défaut :", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.accounts.forEach { acc ->
+                        FilterChip(
+                            selected = selectedPresetAccountId == acc.account.id,
+                            onClick = { selectedPresetAccountId = acc.account.id },
+                            label = { Text(acc.account.name) }
+                        )
+                    }
+                }
+            } else if (itemType == "daret") {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = secondaryText,
@@ -867,37 +1339,94 @@ fun AddFinancialItemSheet(
                         label = { Text("Je dois (Dette)") }
                     )
                 }
+            } else if (itemType == "seasonal") {
+                OutlinedTextField(
+                    value = dateOrDirText,
+                    onValueChange = { dateOrDirText = it },
+                    label = { Text("Date cible (YYYY-MM-DD)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
-            Button(
-                onClick = {
-                    val n = name.trim()
-                    val amt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
-                    if (n.isNotEmpty() && amt > 0.0) {
-                        if (itemType == "account") {
-                            onSaveAccount(n, "bank", amt)
-                        } else {
-                            onSaveItem(
-                                FinancialItem(
-                                    itemType = itemType,
-                                    name = n,
-                                    subtitle = if (itemType == "preset") "cafe" else n,
-                                    amount = amt,
-                                    secondaryAmount = if (itemType == "daret") (secondaryText.toDoubleOrNull() ?: 10.0) else 0.0,
-                                    dayOrTurn = (dayOrTurnText.toIntOrNull() ?: 1).coerceIn(1, 365),
-                                    extraInt = 0,
-                                    dateOrCycle = if (itemType == "preset") "acc_cash" else if (itemType == "bill") "" else dateOrDirText
-                                )
-                            )
-                        }
-                        onDismiss()
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Enregistrer", fontWeight = FontWeight.ExtraBold)
+                if (existingAccount != null && onDeleteAccount != null && state.accounts.size > 1) {
+                    FilledTonalButton(
+                        onClick = {
+                            onDeleteAccount(existingAccount.id)
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Supprimer", fontWeight = FontWeight.Bold)
+                    }
+                } else if (existingItem != null && onDeleteItem != null) {
+                    FilledTonalButton(
+                        onClick = {
+                            onDeleteItem(existingItem.id)
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Supprimer", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        val n = name.trim()
+                        val amt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
+                        if (n.isNotEmpty() && (amt > 0.0 || itemType == "account")) {
+                            if (itemType == "account") {
+                                onSaveAccount(
+                                    existingAccount?.id ?: "",
+                                    n,
+                                    selectedAccountKind,
+                                    amt.coerceAtLeast(0.0),
+                                    selectedAccountColor
+                                )
+                            } else {
+                                onSaveItem(
+                                    FinancialItem(
+                                        id = existingItem?.id ?: "",
+                                        itemType = itemType,
+                                        name = n,
+                                        subtitle = if (itemType == "preset") selectedPresetEnvelopeKey else (existingItem?.subtitle?.ifBlank { n } ?: n),
+                                        amount = amt.coerceAtLeast(0.01),
+                                        secondaryAmount = when (itemType) {
+                                            "daret" -> (secondaryText.replace(",", ".").toDoubleOrNull() ?: 10.0)
+                                            else -> existingItem?.secondaryAmount ?: 0.0
+                                        },
+                                        dayOrTurn = (dayOrTurnText.toIntOrNull() ?: 1).coerceIn(1, 365),
+                                        extraInt = existingItem?.extraInt ?: 0,
+                                        dateOrCycle = when (itemType) {
+                                            "preset" -> selectedPresetAccountId
+                                            "bill" -> existingItem?.dateOrCycle ?: ""
+                                            else -> dateOrDirText
+                                        }
+                                    )
+                                )
+                            }
+                            onDismiss()
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(2f)
+                        .height(52.dp)
+                ) {
+                    Text("Enregistrer", fontWeight = FontWeight.ExtraBold)
+                }
             }
             Spacer(modifier = Modifier.height(24.dp))
         }

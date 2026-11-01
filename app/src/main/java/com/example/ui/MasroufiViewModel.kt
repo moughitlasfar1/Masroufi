@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AccountItem
+import com.example.data.CustomizationPrefs
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.MasroufiRepository
@@ -16,6 +17,7 @@ import com.example.domain.PayCycleWindow
 import java.util.Calendar
 import kotlin.math.max
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +45,7 @@ data class WhatIfSimulatorState(
 data class DashboardState(
     val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
+    val customPrefs: CustomizationPrefs = CustomizationPrefs(),
     val activeWindow: PayCycleWindow = PayCycleEngine.computeWindow("2026-10", 1),
     val accounts: List<AccountWithBalance> = emptyList(),
     val totalNetWorth: Double = 0.0,
@@ -92,12 +95,24 @@ class MasroufiViewModel(
     private val _lastDeletedTx = MutableStateFlow<TransactionItem?>(null)
     val lastDeletedTx: StateFlow<TransactionItem?> = _lastDeletedTx.asStateFlow()
 
+    // Instant optimistic local overrides so UI never lags or reverts on rapid clicks
+    private val _optimisticProfile = MutableStateFlow<UserProfile?>(null)
+    private val _optimisticCustomPrefs = MutableStateFlow<CustomizationPrefs?>(null)
+
     init {
+        safeLaunch("ensureSeeded") {
+            repository.ensureSeeded()
+        }
+    }
+
+    private fun safeLaunch(tag: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             try {
-                repository.ensureSeeded()
+                block()
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (e: Exception) {
-                Log.w("MasroufiVM", "Seed check failed", e)
+                Log.w("MasroufiVM", "Non-fatal error in $tag: ${e.message}", e)
             }
         }
     }
@@ -133,11 +148,21 @@ class MasroufiViewModel(
         }
 
     val uiState: StateFlow<DashboardState> = combine(
-        combine(profileFlow, transactionsFlow, accountsFlow) { p, t, a -> Triple(p, t, a) },
-        combine(envelopesFlow, itemsFlow, _selectedCycleKey) { e, i, c -> Triple(e, i, c) },
-        combine(_filterState, _whatIfState) { f, w -> Pair(f, w) }
-    ) { (profileOpt, txs, accs), (envs, finItems, selCycle), (filter, whatIf) ->
+        combine(profileFlow, _optimisticProfile, transactionsFlow) { p, optP, t -> Triple(optP ?: p, t, Unit) },
+        combine(accountsFlow, envelopesFlow, itemsFlow) { a, e, i -> Triple(a, e, i) },
+        combine(_selectedCycleKey, _filterState, _whatIfState, _optimisticCustomPrefs) { c, f, w, cp ->
+             listOf(c, f, w, cp)
+        }
+    ) { (profileOpt, txs, _), (accs, envs, finItems), extraList ->
+        val selCycle = extraList[0] as? String
+        val filter = extraList[1] as FilterState
+        val whatIf = extraList[2] as WhatIfSimulatorState
+        val optCustomPrefs = extraList[3] as? CustomizationPrefs
+
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
+        val storedPrefsItem = finItems.find { it.itemType == "custom_prefs" || it.id == "custom_prefs" }
+        val customPrefs = optCustomPrefs ?: CustomizationPrefs.fromFinancialItem(storedPrefsItem)
+
         val defaultCycle = PayCycleEngine.currentCycleKey(profile.payCycleDay)
         val activeCycleKey = selCycle ?: defaultCycle
         val window = PayCycleEngine.computeWindow(activeCycleKey, profile.payCycleDay)
@@ -213,6 +238,7 @@ class MasroufiViewModel(
         DashboardState(
             isLoading = false,
             profile = profile,
+            customPrefs = customPrefs,
             activeWindow = window,
             accounts = accountBalances,
             totalNetWorth = netWorth,
@@ -295,29 +321,52 @@ class MasroufiViewModel(
 
     fun updateLanguage(lang: String) {
         val cur = uiState.value.profile
-        viewModelScope.launch {
-            repository.saveProfile(cur.copy(language = lang))
+        val updated = cur.copy(language = lang)
+        _optimisticProfile.value = updated
+        safeLaunch("updateLanguage") {
+            repository.saveProfile(updated)
         }
     }
 
     fun toggleTheme() {
         val cur = uiState.value.profile
-        viewModelScope.launch {
-            repository.saveProfile(cur.copy(isDarkTheme = !cur.isDarkTheme))
+        val updated = cur.copy(isDarkTheme = !cur.isDarkTheme)
+        _optimisticProfile.value = updated
+        safeLaunch("toggleTheme") {
+            repository.saveProfile(updated)
         }
     }
 
     fun saveBudgetSettings(baseBudget: Double, payCycleDay: Int, rolloverEnabled: Boolean) {
         val cur = uiState.value.profile
-        viewModelScope.launch {
-            repository.saveProfile(
-                cur.copy(
-                    baseBudget = baseBudget.coerceAtLeast(100.0),
-                    payCycleDay = payCycleDay.coerceIn(1, 28),
-                    rolloverEnabled = rolloverEnabled
-                )
-            )
-            _selectedCycleKey.value = null
+        val updated = cur.copy(
+            baseBudget = baseBudget.coerceAtLeast(100.0),
+            payCycleDay = payCycleDay.coerceIn(1, 28),
+            rolloverEnabled = rolloverEnabled
+        )
+        _optimisticProfile.value = updated
+        _selectedCycleKey.value = null
+        safeLaunch("saveBudgetSettings") {
+            repository.saveProfile(updated)
+        }
+    }
+
+    fun saveCustomizationPrefs(prefs: CustomizationPrefs) {
+        _optimisticCustomPrefs.value = prefs
+        val item = FinancialItem(
+            id = "custom_prefs",
+            userId = currentUserId,
+            itemType = "custom_prefs",
+            name = prefs.customTitle.ifBlank { "Masroufi" }.take(80),
+            subtitle = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}",
+            amount = 0.0,
+            secondaryAmount = 0.0,
+            dayOrTurn = prefs.toVisibilityMask(),
+            extraInt = 0,
+            dateOrCycle = prefs.customSubtitle.take(200)
+        )
+        safeLaunch("saveCustomizationPrefs") {
+            repository.upsertFinancialItem(item)
         }
     }
 
@@ -332,12 +381,12 @@ class MasroufiViewModel(
         desc: String,
         isoDate: String
     ) {
-        if (amount <= 0.0) return
+        if (amount <= 0.0 || amount.isNaN() || amount.isInfinite()) return
         val existing = uiState.value.allTransactions.find { it.id == existingId }
         val resolvedEnvKey = envelopeKey.ifBlank {
             PayCycleEngine.resolveEnvelopeKey(category, desc, uiState.value.envelopes.map { it.config })
         }
-        viewModelScope.launch {
+        safeLaunch("saveTransaction") {
             repository.upsertTransaction(
                 TransactionItem(
                     id = existingId,
@@ -348,7 +397,7 @@ class MasroufiViewModel(
                     envelopeKey = resolvedEnvKey,
                     accountId = accountId.ifBlank { "acc_cash" },
                     toAccountId = if (type == "transfer") toAccountId else "",
-                    desc = desc.ifBlank { category },
+                    desc = desc.ifBlank { category.ifBlank { "Opération" } },
                     isoDate = isoDate.ifBlank { PayCycleEngine.todayIso() },
                     createdAt = existing?.createdAt
                 )
@@ -363,24 +412,24 @@ class MasroufiViewModel(
             id = "tx_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = "expense",
-            amount = preset.amount,
-            category = catName,
+            amount = preset.amount.coerceAtLeast(1.0),
+            category = catName.ifBlank { preset.name },
             envelopeKey = preset.subtitle.ifBlank { "cafe" },
             accountId = preset.dateOrCycle.ifBlank { "acc_cash" },
             toAccountId = "",
             desc = preset.name,
             isoDate = PayCycleEngine.todayIso()
         )
-        viewModelScope.launch {
+        _lastDeletedTx.value = tx
+        onAdded(tx)
+        safeLaunch("quickAddPreset") {
             repository.upsertTransaction(tx)
-            _lastDeletedTx.value = tx
-            onAdded(tx)
         }
     }
 
     fun deleteTransactionWithUndo(tx: TransactionItem) {
         _lastDeletedTx.value = tx
-        viewModelScope.launch {
+        safeLaunch("deleteTransactionWithUndo") {
             repository.deleteTransaction(tx.id)
         }
     }
@@ -388,42 +437,83 @@ class MasroufiViewModel(
     fun undoDeleteTransaction() {
         val tx = _lastDeletedTx.value ?: return
         _lastDeletedTx.value = null
-        viewModelScope.launch {
+        safeLaunch("undoDeleteTransaction") {
             repository.upsertTransaction(tx.copy(createdAt = null, updatedAt = null))
         }
     }
 
     fun saveAccount(id: String = "", name: String, kind: String, initialBalance: Double, colorHex: String) {
         val existing = uiState.value.accounts.find { it.account.id == id }?.account
-        viewModelScope.launch {
+        safeLaunch("saveAccount") {
             repository.upsertAccount(
                 AccountItem(
                     id = id,
                     userId = currentUserId,
-                    name = name,
-                    kind = kind,
-                    initialBalance = initialBalance,
-                    colorHex = colorHex,
+                    name = name.ifBlank { "Compte" },
+                    kind = if (kind in listOf("cash", "bank", "wallet")) kind else "cash",
+                    initialBalance = if (initialBalance.isNaN() || initialBalance.isInfinite()) 0.0 else initialBalance,
+                    colorHex = colorHex.ifBlank { "#10B981" },
                     createdAt = existing?.createdAt
                 )
             )
         }
     }
 
+    fun deleteAccount(accId: String) {
+        if (accId.isBlank()) return
+        safeLaunch("deleteAccount") {
+            repository.deleteAccount(accId)
+        }
+    }
+
     fun saveEnvelopeConfig(config: EnvelopeConfig) {
-        viewModelScope.launch {
-            repository.upsertEnvelope(config)
+        safeLaunch("saveEnvelopeConfig") {
+            repository.upsertEnvelope(config.copy(userId = currentUserId))
+        }
+    }
+
+    fun deleteEnvelopeConfig(envId: String) {
+        if (envId.isBlank()) return
+        safeLaunch("deleteEnvelopeConfig") {
+            repository.deleteEnvelope(envId)
+        }
+    }
+
+    fun autoBalanceEnvelopesTo100() {
+        val capped = uiState.value.envelopes.map { it.config }.filter { it.hasCap }
+        if (capped.isEmpty()) return
+        val sum = capped.sumOf { it.percentage }
+        safeLaunch("autoBalanceEnvelopesTo100") {
+            if (sum <= 0.0) {
+                val equalShare = (100.0 / capped.size * 10.0).roundToInt() / 10.0
+                capped.forEach { env ->
+                    repository.upsertEnvelope(env.copy(percentage = equalShare))
+                }
+            } else {
+                var running = 0.0
+                capped.forEachIndexed { idx, env ->
+                    val normalized = if (idx == capped.lastIndex) {
+                        max(0.0, ((100.0 - running) * 10.0).roundToInt() / 10.0)
+                    } else {
+                        val v = ((env.percentage / sum) * 100.0 * 10.0).roundToInt() / 10.0
+                        running += v
+                        v
+                    }
+                    repository.upsertEnvelope(env.copy(percentage = normalized))
+                }
+            }
         }
     }
 
     fun saveFinancialItem(item: FinancialItem) {
-        viewModelScope.launch {
-            repository.upsertFinancialItem(item)
+        safeLaunch("saveFinancialItem") {
+            repository.upsertFinancialItem(item.copy(userId = currentUserId))
         }
     }
 
     fun deleteFinancialItem(id: String) {
-        viewModelScope.launch {
+        if (id.isBlank()) return
+        safeLaunch("deleteFinancialItem") {
             repository.deleteFinancialItem(id)
         }
     }
@@ -432,13 +522,13 @@ class MasroufiViewModel(
         val cycleKey = uiState.value.activeWindow.cycleKey
         if (PayCycleEngine.isBillPaidInCycle(bill, cycleKey)) return
         val updatedCycles = (bill.dateOrCycle.split(",").filter { it.isNotBlank() } + cycleKey).distinct().joinToString(",")
-        viewModelScope.launch {
+        safeLaunch("payRecurringBill") {
             repository.upsertFinancialItem(bill.copy(dateOrCycle = updatedCycles))
             repository.upsertTransaction(
                 TransactionItem(
                     userId = currentUserId,
                     type = "expense",
-                    amount = bill.amount,
+                    amount = bill.amount.coerceAtLeast(1.0),
                     category = "Charges fixes & Maison",
                     envelopeKey = "charges",
                     accountId = "acc_bank",
@@ -450,8 +540,8 @@ class MasroufiViewModel(
     }
 
     fun contributeToGoalOrSeasonal(item: FinancialItem, addAmount: Double) {
-        if (addAmount <= 0.0) return
-        viewModelScope.launch {
+        if (addAmount <= 0.0 || addAmount.isNaN()) return
+        safeLaunch("contributeToGoalOrSeasonal") {
             repository.upsertFinancialItem(item.copy(secondaryAmount = item.secondaryAmount + addAmount))
             repository.upsertTransaction(
                 TransactionItem(
@@ -469,15 +559,15 @@ class MasroufiViewModel(
     }
 
     fun payDaretRound(daret: FinancialItem) {
-        val totalMembers = daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+        val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
         val nextPaid = (daret.extraInt + 1).coerceAtMost(totalMembers)
-        viewModelScope.launch {
+        safeLaunch("payDaretRound") {
             repository.upsertFinancialItem(daret.copy(extraInt = nextPaid))
             repository.upsertTransaction(
                 TransactionItem(
                     userId = currentUserId,
                     type = "expense",
-                    amount = daret.amount,
+                    amount = daret.amount.coerceAtLeast(1.0),
                     category = "Épargne & Investissement",
                     envelopeKey = "epargne",
                     accountId = "acc_bank",
@@ -489,10 +579,10 @@ class MasroufiViewModel(
     }
 
     fun settleDebt(debt: FinancialItem, payment: Double) {
-        if (payment <= 0.0) return
+        if (payment <= 0.0 || payment.isNaN()) return
         val newPaid = (debt.secondaryAmount + payment).coerceAtMost(debt.amount)
         val isLent = debt.dateOrCycle != "borrowed"
-        viewModelScope.launch {
+        safeLaunch("settleDebt") {
             repository.upsertFinancialItem(debt.copy(secondaryAmount = newPaid))
             repository.upsertTransaction(
                 TransactionItem(
@@ -555,7 +645,7 @@ class MasroufiViewModel(
     }
 
     fun restoreFromJson(rawJson: String, onResult: (Boolean) -> Unit) {
-        viewModelScope.launch {
+        safeLaunch("restoreFromJson") {
             try {
                 val trimmed = rawJson.trim()
                 val txArray = if (trimmed.startsWith("[")) {

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,7 +22,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -39,6 +37,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -56,7 +55,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,12 +77,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import com.example.data.AccountItem
+import com.example.data.FinancialItem
 import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.domain.Translations
 import com.example.ui.AddFinancialItemSheet
 import com.example.ui.AuthScreen
 import com.example.ui.BudgetAndDaretScreen
+import com.example.ui.CustomizationStudioSheet
 import com.example.ui.CustomizeEnvelopesSheet
 import com.example.ui.HistoryScreen
 import com.example.ui.MasroufiViewModel
@@ -96,6 +97,7 @@ import com.example.ui.TransactionEditorSheet
 import com.example.ui.WeekScreen
 import com.example.ui.signOutUser
 import com.example.ui.theme.MasroufiTheme
+import com.example.ui.theme.paletteForKey
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -175,8 +177,11 @@ fun MainFeatureScreen(
     var initialTxType by remember { mutableStateOf("expense") }
     var editingTx by remember { mutableStateOf<TransactionItem?>(null) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showCustomizationSheet by remember { mutableStateOf(false) }
     var showEnvelopesSheet by remember { mutableStateOf(false) }
     var activeItemSheetType by remember { mutableStateOf<String?>(null) }
+    var editingFinancialItem by remember { mutableStateOf<FinancialItem?>(null) }
+    var editingAccountItem by remember { mutableStateOf<AccountItem?>(null) }
     var showRestoreSheet by remember { mutableStateOf(false) }
 
     if (activeTab != "vue") {
@@ -185,7 +190,12 @@ fun MainFeatureScreen(
         }
     }
 
-    MasroufiTheme(darkTheme = state.profile.isDarkTheme) {
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+
+    MasroufiTheme(
+        darkTheme = state.profile.isDarkTheme,
+        accentPalette = state.customPrefs.accentPalette
+    ) {
         CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
             Scaffold(
                 snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -193,7 +203,10 @@ fun MainFeatureScreen(
                     MasroufiTopBar(
                         language = state.profile.language,
                         isDarkTheme = state.profile.isDarkTheme,
-                        subTitle = strings.subTitle,
+                        appTitle = state.customPrefs.customTitle.ifBlank { "Masroufi" },
+                        subTitle = state.customPrefs.customSubtitle.ifBlank { strings.subTitle },
+                        currencySymbol = cur,
+                        accentPalette = state.customPrefs.accentPalette,
                         cycleLabel = "${state.activeWindow.cycleKey} (${state.activeWindow.startIso.takeLast(5)} → ${state.activeWindow.endIso.takeLast(5)})",
                         onCycleLanguage = {
                             val nextLang = when (state.profile.language) {
@@ -205,6 +218,7 @@ fun MainFeatureScreen(
                             viewModel.updateLanguage(nextLang)
                         },
                         onToggleTheme = { viewModel.toggleTheme() },
+                        onOpenCustomization = { showCustomizationSheet = true },
                         onOpenSettings = { showSettingsSheet = true },
                         onShiftCycle = { delta -> viewModel.shiftCycle(delta) }
                     )
@@ -266,7 +280,7 @@ fun MainFeatureScreen(
                                     viewModel.quickAddPreset(preset) { added ->
                                         scope.launch {
                                             val res = snackbarHostState.showSnackbar(
-                                                message = "+ ${added.desc} (${added.amount.toInt()} DH)",
+                                                message = "+ ${added.desc} (${added.amount.toInt()} $cur)",
                                                 actionLabel = strings.undoLabel,
                                                 duration = SnackbarDuration.Short
                                             )
@@ -276,9 +290,19 @@ fun MainFeatureScreen(
                                         }
                                     }
                                 },
-                                onOpenAccountModal = { activeItemSheetType = "account" },
+                                onOpenAccountModal = { acc ->
+                                    editingAccountItem = acc
+                                    editingFinancialItem = null
+                                    activeItemSheetType = "account"
+                                },
                                 onPayBill = { bill -> viewModel.payRecurringBill(bill) },
-                                onAddPresetModal = { activeItemSheetType = "preset" }
+                                onAddPresetModal = { preset ->
+                                    editingFinancialItem = preset
+                                    editingAccountItem = null
+                                    activeItemSheetType = "preset"
+                                },
+                                onDeletePreset = { id -> viewModel.deleteFinancialItem(id) },
+                                onOpenCustomizationModal = { showCustomizationSheet = true }
                             )
 
                             "semaine" -> WeekScreen(
@@ -291,7 +315,11 @@ fun MainFeatureScreen(
                                 strings = strings,
                                 onUpdateWhatIf = { key, pct -> viewModel.updateWhatIf(key, pct) },
                                 onContributeSeasonal = { item -> viewModel.contributeToGoalOrSeasonal(item, 200.0) },
-                                onOpenNewSeasonal = { activeItemSheetType = "seasonal" },
+                                onOpenNewSeasonal = { item ->
+                                    editingFinancialItem = item
+                                    editingAccountItem = null
+                                    activeItemSheetType = "seasonal"
+                                },
                                 onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
                             )
 
@@ -300,12 +328,28 @@ fun MainFeatureScreen(
                                 strings = strings,
                                 onOpenCustomizeEnvelopes = { showEnvelopesSheet = true },
                                 onPayDaretRound = { daret -> viewModel.payDaretRound(daret) },
-                                onOpenNewDaret = { activeItemSheetType = "daret" },
+                                onOpenNewDaret = { item ->
+                                    editingFinancialItem = item
+                                    editingAccountItem = null
+                                    activeItemSheetType = "daret"
+                                },
                                 onSettleDebt = { debt -> viewModel.settleDebt(debt, 100.0) },
-                                onOpenNewDebt = { activeItemSheetType = "debt" },
+                                onOpenNewDebt = { item ->
+                                    editingFinancialItem = item
+                                    editingAccountItem = null
+                                    activeItemSheetType = "debt"
+                                },
                                 onContributeGoal = { goal -> viewModel.contributeToGoalOrSeasonal(goal, 200.0) },
-                                onOpenNewGoal = { activeItemSheetType = "goal" },
-                                onOpenNewBill = { activeItemSheetType = "bill" },
+                                onOpenNewGoal = { item ->
+                                    editingFinancialItem = item
+                                    editingAccountItem = null
+                                    activeItemSheetType = "goal"
+                                },
+                                onOpenNewBill = { item ->
+                                    editingFinancialItem = item
+                                    editingAccountItem = null
+                                    activeItemSheetType = "bill"
+                                },
                                 onPayBill = { bill -> viewModel.payRecurringBill(bill) },
                                 onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
                             )
@@ -383,8 +427,19 @@ fun MainFeatureScreen(
                     onSaveSettings = { b, day, roll ->
                         viewModel.saveBudgetSettings(b, day, roll)
                     },
+                    onOpenCustomizationStudio = { showCustomizationSheet = true },
                     onSignOut = {
                         signOutUser(context, onSignOutComplete = {}, scope = scope)
+                    }
+                )
+            }
+
+            if (showCustomizationSheet) {
+                CustomizationStudioSheet(
+                    state = state,
+                    onDismiss = { showCustomizationSheet = false },
+                    onSaveCustomPrefs = { prefs ->
+                        viewModel.saveCustomizationPrefs(prefs)
                     }
                 )
             }
@@ -393,7 +448,9 @@ fun MainFeatureScreen(
                 CustomizeEnvelopesSheet(
                     state = state,
                     onDismiss = { showEnvelopesSheet = false },
-                    onSaveEnvelope = { env -> viewModel.saveEnvelopeConfig(env) }
+                    onSaveEnvelope = { env -> viewModel.saveEnvelopeConfig(env) },
+                    onDeleteEnvelope = { id -> viewModel.deleteEnvelopeConfig(id) },
+                    onAutoBalance100 = { viewModel.autoBalanceEnvelopesTo100() }
                 )
             }
 
@@ -401,11 +458,26 @@ fun MainFeatureScreen(
             if (sheetType != null) {
                 AddFinancialItemSheet(
                     itemType = sheetType,
-                    onDismiss = { activeItemSheetType = null },
+                    existingItem = editingFinancialItem,
+                    existingAccount = editingAccountItem,
+                    state = state,
+                    onDismiss = {
+                        activeItemSheetType = null
+                        editingFinancialItem = null
+                        editingAccountItem = null
+                    },
                     onSaveItem = { item -> viewModel.saveFinancialItem(item) },
-                    onSaveAccount = { name, kind, bal ->
-                        viewModel.saveAccount(name = name, kind = kind, initialBalance = bal, colorHex = "#38BDF8")
-                    }
+                    onSaveAccount = { id, name, kind, bal, colorHex ->
+                        viewModel.saveAccount(
+                            id = id,
+                            name = name,
+                            kind = kind,
+                            initialBalance = bal,
+                            colorHex = colorHex
+                        )
+                    },
+                    onDeleteAccount = { id -> viewModel.deleteAccount(id) },
+                    onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
                 )
             }
 
@@ -430,13 +502,18 @@ fun MainFeatureScreen(
 private fun MasroufiTopBar(
     language: String,
     isDarkTheme: Boolean,
+    appTitle: String,
     subTitle: String,
+    currencySymbol: String,
+    accentPalette: String,
     cycleLabel: String,
     onCycleLanguage: () -> Unit,
     onToggleTheme: () -> Unit,
+    onOpenCustomization: () -> Unit,
     onOpenSettings: () -> Unit,
     onShiftCycle: (Int) -> Unit
 ) {
+    val pal = paletteForKey(accentPalette)
     Surface(
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp
@@ -462,8 +539,9 @@ private fun MasroufiTopBar(
                             .size(40.dp)
                             .clip(RoundedCornerShape(14.dp, 14.dp, 14.dp, 5.dp))
                             .background(
-                                Brush.linearGradient(listOf(Color(0xFF10B981), Color(0xFF047857)))
-                            ),
+                                Brush.linearGradient(listOf(pal.primaryDark, pal.heroStart))
+                            )
+                            .clickable { onOpenCustomization() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -479,16 +557,17 @@ private fun MasroufiTopBar(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "Masroufi",
+                                text = appTitle,
                                 style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1
                             )
                             Surface(
                                 shape = CircleShape,
                                 color = MaterialTheme.colorScheme.primaryContainer
                             ) {
                                 Text(
-                                    text = "DH",
+                                    text = currencySymbol,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
@@ -507,7 +586,7 @@ private fun MasroufiTopBar(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     val langDisplay = when (language) {
                         "ar" -> "AR 🇸🇦"
@@ -527,7 +606,18 @@ private fun MasroufiTopBar(
                             text = langDisplay,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onOpenCustomization,
+                        modifier = Modifier.testTag("customization_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Palette,
+                            contentDescription = "Customize App",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
 
@@ -597,15 +687,22 @@ private fun MasroufiTopBar(
 }
 
 private fun shareTextContent(context: Context, content: String, fileName: String, mimeType: String) {
-    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-        type = mimeType
-        putExtra(Intent.EXTRA_TITLE, fileName)
-        putExtra(Intent.EXTRA_TEXT, content)
+    runCatching {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_TITLE, fileName)
+            putExtra(Intent.EXTRA_TEXT, content)
+        }
+        val chooser = Intent.createChooser(sendIntent, fileName).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
     }
-    context.startActivity(Intent.createChooser(sendIntent, fileName))
 }
 
 private fun copyToClipboard(context: Context, content: String) {
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-    clipboard?.setPrimaryClip(ClipData.newPlainText("Masroufi JSON", content))
+    runCatching {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText("Masroufi JSON", content))
+    }
 }

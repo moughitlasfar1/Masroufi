@@ -41,8 +41,8 @@ service cloud.firestore {
              data.language is string && data.language in ['fr', 'ar', 'darija', 'en'] &&
              data.isDarkTheme is bool &&
              data.seeded is bool &&
-             data.createdAt is timestamp && data.createdAt <= request.time &&
-             data.updatedAt is timestamp && data.updatedAt <= request.time;
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
     }
 
     function isValidTransactionItem(data) {
@@ -63,8 +63,8 @@ service cloud.firestore {
              data.toAccountId is string && data.toAccountId.size() <= 80 &&
              data.desc is string && data.desc.size() <= 250 &&
              data.isoDate is string && data.isoDate.size() >= 1 && data.isoDate.size() <= 20 &&
-             data.createdAt is timestamp && data.createdAt <= request.time &&
-             data.updatedAt is timestamp && data.updatedAt <= request.time;
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
     }
 
     function isValidAccountItem(data) {
@@ -79,8 +79,8 @@ service cloud.firestore {
              data.kind is string && data.kind in ['cash', 'bank', 'wallet'] &&
              data.initialBalance is number && data.initialBalance >= -100000000 && data.initialBalance <= 100000000 &&
              data.colorHex is string && data.colorHex.size() >= 1 && data.colorHex.size() <= 20 &&
-             data.createdAt is timestamp && data.createdAt <= request.time &&
-             data.updatedAt is timestamp && data.updatedAt <= request.time;
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
     }
 
     function isValidEnvelopeConfig(data) {
@@ -101,8 +101,8 @@ service cloud.firestore {
              data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
              data.hasCap is bool &&
              data.colorHex is string && data.colorHex.size() >= 1 && data.colorHex.size() <= 20 &&
-             data.createdAt is timestamp && data.createdAt <= request.time &&
-             data.updatedAt is timestamp && data.updatedAt <= request.time;
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
     }
 
     function isValidFinancialItem(data) {
@@ -117,16 +117,16 @@ service cloud.firestore {
                'createdAt', 'updatedAt'
              ]) &&
              data.userId is string && data.userId == request.auth.uid &&
-             data.itemType is string && data.itemType in ['goal', 'bill', 'debt', 'daret', 'seasonal', 'preset'] &&
+             data.itemType is string && data.itemType in ['goal', 'bill', 'debt', 'daret', 'seasonal', 'preset', 'custom_prefs'] &&
              data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
-             data.subtitle is string && data.subtitle.size() <= 160 &&
+             data.subtitle is string && data.subtitle.size() <= 250 &&
              data.amount is number && data.amount >= 0 && data.amount <= 100000000 &&
              data.secondaryAmount is number && data.secondaryAmount >= 0 && data.secondaryAmount <= 100000000 &&
              data.dayOrTurn is int && data.dayOrTurn >= 0 && data.dayOrTurn <= 366 &&
              data.extraInt is int && data.extraInt >= 0 && data.extraInt <= 366 &&
-             data.dateOrCycle is string && data.dateOrCycle.size() <= 200 &&
-             data.createdAt is timestamp && data.createdAt <= request.time &&
-             data.updatedAt is timestamp && data.updatedAt <= request.time;
+             data.dateOrCycle is string && data.dateOrCycle.size() <= 250 &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
     }
 
     match /users/{userId} {
@@ -135,12 +135,7 @@ service cloud.firestore {
       allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
       allow update: if isOwner(userId) && isValidId(userId) &&
                        isValidUserProfile(incoming()) &&
-                       incoming().userId == existing().userId &&
-                       incoming().createdAt == existing().createdAt &&
-                       incoming().diff(existing()).affectedKeys().hasOnly([
-                         'baseBudget', 'payCycleDay', 'rolloverEnabled',
-                         'language', 'isDarkTheme', 'seeded', 'updatedAt'
-                       ]);
+                       incoming().userId == existing().userId;
       allow delete: if isOwner(userId) && isValidId(userId);
 
       match /transactions/{txId} {
@@ -150,12 +145,7 @@ service cloud.firestore {
                          isValidTransactionItem(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(txId) &&
                          isValidTransactionItem(incoming()) &&
-                         incoming().userId == existing().userId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'type', 'amount', 'category', 'envelopeKey',
-                           'accountId', 'toAccountId', 'desc', 'isoDate', 'updatedAt'
-                         ]);
+                         incoming().userId == existing().userId;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(txId);
       }
 
@@ -166,11 +156,7 @@ service cloud.firestore {
                          isValidAccountItem(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(accId) &&
                          isValidAccountItem(incoming()) &&
-                         incoming().userId == existing().userId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'name', 'kind', 'initialBalance', 'colorHex', 'updatedAt'
-                         ]);
+                         incoming().userId == existing().userId;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(accId);
       }
 
@@ -181,12 +167,7 @@ service cloud.firestore {
                          isValidEnvelopeConfig(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(envId) &&
                          isValidEnvelopeConfig(incoming()) &&
-                         incoming().userId == existing().userId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'key', 'nameFr', 'nameAr', 'nameDarija', 'nameEn',
-                           'percentage', 'hasCap', 'colorHex', 'updatedAt'
-                         ]);
+                         incoming().userId == existing().userId;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(envId);
       }
 
@@ -197,12 +178,7 @@ service cloud.firestore {
                          isValidFinancialItem(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(itemId) &&
                          isValidFinancialItem(incoming()) &&
-                         incoming().userId == existing().userId &&
-                         incoming().createdAt == existing().createdAt &&
-                         incoming().diff(existing()).affectedKeys().hasOnly([
-                           'itemType', 'name', 'subtitle', 'amount',
-                           'secondaryAmount', 'dayOrTurn', 'extraInt', 'dateOrCycle', 'updatedAt'
-                         ]);
+                         incoming().userId == existing().userId;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
       }
     }
