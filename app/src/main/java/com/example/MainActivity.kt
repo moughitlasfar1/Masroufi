@@ -104,9 +104,13 @@ import com.example.ui.signOutUser
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.paletteForKey
+import android.util.Log
 import com.google.firebase.Firebase
-import com.google.firebase.appcheck.appCheck
+import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.AppCheckProviderFactory
+import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.appcheck.recaptcha.RecaptchaAppCheckProviderFactory
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -127,6 +131,69 @@ import com.example.security.AppSecurityManager
 import com.example.security.MasroufiSecurityLockScreen
 import kotlinx.coroutines.delay
 
+private const val APP_CHECK_TAG = "AppCheckInit"
+private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
+private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
+private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
+private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
+
+fun configureAppCheck(context: Context, intent: Intent?) {
+    try {
+        if (FirebaseApp.getApps(context).isEmpty()) {
+            FirebaseApp.initializeApp(context)
+        }
+        val appCheck = FirebaseAppCheck.getInstance()
+        if (BuildConfig.DEBUG) {
+            val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
+            if (!debugToken.isNullOrEmpty()) {
+                val persistenceKey = FirebaseApp.getInstance().persistenceKey
+                val prefs = context.getSharedPreferences(
+                    "$DEBUG_STORE_PREFIX$persistenceKey",
+                    Context.MODE_PRIVATE
+                )
+                prefs.edit()
+                    .putString(DEBUG_SECRET_KEY, debugToken)
+                    .commit()
+                Log.d(APP_CHECK_TAG, "App Check debug secret persisted synchronously.")
+            }
+            appCheck.installAppCheckProviderFactory(
+                DebugAppCheckProviderFactory.getInstance()
+            )
+            Log.d(APP_CHECK_TAG, "DebugAppCheckProviderFactory installed for debug build.")
+        } else {
+            // Production Release Attestation:
+            // 1. Prefer Google Play Integrity Provider when available on the release classpath
+            val playIntegrityInstalled = runCatching {
+                val clazz = Class.forName("com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory")
+                val factory = clazz.getMethod("getInstance").invoke(null) as? AppCheckProviderFactory
+                if (factory != null) {
+                    appCheck.installAppCheckProviderFactory(factory)
+                    Log.d(APP_CHECK_TAG, "PlayIntegrityAppCheckProviderFactory installed for production release.")
+                    true
+                } else {
+                    false
+                }
+            }.getOrDefault(false)
+
+            // 2. Fallback to Recaptcha Enterprise Provider if configured via recaptcha_site_key resource
+            if (!playIntegrityInstalled) {
+                val resId = context.resources.getIdentifier(RECAPTCHA_SITE_KEY_RES, "string", context.packageName)
+                if (resId != 0) {
+                    val siteKey = context.getString(resId)
+                    if (siteKey.isNotBlank()) {
+                        appCheck.installAppCheckProviderFactory(
+                            RecaptchaAppCheckProviderFactory.getInstance(siteKey)
+                        )
+                        Log.d(APP_CHECK_TAG, "RecaptchaAppCheckProviderFactory installed for release.")
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        Log.e(APP_CHECK_TAG, "Failed to initialize Firebase App Check", e)
+    }
+}
+
 internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     val listener = FirebaseAuth.AuthStateListener { auth ->
         trySend(auth.currentUser)
@@ -138,23 +205,17 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
         AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
-        initFirebaseSecurityAndOfflineCache()
+        initFirestoreOfflineCache()
         val launchedFromQuickAdd = intent?.action == "com.aistudio.masroufi.ACTION_QUICK_ADD"
         setContent {
             AppNavigation(openQuickAddOnLaunch = launchedFromQuickAdd)
         }
     }
 
-    private fun initFirebaseSecurityAndOfflineCache() {
-        runCatching {
-            if (BuildConfig.DEBUG) {
-                Firebase.appCheck.installAppCheckProviderFactory(
-                    DebugAppCheckProviderFactory.getInstance()
-                )
-            }
-        }
+    private fun initFirestoreOfflineCache() {
         runCatching {
             val databaseId = getString(R.string.firestore_database_id)
             val db = FirebaseFirestore.getInstance(databaseId)
@@ -245,14 +306,25 @@ fun MainFeatureScreen(
         }
     }
 
+    val rollbackSnapshot by viewModel.preRestoreRollbackJson.collectAsStateWithLifecycle()
+    var pendingBackupPassword by remember { mutableStateOf("") }
+    var pendingRestoreRawContent by remember { mutableStateOf("") }
+
     val exportJsonLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
-            val ok = AppSecurityManager.writeTextToUri(context, uri, viewModel.exportBackupJson())
+            val payload = runCatching {
+                viewModel.exportBackupJson(pendingBackupPassword)
+            }.getOrElse { viewModel.exportBackupJson("") }
+            val isEnc = pendingBackupPassword.trim().length >= 4
+            val ok = AppSecurityManager.writeTextToUri(context, uri, payload)
             scope.launch {
                 snackbarHostState.showSnackbar(
-                    if (ok) "Fichier JSON sauvegardé en toute sécurité !" else "Erreur lors de l'enregistrement"
+                    if (ok) {
+                        if (isEnc) "Sauvegarde JSON chiffrée (AES-256-GCM) enregistrée !"
+                        else "Fichier JSON sauvegardé !"
+                    } else "Erreur lors de l'enregistrement"
                 )
             }
         }
@@ -265,7 +337,7 @@ fun MainFeatureScreen(
             val ok = AppSecurityManager.writeTextToUri(context, uri, viewModel.exportCsv())
             scope.launch {
                 snackbarHostState.showSnackbar(
-                    if (ok) "Fichier CSV sauvegardé en toute sécurité !" else "Erreur lors de l'enregistrement"
+                    if (ok) "CSV exporté (non chiffré, formules neutralisées) !" else "Erreur lors de l'enregistrement"
                 )
             }
         }
@@ -277,13 +349,8 @@ fun MainFeatureScreen(
         if (uri != null) {
             val raw = AppSecurityManager.readTextFromUri(context, uri)
             if (!raw.isNullOrBlank()) {
-                viewModel.restoreFromJson(raw) { ok ->
-                    scope.launch {
-                        snackbarHostState.showSnackbar(
-                            if (ok) "Sauvegarde restaurée depuis le fichier !" else "Fichier JSON invalide"
-                        )
-                    }
-                }
+                pendingRestoreRawContent = raw
+                showRestoreSheet = true
             }
         }
     }
@@ -567,18 +634,28 @@ fun MainFeatureScreen(
                                         }
                                     }
                                 },
-                                onShareJson = {
-                                    shareTextContent(context, viewModel.exportBackupJson(), "masroufi_backup.json", "application/json")
+                                onShareJson = { pwd ->
+                                    pendingBackupPassword = pwd
+                                    val payload = runCatching { viewModel.exportBackupJson(pwd) }
+                                        .getOrElse { viewModel.exportBackupJson("") }
+                                    shareTextContent(context, payload, "masroufi_backup.json", "application/json")
                                 },
-                                onCopyJson = {
-                                    copyToClipboard(context, viewModel.exportBackupJson())
+                                onCopyJson = { pwd ->
+                                    pendingBackupPassword = pwd
+                                    val payload = runCatching { viewModel.exportBackupJson(pwd) }
+                                        .getOrElse { viewModel.exportBackupJson("") }
+                                    copyToClipboard(context, payload)
                                     scope.launch {
                                         launch {
                                             delay(60_000L)
                                             AppSecurityManager.clearSensitiveClipboard(context)
                                         }
                                         val res = snackbarHostState.showSnackbar(
-                                            message = "JSON copié (masqué & auto-effacé dans 60s)",
+                                            message = if (pwd.trim().length >= 4) {
+                                                "JSON chiffré AES-256-GCM copié (auto-effacé dans 60s)"
+                                            } else {
+                                                "JSON copié (masqué & auto-effacé dans 60s)"
+                                            },
                                             actionLabel = "Vider",
                                             duration = SnackbarDuration.Short
                                         )
@@ -590,8 +667,12 @@ fun MainFeatureScreen(
                                 onShareCsv = {
                                     shareTextContent(context, viewModel.exportCsv(), "masroufi_export.csv", "text/csv")
                                 },
-                                onOpenRestoreModal = { showRestoreSheet = true },
-                                onExportJsonFile = {
+                                onOpenRestoreModal = {
+                                    pendingRestoreRawContent = ""
+                                    showRestoreSheet = true
+                                },
+                                onExportJsonFile = { pwd ->
+                                    pendingBackupPassword = pwd
                                     exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
                                 },
                                 onExportCsvFile = {
@@ -604,6 +685,16 @@ fun MainFeatureScreen(
                                     AppSecurityManager.clearSensitiveClipboard(context)
                                     scope.launch {
                                         snackbarHostState.showSnackbar("Presse-papiers vidé par sécurité !")
+                                    }
+                                },
+                                hasRollbackSnapshot = !rollbackSnapshot.isNullOrBlank(),
+                                onRollbackRestore = {
+                                    viewModel.rollbackLastRestore { ok ->
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(
+                                                if (ok) "État précédent restauré (Rollback effectué) !" else "Rollback indisponible"
+                                            )
+                                        }
                                     }
                                 }
                             )
@@ -733,11 +824,18 @@ fun MainFeatureScreen(
             if (showRestoreSheet) {
                 RestoreJsonSheet(
                     strings = strings,
-                    onDismiss = { showRestoreSheet = false },
-                    onRestore = { raw ->
-                        viewModel.restoreFromJson(raw) { ok ->
+                    initialRawJson = pendingRestoreRawContent,
+                    onPreviewBackup = { raw, pwd ->
+                        viewModel.previewBackupImport(raw, pwd)
+                    },
+                    onDismiss = {
+                        showRestoreSheet = false
+                        pendingRestoreRawContent = ""
+                    },
+                    onRestore = { raw, pwd, replaceExisting ->
+                        viewModel.restoreFromJson(raw, pwd, replaceExisting) { ok, msg ->
                             scope.launch {
-                                snackbarHostState.showSnackbar(if (ok) "Restauration réussie !" else "Erreur JSON")
+                                snackbarHostState.showSnackbar(msg)
                             }
                         }
                     },

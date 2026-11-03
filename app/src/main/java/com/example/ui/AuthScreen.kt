@@ -57,6 +57,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
+import com.example.security.AppSecurityManager
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -64,23 +65,10 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Co
 import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
-
-private const val FALLBACK_WEB_CLIENT_ID =
-    "1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj.apps.googleusercontent.com"
-
-private fun resolveGoogleWebClientId(context: Context): String? {
-    return runCatching {
-        val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-        if (resId != 0) {
-            context.getString(resId).takeIf { it.isNotBlank() }
-        } else {
-            FALLBACK_WEB_CLIENT_ID
-        }
-    }.getOrDefault(FALLBACK_WEB_CLIENT_ID)
-}
 
 fun attemptAutoSignIn(
     context: Context,
@@ -93,8 +81,9 @@ fun attemptAutoSignIn(
         onAuthSuccess()
         return
     }
-    val clientId = resolveGoogleWebClientId(context)
-    if (clientId.isNullOrBlank()) {
+    val clientId = try {
+        context.getString(R.string.default_web_client_id)
+    } catch (e: Exception) {
         onUnauthenticated()
         return
     }
@@ -133,8 +122,9 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    val clientId = resolveGoogleWebClientId(context)
-    if (clientId.isNullOrBlank()) {
+    val clientId = try {
+        context.getString(R.string.default_web_client_id)
+    } catch (e: Exception) {
         onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
         return
     }
@@ -167,11 +157,23 @@ fun onGoogleSignInClicked(
 fun signOutUser(
     context: Context,
     onSignOutComplete: () -> Unit,
-    scope: CoroutineScope
+    scope: CoroutineScope,
+    clearLocalCache: Boolean = AppSecurityManager.isClearCacheOnSignOutEnabled(context)
 ) {
     val credentialManager = CredentialManager.create(context)
+    AppSecurityManager.clearSensitiveClipboard(context)
     Firebase.auth.signOut()
     scope.launch {
+        if (clearLocalCache) {
+            runCatching {
+                val dbId = context.applicationContext.getString(R.string.firestore_database_id)
+                val db = FirebaseFirestore.getInstance(dbId)
+                db.terminate().await()
+                db.clearPersistence().await()
+            }.onFailure { e ->
+                Log.w("Auth", "Could not clear Firestore local persistence on sign-out: ${e.message}")
+            }
+        }
         try {
             credentialManager.clearCredentialState(ClearCredentialStateRequest())
         } catch (e: Exception) {

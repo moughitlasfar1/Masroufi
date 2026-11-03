@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import com.example.R
+import com.example.domain.PayCycleEngine
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentReference
@@ -152,6 +153,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
 
     private fun buildTransactionPayload(uid: String, tx: TransactionItem): Map<String, Any> {
         val safeType = if (tx.type in listOf("expense", "income", "transfer")) tx.type else "expense"
+        val validatedDate = PayCycleEngine.requireOrNormalizeIsoDate(tx.isoDate)
         return mapOf(
             "userId" to uid,
             "type" to safeType,
@@ -161,7 +163,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             "accountId" to tx.accountId.ifBlank { "acc_cash" }.take(80),
             "toAccountId" to tx.toAccountId.take(80),
             "desc" to tx.desc.take(250),
-            "isoDate" to tx.isoDate.ifBlank { "2026-11-01" }.take(20),
+            "isoDate" to validatedDate.take(20),
             "createdAt" to (tx.createdAt ?: FieldValue.serverTimestamp()),
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -660,8 +662,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     }
 
     /**
-     * Atomically restores a complete v2 backup (profile, customPrefs, accounts, envelopes,
-     * financialItems, and transactions) using chunked Firestore WriteBatches.
+     * Two-phase backup restore:
+     * 1. Pre-builds and validates all Firestore payloads in memory before any network write.
+     * 2. Optionally deletes stale local/cloud records absent from the backup (`replaceExisting = true`).
+     * 3. Executes in bounded Firestore batches (max 400 ops/batch) while reporting progress per chunk.
      */
     suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
@@ -669,47 +673,111 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         accounts: List<AccountItem>,
         envelopes: List<EnvelopeConfig>,
         financialItems: List<FinancialItem>,
-        transactions: List<TransactionItem>
+        transactions: List<TransactionItem>,
+        staleTxIdsToDelete: List<String> = emptyList(),
+        staleItemIdsToDelete: List<String> = emptyList(),
+        staleAccountIdsToDelete: List<String> = emptyList(),
+        staleEnvelopeIdsToDelete: List<String> = emptyList(),
+        onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit = { _, _ -> }
     ) {
         val uid = requireUserId()
         val userRef = db.collection("users").document(uid)
         try {
-            val operations = mutableListOf<Pair<DocumentReference, Map<String, Any>>>()
+            // Phase 1: Pre-build and validate every payload in memory before touching Firestore
+            val setOperations = mutableListOf<Pair<DocumentReference, Map<String, Any>>>()
+            val deleteRefs = mutableListOf<DocumentReference>()
 
             if (profile != null) {
-                operations.add(userRef to buildProfilePayload(uid, profile))
+                setOperations.add(userRef to buildProfilePayload(uid, profile))
             }
             if (customPrefsItem != null) {
                 val ref = userRef.collection("items").document("custom_prefs")
-                operations.add(ref to buildFinancialItemPayload(uid, customPrefsItem.copy(id = "custom_prefs")))
-            }
-            accounts.forEachIndexed { idx, acc ->
-                val cleanId = acc.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "acc_restored_$idx" }
-                val ref = userRef.collection("accounts").document(cleanId)
-                operations.add(ref to buildAccountPayload(uid, acc))
-            }
-            envelopes.forEachIndexed { idx, env ->
-                val cleanId = env.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "env_restored_$idx" }
-                val ref = userRef.collection("envelopes").document(cleanId)
-                operations.add(ref to buildEnvelopePayload(uid, env))
-            }
-            financialItems.forEachIndexed { idx, item ->
-                val cleanId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "item_restored_$idx" }
-                val ref = userRef.collection("items").document(cleanId)
-                operations.add(ref to buildFinancialItemPayload(uid, item))
-            }
-            transactions.forEachIndexed { idx, tx ->
-                val cleanId = tx.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "tx_restored_$idx" }
-                val ref = userRef.collection("transactions").document(cleanId)
-                operations.add(ref to buildTransactionPayload(uid, tx))
+                setOperations.add(ref to buildFinancialItemPayload(uid, customPrefsItem.copy(id = "custom_prefs")))
             }
 
-            for (chunk in operations.chunked(400)) {
+            val restoredAccountIds = mutableSetOf<String>()
+            accounts.forEachIndexed { idx, acc ->
+                val cleanId = acc.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "acc_restored_$idx" }
+                restoredAccountIds.add(cleanId)
+                val ref = userRef.collection("accounts").document(cleanId)
+                setOperations.add(ref to buildAccountPayload(uid, acc))
+            }
+
+            val restoredEnvelopeIds = mutableSetOf<String>()
+            envelopes.forEachIndexed { idx, env ->
+                val cleanId = env.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "env_restored_$idx" }
+                restoredEnvelopeIds.add(cleanId)
+                val ref = userRef.collection("envelopes").document(cleanId)
+                setOperations.add(ref to buildEnvelopePayload(uid, env))
+            }
+
+            val restoredItemIds = mutableSetOf<String>()
+            if (customPrefsItem != null) restoredItemIds.add("custom_prefs")
+            financialItems.forEachIndexed { idx, item ->
+                val cleanId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "item_restored_$idx" }
+                restoredItemIds.add(cleanId)
+                val ref = userRef.collection("items").document(cleanId)
+                setOperations.add(ref to buildFinancialItemPayload(uid, item))
+            }
+
+            val restoredTxIds = mutableSetOf<String>()
+            transactions.forEachIndexed { idx, tx ->
+                val cleanId = tx.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "tx_restored_$idx" }
+                restoredTxIds.add(cleanId)
+                val ref = userRef.collection("transactions").document(cleanId)
+                setOperations.add(ref to buildTransactionPayload(uid, tx))
+            }
+
+            // Collect stale documents to remove when replacing existing state
+            staleTxIdsToDelete.forEach { oldId ->
+                val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+                if (cleanOld.isNotBlank() && cleanOld !in restoredTxIds) {
+                    deleteRefs.add(userRef.collection("transactions").document(cleanOld))
+                }
+            }
+            staleItemIdsToDelete.forEach { oldId ->
+                val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+                if (cleanOld.isNotBlank() && cleanOld !in restoredItemIds) {
+                    deleteRefs.add(userRef.collection("items").document(cleanOld))
+                }
+            }
+            staleAccountIdsToDelete.forEach { oldId ->
+                val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+                if (cleanOld.isNotBlank() && cleanOld !in restoredAccountIds && accounts.isNotEmpty()) {
+                    deleteRefs.add(userRef.collection("accounts").document(cleanOld))
+                }
+            }
+            staleEnvelopeIdsToDelete.forEach { oldId ->
+                val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+                if (cleanOld.isNotBlank() && cleanOld !in restoredEnvelopeIds && envelopes.isNotEmpty()) {
+                    deleteRefs.add(userRef.collection("envelopes").document(cleanOld))
+                }
+            }
+
+            // Phase 2: Execute bounded batches (max 400 ops per batch) with chunk progress
+            val setChunks = setOperations.chunked(400)
+            val delChunks = deleteRefs.chunked(400)
+            val totalChunks = (setChunks.size + delChunks.size).coerceAtLeast(1)
+            var completed = 0
+
+            for (chunk in setChunks) {
                 val batch = db.batch()
                 for ((docRef, payload) in chunk) {
                     batch.set(docRef, payload)
                 }
                 batch.commit().await()
+                completed++
+                onChunkProgress(completed, totalChunks)
+            }
+
+            for (chunk in delChunks) {
+                val batch = db.batch()
+                for (docRef in chunk) {
+                    batch.delete(docRef)
+                }
+                batch.commit().await()
+                completed++
+                onChunkProgress(completed, totalChunks)
             }
         } catch (e: CancellationException) {
             throw e

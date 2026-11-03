@@ -62,14 +62,46 @@ data class SmartReminder(
 object PayCycleEngine {
 
     private val UTC_TZ: TimeZone = TimeZone.getTimeZone("UTC")
+    private val ISO_DATE_REGEX = Regex("^\\d{4}-\\d{2}-\\d{2}$")
 
-    fun todayIso(): String {
-        val cal = Calendar.getInstance()
+    fun todayIso(timeZone: TimeZone = TimeZone.getDefault()): String {
+        val cal = Calendar.getInstance(timeZone)
         return formatIso(
             cal.get(Calendar.YEAR),
             cal.get(Calendar.MONTH) + 1,
             cal.get(Calendar.DAY_OF_MONTH)
         )
+    }
+
+    /**
+     * Validates that [iso] is a strict YYYY-MM-DD string representing a real calendar date
+     * (including leap-year validation for February).
+     */
+    fun isValidIsoDate(iso: String): Boolean {
+        val trimmed = iso.trim()
+        if (!ISO_DATE_REGEX.matches(trimmed)) return false
+        val parts = trimmed.split("-").mapNotNull { it.toIntOrNull() }
+        if (parts.size != 3) return false
+        val year = parts[0]
+        val month = parts[1]
+        val day = parts[2]
+        if (year !in 1970..2100) return false
+        if (month !in 1..12) return false
+        val maxDay = daysInMonth(year, month)
+        return day in 1..maxDay
+    }
+
+    /**
+     * Returns today's real date if [iso] is blank, or validates that [iso] is a real YYYY-MM-DD date.
+     * Throws IllegalArgumentException if [iso] is non-blank and invalid (never substitutes a hardcoded date).
+     */
+    fun requireOrNormalizeIsoDate(iso: String, timeZone: TimeZone = TimeZone.getDefault()): String {
+        val trimmed = iso.trim()
+        if (trimmed.isEmpty()) return todayIso(timeZone)
+        require(isValidIsoDate(trimmed)) {
+            "Date invalide '$trimmed'. Format attendu : YYYY-MM-DD valide."
+        }
+        return trimmed
     }
 
     fun currentCycleKey(payCycleDay: Int, nowIso: String = todayIso()): String {

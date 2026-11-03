@@ -87,16 +87,19 @@ fun HistoryScreen(
     onUpdateFilter: ((FilterState) -> FilterState) -> Unit,
     onEditTransaction: (TransactionItem) -> Unit,
     onDeleteTransaction: (TransactionItem) -> Unit,
-    onShareJson: () -> Unit,
-    onCopyJson: () -> Unit,
+    onShareJson: (String) -> Unit,
+    onCopyJson: (String) -> Unit,
     onShareCsv: () -> Unit,
     onOpenRestoreModal: () -> Unit,
-    onExportJsonFile: () -> Unit = {},
+    onExportJsonFile: (String) -> Unit = {},
     onExportCsvFile: () -> Unit = {},
     onImportJsonFile: () -> Unit = {},
-    onClearClipboard: () -> Unit = {}
+    onClearClipboard: () -> Unit = {},
+    hasRollbackSnapshot: Boolean = false,
+    onRollbackRestore: () -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    var backupPassword by remember { mutableStateOf("") }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -332,7 +335,7 @@ fun HistoryScreen(
                             color = AccentEmerald.copy(alpha = 0.16f)
                         ) {
                             Text(
-                                text = "Format Complet v2.0",
+                                text = if (backupPassword.trim().length >= 4) "AES-256-GCM Actif" else "Format Complet v2.0",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = AccentEmerald,
                                 fontWeight = FontWeight.Bold,
@@ -346,19 +349,56 @@ fun HistoryScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    OutlinedTextField(
+                        value = backupPassword,
+                        onValueChange = { backupPassword = it },
+                        label = {
+                            Text(
+                                when (state.profile.language) {
+                                    "ar" -> "كلمة مرور تشفير النسخة الاحتياطية AES-256-GCM (اختياري، 4 أحرف+)"
+                                    "darija" -> "كلمة السر لتشفير النسخة بـ AES-256-GCM (اختياري، 4 حروف+)"
+                                    "en" -> "AES-256-GCM Backup Password (optional, 4+ chars)"
+                                    else -> "Mot de passe chiffrement AES-256-GCM (optionnel, 4+ car.)"
+                                },
+                                fontSize = 11.5.sp
+                            )
+                        },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("backup_encryption_password_input")
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = when (state.profile.language) {
+                            "ar" -> "ملاحظة: ملف CSV غير مشفر (مخصص لـ Excel ومحمّي ضد حقن الصيغ). استخدم JSON مع كلمة مرور للتشفير بـ AES-256-GCM + PBKDF2."
+                            "darija" -> "ملاحظة: ملف CSV ما مشفرش (خاص بـ Excel ومحمّي من الصيغ). استعمل JSON مع كلمة السر باش يتشفر بـ AES-256-GCM."
+                            "en" -> "Security note: CSV is unencrypted plaintext for spreadsheets (formula-injection safe). Set a password above to encrypt JSON with AES-256-GCM."
+                            else -> "Note : Le CSV est en texte clair pour Excel/Sheets (formules neutralisées). Entrez un mot de passe ci-dessus pour chiffrer le JSON en AES-256-GCM."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilledTonalButton(
-                            onClick = onShareJson,
+                            onClick = { onShareJson(backupPassword) },
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(strings.btnShareJson, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         FilledTonalButton(
-                            onClick = onCopyJson,
+                            onClick = { onCopyJson(backupPassword) },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("copy_sensitive_json_btn")
@@ -379,7 +419,9 @@ fun HistoryScreen(
                         }
                         FilledTonalButton(
                             onClick = onOpenRestoreModal,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("open_restore_modal_btn")
                         ) {
                             Text(strings.btnRestoreJson, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
@@ -390,7 +432,7 @@ fun HistoryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilledTonalButton(
-                            onClick = onExportJsonFile,
+                            onClick = { onExportJsonFile(backupPassword) },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("save_json_file_btn")
@@ -414,10 +456,10 @@ fun HistoryScreen(
                         ) {
                             Text(
                                 text = when (state.profile.language) {
-                                    "ar" -> "حفظ ملف CSV آمن"
-                                    "darija" -> "سجل ملف CSV"
-                                    "en" -> "Save CSV File"
-                                    else -> "Fichier CSV"
+                                    "ar" -> "حفظ ملف CSV (نصي)"
+                                    "darija" -> "سجل ملف CSV (نصي)"
+                                    "en" -> "Save CSV (Plain)"
+                                    else -> "Fichier CSV (Clair)"
                                 },
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Bold
@@ -461,6 +503,31 @@ fun HistoryScreen(
                                     else -> "Vider Presse-papiers"
                                 },
                                 fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (hasRollbackSnapshot) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = onRollbackRestore,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = AccentCoral.copy(alpha = 0.16f),
+                                contentColor = AccentCoral
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("rollback_restore_btn")
+                        ) {
+                            Text(
+                                text = when (state.profile.language) {
+                                    "ar" -> "التراجع عن آخر استرجاع (Rollback إلى الحالة السابقة)"
+                                    "darija" -> "رجع للحالة اللي كانت قبل الاسترجاع (Rollback)"
+                                    "en" -> "Rollback Last Restore (Restore pre-import snapshot)"
+                                    else -> "Annuler la dernière restauration (Rollback)"
+                                },
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -649,6 +716,17 @@ fun TransactionEditorSheet(
                     .testTag("tx_desc_input")
             )
 
+            var dateError by remember { mutableStateOf<String?>(null) }
+
+            if (!dateError.isNullOrBlank()) {
+                Text(
+                    text = dateError!!,
+                    color = AccentCoral,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -672,7 +750,13 @@ fun TransactionEditorSheet(
                 Button(
                     onClick = {
                         val amt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
+                        val normalizedDate = isoDate.trim().ifEmpty { PayCycleEngine.todayIso() }
+                        if (!PayCycleEngine.isValidIsoDate(normalizedDate)) {
+                            dateError = "Date invalide ('$normalizedDate'). Format requis : YYYY-MM-DD réel (ex: ${PayCycleEngine.todayIso()})."
+                            return@Button
+                        }
                         if (amt > 0.0) {
+                            dateError = null
                             onSave(
                                 existingTx?.id ?: "",
                                 txType,
@@ -682,7 +766,7 @@ fun TransactionEditorSheet(
                                 selectedAccountId,
                                 toAccountId,
                                 desc.ifBlank { if (txType == "transfer") "Transfert entre comptes" else customCategory },
-                                isoDate
+                                normalizedDate
                             )
                             onDismiss()
                         }
@@ -850,6 +934,10 @@ fun SettingsBottomSheet(
                         )
                     }
 
+                    var clearCacheOnSignOut by remember {
+                        mutableStateOf(AppSecurityManager.isClearCacheOnSignOutEnabled(context))
+                    }
+
                     // 2. Local App Lock (PIN / Biometrics)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -870,17 +958,17 @@ fun SettingsBottomSheet(
                             Text(
                                 text = if (hasPinConfigured) {
                                     when (lang) {
-                                        "ar" -> "رمز PIN مفعّل ومشفر بـ SHA-256"
-                                        "darija" -> "كود PIN مسجل ومشفر بـ SHA-256"
-                                        "en" -> "PIN configured (SHA-256 salted hash)"
-                                        else -> "Code PIN configuré (SHA-256 salé)"
+                                        "ar" -> "محمي باشتقاق PBKDF2-HMAC-SHA256 (65,536 تكرار + Salt + Android Keystore)"
+                                        "darija" -> "محمي بـ PBKDF2-HMAC-SHA256 (65,536 تكرار + Salt + Android Keystore)"
+                                        "en" -> "Protected via PBKDF2-HMAC-SHA256 key derivation (65,536 iter + salt + Keystore)"
+                                        else -> "Protégé par dérivation PBKDF2-HMAC-SHA256 (65 536 itér. + sel + Keystore)"
                                     }
                                 } else {
                                     when (lang) {
-                                        "ar" -> "قم بتعيين رمز PIN من 4 أرقام لتفعيل القفل"
-                                        "darija" -> "دير كود PIN من 4 أرقام باش تفعل القفل"
-                                        "en" -> "Set a 4-digit PIN below to protect on launch"
-                                        else -> "Définissez un code PIN à 4 chiffres ci-dessous"
+                                        "ar" -> "قم بتعيين رمز PIN (يُنصح بـ 6 أرقام، ويقبل 4–8 أرقام) مع قفل تدريجي"
+                                        "darija" -> "دير كود PIN (يُنصح بـ 6 أرقام، وكيقبل 4–8 أرقام) لتفعيل القفل"
+                                        "en" -> "Set a PIN below (6 digits recommended, 4–8 supported) with rate-limiting"
+                                        else -> "Définissez un PIN ci-dessous (6 chiffres recommandés, 4–8 acceptés)"
                                     }
                                 },
                                 style = MaterialTheme.typography.bodySmall,
@@ -893,10 +981,10 @@ fun SettingsBottomSheet(
                             onCheckedChange = { enabled ->
                                 if (enabled && !hasPinConfigured && !AppSecurityManager.isDeviceSecure(context)) {
                                     pinFeedback = when (lang) {
-                                        "ar" -> "يرجى إدخال وحفظ رمز PIN من 4 أرقام أولاً"
-                                        "darija" -> "دخل بعدا كود PIN ديال 4 أرقام لتحت"
-                                        "en" -> "Please set a 4-digit PIN first"
-                                        else -> "Veuillez d'abord définir un code PIN à 4 chiffres"
+                                        "ar" -> "يرجى إدخال وحفظ رمز PIN (يُنصح بـ 6 أرقام) أولاً"
+                                        "darija" -> "دخل بعدا كود PIN (6 أرقام منصوح بها) لتحت"
+                                        "en" -> "Please set a PIN (6 digits recommended) first"
+                                        else -> "Veuillez d'abord définir un code PIN (6 chiffres recommandés)"
                                     }
                                 } else {
                                     appLockEnabled = enabled
@@ -917,17 +1005,17 @@ fun SettingsBottomSheet(
                         OutlinedTextField(
                             value = newPinInput,
                             onValueChange = { input ->
-                                if (input.length <= 4 && input.all { it.isDigit() }) {
+                                if (input.length <= 8 && input.all { it.isDigit() }) {
                                     newPinInput = input
                                 }
                             },
                             label = {
                                 Text(
                                     when (lang) {
-                                        "ar" -> "رمز PIN جديد (4 أرقام)"
-                                        "darija" -> "كود PIN جديد (4 أرقام)"
-                                        "en" -> "New 4-digit PIN"
-                                        else -> "Nouveau PIN (4 chiffres)"
+                                        "ar" -> "رمز PIN جديد (6 أرقام موصى بها)"
+                                        "darija" -> "كود PIN جديد (6 أرقام منصوح بها)"
+                                        "en" -> "New PIN (6 digits recommended)"
+                                        else -> "Nouveau PIN (6 chiffres recomm.)"
                                     },
                                     fontSize = 12.sp
                                 )
@@ -947,19 +1035,20 @@ fun SettingsBottomSheet(
                                     appLockEnabled = true
                                     AppSecurityManager.setAppLockEnabled(context, true)
                                     onAppLockChanged(true)
+                                    val len = newPinInput.trim().length
                                     newPinInput = ""
                                     pinFeedback = when (lang) {
-                                        "ar" -> "تم حفظ وتشفير رمز PIN وتفعيل القفل!"
-                                        "darija" -> "تم تسجيل كود PIN وتفعيل القفل!"
-                                        "en" -> "PIN saved & App Lock activated!"
-                                        else -> "Code PIN enregistré et verrouillage activé !"
+                                        "ar" -> "تم اشتقاق وحفظ رمز PIN ($len أرقام) عبر PBKDF2-HMAC-SHA256!"
+                                        "darija" -> "تم تسجيل كود PIN ($len أرقام) بـ PBKDF2-HMAC-SHA256!"
+                                        "en" -> "$len-digit PIN hashed via PBKDF2-HMAC-SHA256 & App Lock enabled!"
+                                        else -> "PIN ($len chiffres) haché via PBKDF2-HMAC-SHA256 et activé !"
                                     }
                                 } else {
                                     pinFeedback = when (lang) {
-                                        "ar" -> "يجب أن يتكون الرمز من 4 أرقام"
-                                        "darija" -> "خاص الكود يكون فيه 4 أرقام"
-                                        "en" -> "PIN must be 4 digits"
-                                        else -> "Le PIN doit contenir 4 chiffres"
+                                        "ar" -> "يجب أن يتكون الرمز من 4 إلى 8 أرقام (يُنصح بـ 6 أرقام)"
+                                        "darija" -> "خاص الكود يكون ما بين 4 و 8 أرقام (منصوح بـ 6 أرقام)"
+                                        "en" -> "PIN must be 4 to 8 digits (6 digits recommended)"
+                                        else -> "Le PIN doit contenir 4 à 8 chiffres (6 recommandés)"
                                     }
                                 }
                             },
@@ -1012,6 +1101,46 @@ fun SettingsBottomSheet(
                                 AppSecurityManager.setDeviceCredentialAllowed(context, allowed)
                             },
                             modifier = Modifier.testTag("settings_device_credential_switch")
+                        )
+                    }
+
+                    // 3. Clear Local Offline Cache on Sign-Out (F-06)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "مسح التخزين المحلي المؤقت (Cache) عند تسجيل الخروج"
+                                    "darija" -> "مسح الكاش المحلي من التليفون ملي تخرج من الحساب"
+                                    "en" -> "Wipe Local Offline Cache on Sign-Out"
+                                    else -> "Effacer le cache local hors-ligne à la déconnexion"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "تحذير: قد تفقد العمليات المسجلة بدون إنترنت التي لم تتم مزامنتها بعد"
+                                    "darija" -> "رد بالك: العمليات اللي تقيدو بلا كونيكسيون ومازال ما تزامنوش غادي يتمسحو"
+                                    "en" -> "Warning: Unsynced offline changes will be lost when signing out"
+                                    else -> "Attention : les opérations hors-ligne non synchronisées seront perdues"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = clearCacheOnSignOut,
+                            onCheckedChange = { enabled ->
+                                clearCacheOnSignOut = enabled
+                                AppSecurityManager.setClearCacheOnSignOutEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_clear_cache_signout_switch")
                         )
                     }
                 }
@@ -1881,22 +2010,32 @@ fun AddFinancialItemSheet(
 @Composable
 fun RestoreJsonSheet(
     strings: AppStrings,
+    initialRawJson: String = "",
+    onPreviewBackup: (String, String) -> Result<BackupImportPreview> = { _, _ -> Result.failure(Exception()) },
     onDismiss: () -> Unit,
-    onRestore: (String) -> Unit,
+    onRestore: (String, String, Boolean) -> Unit,
     onImportFile: () -> Unit = {}
 ) {
-    var rawJson by remember { mutableStateOf("") }
+    var rawJson by remember(initialRawJson) { mutableStateOf(initialRawJson) }
+    var decryptPassword by remember { mutableStateOf("") }
+    var replaceExisting by remember { mutableStateOf(true) }
+    var previewState by remember { mutableStateOf<BackupImportPreview?>(null) }
+    var previewError by remember { mutableStateOf<String?>(null) }
+
+    val isEncrypted = remember(rawJson) { AppSecurityManager.isEncryptedBackup(rawJson) }
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = strings.btnRestoreJson, style = MaterialTheme.typography.titleLarge)
+
             FilledTonalButton(
                 onClick = {
-                    onDismiss()
                     onImportFile()
                 },
                 modifier = Modifier
@@ -1905,26 +2044,146 @@ fun RestoreJsonSheet(
             ) {
                 Text("📂 Choisir un fichier de sauvegarde (.json)", fontWeight = FontWeight.Bold)
             }
+
             OutlinedTextField(
                 value = rawJson,
-                onValueChange = { rawJson = it },
-                label = { Text("Ou collez votre JSON Masroufi ici...") },
+                onValueChange = {
+                    rawJson = it
+                    previewState = null
+                    previewError = null
+                },
+                label = { Text("Ou collez votre JSON Masroufi (clair ou chiffré AES-256-GCM)...") },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(160.dp)
+                    .height(130.dp)
+                    .testTag("restore_json_textarea")
             )
+
+            if (isEncrypted) {
+                OutlinedTextField(
+                    value = decryptPassword,
+                    onValueChange = {
+                        decryptPassword = it
+                        previewState = null
+                        previewError = null
+                    },
+                    label = { Text("Mot de passe de déchiffrement AES-256-GCM") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("restore_decrypt_password_input")
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Remplacement complet (nettoyer les anciennes opérations)",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Une capture Rollback est enregistrée automatiquement avant la restauration",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = replaceExisting,
+                    onCheckedChange = { replaceExisting = it },
+                    modifier = Modifier.testTag("restore_replace_existing_switch")
+                )
+            }
+
+            FilledTonalButton(
+                onClick = {
+                    if (rawJson.isNotBlank()) {
+                        val res = onPreviewBackup(rawJson, decryptPassword)
+                        res.onSuccess { prev ->
+                            previewState = prev
+                            previewError = null
+                        }.onFailure { err ->
+                            previewState = null
+                            previewError = err.localizedMessage ?: "Sauvegarde invalide ou mot de passe incorrect."
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("restore_preview_btn")
+            ) {
+                Text("1. Vérifier & Prévisualiser la sauvegarde (Phase 1)", fontWeight = FontWeight.Bold)
+            }
+
+            if (!previewError.isNullOrBlank()) {
+                Text(
+                    text = previewError!!,
+                    color = AccentCoral,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            val prev = previewState
+            if (prev != null) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("restore_preview_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Aperçu vérifié (v${prev.backupVersion} • ${if (prev.isEncrypted) "Chiffré AES-256-GCM" else "JSON Clair"})",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = AccentEmerald,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = "• Comptes : ${prev.accountsCount} | Enveloppes : ${prev.envelopesCount} | Éléments : ${prev.financialItemsCount}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = "• Transactions : ${prev.transactionsCount} (${prev.totalOperationsCount} écritures au total)",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            text = if (prev.isSingleAtomicBatch) {
+                                "• Exécution : 1 lot Firestore atomique (< 400 opérations)"
+                            } else {
+                                "• Exécution : ${prev.batchChunksCount} lots séquentiels avec sauvegarde Rollback préalable"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             Button(
                 onClick = {
                     if (rawJson.isNotBlank()) {
-                        onRestore(rawJson)
+                        onRestore(rawJson, decryptPassword, replaceExisting)
                         onDismiss()
                     }
                 },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
+                    .testTag("restore_confirm_btn")
             ) {
-                Text(strings.saveBtn, fontWeight = FontWeight.ExtraBold)
+                Text("2. Exécuter la restauration (Phase 2)", fontWeight = FontWeight.ExtraBold)
             }
             Spacer(modifier = Modifier.height(24.dp))
         }

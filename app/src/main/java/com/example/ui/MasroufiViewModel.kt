@@ -16,6 +16,8 @@ import com.example.domain.PayCycleEngine
 import com.example.domain.PayCycleWindow
 import com.example.domain.SmartInsight
 import com.example.domain.SmartReminder
+import com.example.security.AppSecurityManager
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
@@ -45,6 +47,7 @@ data class WhatIfSimulatorState(
 
 data class ParsedBackupPayload(
     val backupVersion: Int,
+    val exportedAtIso: String = "",
     val profile: UserProfile?,
     val customPrefs: CustomizationPrefs?,
     val accounts: List<AccountItem>,
@@ -53,7 +56,58 @@ data class ParsedBackupPayload(
     val transactions: List<TransactionItem>
 )
 
+data class BackupImportPreview(
+    val isEncrypted: Boolean,
+    val backupVersion: Int,
+    val exportedAtIso: String,
+    val accountsCount: Int,
+    val envelopesCount: Int,
+    val financialItemsCount: Int,
+    val transactionsCount: Int,
+    val totalOperationsCount: Int,
+    val batchChunksCount: Int,
+    val isSingleAtomicBatch: Boolean
+)
+
 object BackupSerializer {
+    private val FORMULA_PREFIXES = charArrayOf('=', '+', '-', '@')
+
+    /**
+     * Neutralizes spreadsheet formula injection (CSV Injection / DDE) and normalizes control characters.
+     * - Replaces CR, LF, and TAB with spaces so cells cannot split rows or columns.
+     * - Prepends a single quote (') if the first non-whitespace character is '=', '+', '-', or '@'.
+     * - Escapes internal double quotes (" -> "") and wraps the field in double quotes.
+     */
+    fun sanitizeCsvCell(raw: String): String {
+        val normalized = raw
+            .replace("\r\n", " ")
+            .replace('\r', ' ')
+            .replace('\n', ' ')
+            .replace('\t', ' ')
+        val trimmedStart = normalized.trimStart()
+        val neutralized = if (trimmedStart.isNotEmpty() && trimmedStart[0] in FORMULA_PREFIXES) {
+            "'$normalized"
+        } else {
+            normalized
+        }
+        val escapedQuotes = neutralized.replace("\"", "\"\"")
+        return "\"$escapedQuotes\""
+    }
+
+    fun encodeCsv(transactions: List<TransactionItem>): String {
+        val sb = StringBuilder("ID,Type,Montant,Categorie,Compte,Description,Date\n")
+        transactions.forEach { t ->
+            sb.append(sanitizeCsvCell(t.id)).append(',')
+                .append(sanitizeCsvCell(t.type)).append(',')
+                .append(sanitizeCsvCell(t.amount.toString())).append(',')
+                .append(sanitizeCsvCell(t.category)).append(',')
+                .append(sanitizeCsvCell(t.accountId)).append(',')
+                .append(sanitizeCsvCell(t.desc)).append(',')
+                .append(sanitizeCsvCell(t.isoDate)).append('\n')
+        }
+        return sb.toString()
+    }
+
     fun encodeV2Backup(state: DashboardState): String {
         val root = JSONObject().apply {
             put("backupVersion", 2)
@@ -277,12 +331,51 @@ object BackupSerializer {
 
         return ParsedBackupPayload(
             backupVersion = version,
+            exportedAtIso = obj.optString("exportedAtIso", ""),
             profile = restoredProfile,
             customPrefs = restoredCustomPrefs,
             accounts = accountsList,
             envelopes = envelopesList,
             financialItems = itemsList,
             transactions = txsList
+        )
+    }
+
+    /**
+     * Phase 1 pre-flight validation & import preview.
+     * Supports both plain JSON backups and AES-256-GCM password-encrypted backups.
+     */
+    fun previewBackup(
+        rawContent: String,
+        password: String = "",
+        currentUserId: String,
+        fallbackProfile: UserProfile
+    ): BackupImportPreview {
+        val isEnc = AppSecurityManager.isEncryptedBackup(rawContent)
+        val plainJson = if (isEnc) {
+            AppSecurityManager.decryptBackupJson(rawContent, password)
+        } else {
+            rawContent
+        }
+        val parsed = decodeBackup(plainJson, currentUserId, fallbackProfile)
+        val totalOps = (if (parsed.profile != null) 1 else 0) +
+            (if (parsed.customPrefs != null) 1 else 0) +
+            parsed.accounts.size +
+            parsed.envelopes.size +
+            parsed.financialItems.size +
+            parsed.transactions.size
+        val chunks = ceil(totalOps.coerceAtLeast(1) / 400.0).toInt().coerceAtLeast(1)
+        return BackupImportPreview(
+            isEncrypted = isEnc,
+            backupVersion = parsed.backupVersion,
+            exportedAtIso = parsed.exportedAtIso,
+            accountsCount = parsed.accounts.size,
+            envelopesCount = parsed.envelopes.size,
+            financialItemsCount = parsed.financialItems.size,
+            transactionsCount = parsed.transactions.size,
+            totalOperationsCount = totalOps,
+            batchChunksCount = chunks,
+            isSingleAtomicBatch = chunks == 1
         )
     }
 
@@ -294,7 +387,8 @@ object BackupSerializer {
             if (amt > 0.0) {
                 val cat = item.optString("category", "Autre / Imprévus")
                 val desc = item.optString("desc", "Transaction")
-                val iso = item.optString("iso", item.optString("isoDate", PayCycleEngine.todayIso()))
+                val rawIso = item.optString("iso", item.optString("isoDate", ""))
+                val validatedIso = PayCycleEngine.requireOrNormalizeIsoDate(rawIso)
                 list.add(
                     TransactionItem(
                         id = item.optString("id", "tx_${System.currentTimeMillis()}_$i"),
@@ -309,7 +403,7 @@ object BackupSerializer {
                         accountId = item.optString("accountId", "acc_cash"),
                         toAccountId = item.optString("toAccountId", ""),
                         desc = desc,
-                        isoDate = iso
+                        isoDate = validatedIso
                     )
                 )
             }
@@ -721,6 +815,12 @@ class MasroufiViewModel(
         isoDate: String
     ) {
         if (amount <= 0.0 || amount.isNaN() || amount.isInfinite()) return
+        val validatedDate = try {
+            PayCycleEngine.requireOrNormalizeIsoDate(isoDate)
+        } catch (e: IllegalArgumentException) {
+            _errorMessage.value = e.message
+            return
+        }
         val existing = uiState.value.allTransactions.find { it.id == existingId }
         val resolvedEnvKey = envelopeKey.ifBlank {
             PayCycleEngine.resolveEnvelopeKey(category, desc, uiState.value.envelopes.map { it.config })
@@ -737,7 +837,7 @@ class MasroufiViewModel(
                     accountId = accountId.ifBlank { "acc_cash" },
                     toAccountId = if (type == "transfer") toAccountId else "",
                     desc = desc.ifBlank { category.ifBlank { "Opération" } },
-                    isoDate = isoDate.ifBlank { PayCycleEngine.todayIso() },
+                    isoDate = validatedDate,
                     createdAt = existing?.createdAt
                 )
             )
@@ -945,32 +1045,82 @@ class MasroufiViewModel(
         _whatIfState.value = WhatIfSimulatorState(envelopeKey, cutPct.coerceIn(5, 80))
     }
 
+    private val _preRestoreRollbackJson = MutableStateFlow<String?>(null)
+    val preRestoreRollbackJson: StateFlow<String?> = _preRestoreRollbackJson.asStateFlow()
+
     /**
      * Complete Version 2 JSON Backup (profile, customPrefs, accounts, envelopes,
      * financialItems [goals, bills, debts, darets, seasonals, presets], and transactions).
+     * If [password] is provided (non-blank), encrypts the JSON with AES-256-GCM + PBKDF2-HMAC-SHA256.
      */
-    fun exportBackupJson(): String {
-        return BackupSerializer.encodeV2Backup(uiState.value)
+    fun exportBackupJson(password: String = ""): String {
+        val plain = BackupSerializer.encodeV2Backup(uiState.value)
+        return if (password.trim().isNotEmpty()) {
+            AppSecurityManager.encryptBackupJson(plain, password.trim())
+        } else {
+            plain
+        }
     }
 
+    /**
+     * Exports all transactions to CSV with formula-injection protection (`=`, `+`, `-`, `@` neutralized).
+     */
     fun exportCsv(): String {
-        val sb = StringBuilder("ID,Type,Montant,Categorie,Compte,Description,Date\n")
-        uiState.value.allTransactions.forEach { t ->
-            val cleanDesc = t.desc.replace("\"", "\"\"")
-            val cleanCat = t.category.replace("\"", "\"\"")
-            sb.append("\"${t.id}\",\"${t.type}\",\"${t.amount}\",\"$cleanCat\",\"${t.accountId}\",\"$cleanDesc\",\"${t.isoDate}\"\n")
+        return BackupSerializer.encodeCsv(uiState.value.allTransactions)
+    }
+
+    fun previewBackupImport(rawContent: String, password: String = ""): Result<BackupImportPreview> {
+        return runCatching {
+            BackupSerializer.previewBackup(
+                rawContent = rawContent,
+                password = password,
+                currentUserId = currentUserId,
+                fallbackProfile = uiState.value.profile
+            )
         }
-        return sb.toString()
     }
 
     fun restoreFromJson(rawJson: String, onResult: (Boolean) -> Unit) {
+        restoreFromJson(
+            rawJson = rawJson,
+            password = "",
+            replaceExisting = true,
+            onResult = { ok, _ -> onResult(ok) }
+        )
+    }
+
+    /**
+     * Two-phase backup restore:
+     * Phase 1: Decrypts (if AES-256-GCM encrypted) and validates the entire backup payload in memory,
+     *          and saves a pre-restore rollback snapshot of the current state.
+     * Phase 2: Executes Firestore batch writes (and deletes stale records if [replaceExisting] is true),
+     *          automatically rolling back if a mid-stream failure occurs.
+     */
+    fun restoreFromJson(
+        rawJson: String,
+        password: String = "",
+        replaceExisting: Boolean = true,
+        onResult: (Boolean, String) -> Unit
+    ) {
         safeLaunch("restoreFromJson") {
+            val currentState = uiState.value
+            val rollbackSnapshot = BackupSerializer.encodeV2Backup(currentState)
             try {
+                // Phase 1: Decrypt (if encrypted) & validate entire backup before any Firestore write
+                val plainJson = if (AppSecurityManager.isEncryptedBackup(rawJson)) {
+                    AppSecurityManager.decryptBackupJson(rawJson, password)
+                } else {
+                    rawJson
+                }
                 val parsed = BackupSerializer.decodeBackup(
-                    rawJson = rawJson,
+                    rawJson = plainJson,
                     currentUserId = currentUserId,
-                    fallbackProfile = uiState.value.profile
+                    fallbackProfile = currentState.profile
                 )
+
+                // Save rollback snapshot before mutating state
+                _preRestoreRollbackJson.value = rollbackSnapshot
+
                 if (parsed.profile != null) {
                     _optimisticProfile.value = parsed.profile
                 }
@@ -979,20 +1129,60 @@ class MasroufiViewModel(
                     buildCustomPrefsFinancialItem(parsed.customPrefs)
                 } else null
 
+                val staleTxIds = if (replaceExisting) currentState.allTransactions.map { it.id } else emptyList()
+                val staleItemIds = if (replaceExisting && parsed.backupVersion >= 2) {
+                    (currentState.presets + currentState.goals + currentState.bills +
+                        currentState.debts + currentState.darets + currentState.seasonals).map { it.id }
+                } else emptyList()
+                val staleAccIds = if (replaceExisting && parsed.accounts.isNotEmpty()) {
+                    currentState.accounts.map { it.account.id }
+                } else emptyList()
+                val staleEnvIds = if (replaceExisting && parsed.envelopes.isNotEmpty()) {
+                    currentState.envelopes.map { it.config.id }
+                } else emptyList()
+
+                var finalChunks = 1
+                // Phase 2: Execute bounded batches with stale record cleanup
                 repository.restoreFullBackupAtomically(
                     profile = parsed.profile,
                     customPrefsItem = customPrefsItem,
                     accounts = parsed.accounts,
                     envelopes = parsed.envelopes,
                     financialItems = parsed.financialItems,
-                    transactions = parsed.transactions
+                    transactions = parsed.transactions,
+                    staleTxIdsToDelete = staleTxIds,
+                    staleItemIdsToDelete = staleItemIds,
+                    staleAccountIdsToDelete = staleAccIds,
+                    staleEnvelopeIdsToDelete = staleEnvIds,
+                    onChunkProgress = { _, total -> finalChunks = total }
                 )
-                onResult(true)
+                onResult(
+                    true,
+                    "Restauration réussie (${parsed.transactions.size} op., $finalChunks lot(s) synchronisé(s)) !"
+                )
             } catch (e: Exception) {
                 Log.e("MasroufiVM", "Restore JSON failed", e)
-                _errorMessage.value = "Erreur lors de la restauration JSON : format invalide."
-                onResult(false)
+                val msg = e.localizedMessage ?: "Format invalide ou mot de passe erroné."
+                _errorMessage.value = "Erreur lors de la restauration : $msg"
+                onResult(false, msg)
             }
         }
+    }
+
+    fun rollbackLastRestore(onResult: (Boolean) -> Unit) {
+        val snapshot = _preRestoreRollbackJson.value
+        if (snapshot.isNullOrBlank()) {
+            onResult(false)
+            return
+        }
+        restoreFromJson(
+            rawJson = snapshot,
+            password = "",
+            replaceExisting = true,
+            onResult = { ok, _ ->
+                if (ok) _preRestoreRollbackJson.value = null
+                onResult(ok)
+            }
+        )
     }
 }

@@ -1,0 +1,94 @@
+name: Production Release (Signed AAB & APK)
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-production:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle 9.3.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Restore debug keystore (required by Gradle signingConfigs evaluation)
+        run: |
+          if [ ! -f "./debug.keystore" ] && [ -f "./debug.keystore.base64" ]; then
+            tr -d '\r\n ' < ./debug.keystore.base64 | base64 -d > ./debug.keystore
+          fi
+
+      - name: Decode Production Upload Keystore from GitHub Secrets
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$RELEASE_KEYSTORE_B64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "ERROR: Missing production signing secrets (RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD)."
+            echo "Configure these in GitHub Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          printf '%s' "$RELEASE_KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > ./my-upload-key.jks
+          if [ ! -s "./my-upload-key.jks" ]; then
+            echo "ERROR: Decoded ./my-upload-key.jks is empty."
+            exit 1
+          fi
+
+      - name: Build Signed Production AAB and APK (R8 Minified & Obfuscated)
+        env:
+          GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON_SECRET" ]; then
+            printf '%s\n' "$GOOGLE_SERVICES_JSON_SECRET" > app/google-services.json
+          fi
+          gradle :app:bundleRelease :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Upload Signed Production AAB (Google Play)
+        uses: actions/upload-artifact@v4
+        with:
+          name: masroufi-release-aab
+          path: app/build/outputs/bundle/release/*.aab
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload Signed Production APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: masroufi-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish Signed Production Release on Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG_NAME" \
+            app/build/outputs/bundle/release/*.aab \
+            app/build/outputs/apk/release/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Masroufi ${TAG_NAME}" \
+            --latest \
+            --generate-notes

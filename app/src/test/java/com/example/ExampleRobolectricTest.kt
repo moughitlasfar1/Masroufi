@@ -263,40 +263,129 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `security manager hashes PIN with salt and manages FLAG_SECURE and clipboard safely`() {
+    fun `security manager hashes PIN with PBKDF2 salt and enforces progressive lockout`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         AppSecurityManager.clearPin(context)
         assertFalse(AppSecurityManager.hasPinConfigured(context))
         assertFalse(AppSecurityManager.isAppLockEnabled(context))
 
-        // Reject invalid non-digit or short PIN
+        // Reject invalid non-digit or out-of-range PIN (supports 4..8 digits, 6 recommended)
         assertNull(AppSecurityManager.createSaltedPinHash("12"))
+        assertNull(AppSecurityManager.createSaltedPinHash("123456789"))
         assertNull(AppSecurityManager.createSaltedPinHash("abcd"))
         assertFalse(AppSecurityManager.setPin(context, "12"))
         assertFalse(AppSecurityManager.setPin(context, "abcd"))
 
-        // Two hashes of the same PIN must have distinct salts and distinct hashes
-        val first = AppSecurityManager.createSaltedPinHash("2580")
-        val second = AppSecurityManager.createSaltedPinHash("2580")
+        // Two PBKDF2-HMAC-SHA256 hashes of the same 6-digit PIN must have distinct salts and distinct hashes
+        val first = AppSecurityManager.createSaltedPinHash("258046")
+        val second = AppSecurityManager.createSaltedPinHash("258046")
         assertNotNull(first)
         assertNotNull(second)
         assertNotEquals(first!!.first, second!!.first)
         assertNotEquals(first.second, second.second)
 
-        // Store and verify PIN via Context SharedPreferences
-        assertTrue(AppSecurityManager.setPin(context, "2580"))
+        // Store and verify 6-digit PIN via Context SharedPreferences
+        assertTrue(AppSecurityManager.setPin(context, "258046"))
+        assertEquals(6, AppSecurityManager.getConfiguredPinLength(context))
         assertTrue(AppSecurityManager.hasPinConfigured(context))
-        assertTrue(AppSecurityManager.verifyPin(context, "2580"))
-        assertFalse(AppSecurityManager.verifyPin(context, "0000"))
+        assertTrue(AppSecurityManager.verifyPin(context, "258046"))
 
-        // Toggle FLAG_SECURE preference
+        // Test progressive rate limiting & lockout after 3 failed attempts (F-01)
+        assertFalse(AppSecurityManager.verifyPin(context, "000000"))
+        assertFalse(AppSecurityManager.verifyPin(context, "111111"))
+        assertEquals(0, AppSecurityManager.getRemainingLockoutSeconds(context))
+        assertFalse(AppSecurityManager.verifyPin(context, "222222"))
+        assertEquals(3, AppSecurityManager.getFailedAttempts(context))
+        assertTrue(AppSecurityManager.getRemainingLockoutSeconds(context) > 0)
+        // Even the valid PIN must be rejected while locked out
+        assertFalse(AppSecurityManager.verifyPin(context, "258046"))
+
+        // Reset lockout and verify valid PIN succeeds again
+        AppSecurityManager.resetLockoutState(context)
+        assertEquals(0, AppSecurityManager.getRemainingLockoutSeconds(context))
+        assertTrue(AppSecurityManager.verifyPin(context, "258046"))
+
+        // Toggle FLAG_SECURE and Clear Cache on Sign-Out preferences
         AppSecurityManager.setFlagSecureEnabled(context, true)
         assertTrue(AppSecurityManager.isFlagSecureEnabled(context))
         AppSecurityManager.setFlagSecureEnabled(context, false)
         assertFalse(AppSecurityManager.isFlagSecureEnabled(context))
 
+        AppSecurityManager.setClearCacheOnSignOutEnabled(context, true)
+        assertTrue(AppSecurityManager.isClearCacheOnSignOutEnabled(context))
+
         // Sensitive clipboard copy & clear
         AppSecurityManager.copySensitiveToClipboard(context, "Test", "{\"secret\":1}")
         AppSecurityManager.clearSensitiveClipboard(context)
     }
+
+    @Test
+    fun `CSV export neutralizes formula injection and control characters while preserving normal cells`() {
+        assertEquals("\"'=SUM(A1:A2)\"", BackupSerializer.sanitizeCsvCell("=SUM(A1:A2)"))
+        assertEquals("\"'+cmd|' /C calc'!A0\"", BackupSerializer.sanitizeCsvCell("+cmd|' /C calc'!A0"))
+        assertEquals("\"'-10+20\"", BackupSerializer.sanitizeCsvCell("-10+20"))
+        assertEquals("\"'@IMPORTXML(A1,B1)\"", BackupSerializer.sanitizeCsvCell("@IMPORTXML(A1,B1)"))
+        assertEquals("\"'   =1+1\"", BackupSerializer.sanitizeCsvCell("   =1+1"))
+        assertEquals("\"Ligne 1 Ligne 2 Col\"", BackupSerializer.sanitizeCsvCell("Ligne 1\r\nLigne 2\tCol"))
+        assertEquals("\"Café \"\"Spécial\"\"\"", BackupSerializer.sanitizeCsvCell("Café \"Spécial\""))
+
+        val txs = listOf(
+            TransactionItem(
+                id = "tx_csv_1",
+                type = "expense",
+                amount = 95.5,
+                category = "=HYPERLINK(\"http://evil.example\")",
+                envelopeKey = "marche",
+                accountId = "acc_cash",
+                desc = "@cmd\r\ninjection",
+                isoDate = "2026-11-03"
+            )
+        )
+        val csv = BackupSerializer.encodeCsv(txs)
+        assertTrue(csv.contains("\"'=HYPERLINK(\"\"http://evil.example\"\")\""))
+        assertTrue(csv.contains("\"'@cmd injection\""))
+    }
+
+    @Test
+    fun `ISO date validation rejects invalid calendar dates and normalizes blank dates safely`() {
+        assertTrue(PayCycleEngine.isValidIsoDate("2026-11-03"))
+        assertTrue(PayCycleEngine.isValidIsoDate("2028-02-29")) // leap year
+        assertFalse(PayCycleEngine.isValidIsoDate("2026-02-29")) // non-leap year
+        assertFalse(PayCycleEngine.isValidIsoDate("2026-13-01"))
+        assertFalse(PayCycleEngine.isValidIsoDate("2026-04-31"))
+        assertFalse(PayCycleEngine.isValidIsoDate("2026/11/03"))
+        assertFalse(PayCycleEngine.isValidIsoDate("not-a-date"))
+
+        val normalizedToday = PayCycleEngine.requireOrNormalizeIsoDate("")
+        assertTrue(PayCycleEngine.isValidIsoDate(normalizedToday))
+        assertEquals("2026-05-15", PayCycleEngine.requireOrNormalizeIsoDate("2026-05-15"))
+    }
+
+    @Test
+    fun `AES-256-GCM backup encryption and 2-phase backup preview work accurately`() {
+        val sampleJson = """{"backupVersion":2,"transactions":[{"id":"tx1","type":"expense","amount":50.0,"category":"Café","isoDate":"2026-11-03"}]}"""
+        assertFalse(AppSecurityManager.isEncryptedBackup(sampleJson))
+
+        val encrypted = AppSecurityManager.encryptBackupJson(sampleJson, "StrongPass#2026")
+        assertTrue(AppSecurityManager.isEncryptedBackup(encrypted))
+
+        // Preview rejects encrypted payload when password is missing or wrong
+        val missingPassResult = runCatching {
+            BackupSerializer.previewBackup(encrypted, "", "u_test", UserProfile(userId = "u_test"))
+        }
+        assertTrue(missingPassResult.isFailure)
+
+        val wrongPassResult = runCatching {
+            BackupSerializer.previewBackup(encrypted, "WrongPass", "u_test", UserProfile(userId = "u_test"))
+        }
+        assertTrue(wrongPassResult.isFailure)
+
+        // Correct password decrypts and produces valid 2-phase preview
+        val validPreview = BackupSerializer.previewBackup(encrypted, "StrongPass#2026", "u_test", UserProfile(userId = "u_test"))
+        assertTrue(validPreview.isEncrypted)
+        assertEquals(2, validPreview.backupVersion)
+        assertEquals(1, validPreview.transactionsCount)
+        assertTrue(validPreview.isSingleAtomicBatch)
+    }
 }
+
