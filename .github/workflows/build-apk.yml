@@ -44,19 +44,25 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Create temporary debug keystore
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
           if [ ! -f "./debug.keystore" ]; then
-            echo "Creating temporary debug.keystore..."
-            KEYSTORE_B64="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"
-            echo "$KEYSTORE_B64" | base64 -d > ./debug.keystore || keytool -genkeypair -v \
-              -keystore ./debug.keystore \
-              -storepass android \
-              -alias androiddebugkey \
-              -keypass android \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
+            if [ -n "$DEBUG_KEYSTORE_B64" ]; then
+              echo "Restoring debug.keystore from GitHub Secret..."
+              echo "$DEBUG_KEYSTORE_B64" | base64 -d > ./debug.keystore
+            else
+              echo "Generating temporary debug.keystore via keytool..."
+              keytool -genkeypair -v \
+                -keystore ./debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
           else
             echo "./debug.keystore already exists. Skipping generation."
           fi
@@ -67,64 +73,16 @@ jobs:
           echo "Confirmed ./debug.keystore exists."
 
       - name: Build debug APK
+        env:
+          GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           if [ -n "$SDK_DIR" ] && [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
             yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
           fi
-          if [ ! -f "app/google-services.json" ]; then
-            echo "Restoring app/google-services.json for Google Services resource generation..."
-            K_P1="AIzaSyCUG_L9kFeXgtd"
-            K_P2="FGN01gh8rILaLWMNYNHM"
-            cat > app/google-services.json <<EOF
-          {
-            "project_info": {
-              "project_number": "1046667497606",
-              "project_id": "gen-lang-client-0849522300",
-              "storage_bucket": "gen-lang-client-0849522300.firebasestorage.app"
-            },
-            "client": [
-              {
-                "client_info": {
-                  "mobilesdk_app_id": "1:1046667497606:android:08ac099a9ee6c94eac0107",
-                  "android_client_info": {
-                    "package_name": "com.aistudio.masroufi.kxmpzq"
-                  }
-                },
-                "oauth_client": [
-                  {
-                    "client_id": "1046667497606-4dglbrtc73qv8q4427vghmuj9vkkossm.apps.googleusercontent.com",
-                    "client_type": 1,
-                    "android_info": {
-                      "package_name": "com.aistudio.masroufi.kxmpzq",
-                      "certificate_hash": "73262d8a8cd3bc55fb5eb6e71e0eab8aae5f8d75"
-                    }
-                  },
-                  {
-                    "client_id": "1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj.apps.googleusercontent.com",
-                    "client_type": 3
-                  }
-                ],
-                "api_key": [
-                  {
-                    "current_key": "${K_P1}${K_P2}"
-                  }
-                ],
-                "services": {
-                  "appinvite_service": {
-                    "other_platform_oauth_client": [
-                      {
-                        "client_id": "1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj.apps.googleusercontent.com",
-                        "client_type": 3
-                      }
-                    ]
-                  }
-                }
-              }
-            ],
-            "configuration_version": "1"
-          }
-          EOF
+          if [ ! -f "app/google-services.json" ] && [ -n "$GOOGLE_SERVICES_JSON_SECRET" ]; then
+            echo "Loading app/google-services.json from GitHub Secret GOOGLE_SERVICES_JSON..."
+            printf '%s\n' "$GOOGLE_SERVICES_JSON_SECRET" > app/google-services.json
           fi
           gradle :app:assembleDebug --stacktrace --no-daemon
 

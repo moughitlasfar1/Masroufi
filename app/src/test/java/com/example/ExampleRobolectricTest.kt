@@ -9,12 +9,18 @@ import com.example.data.FinancialItem
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.domain.PayCycleEngine
+import com.example.domain.Translations
+import com.example.security.AppSecurityManager
 import com.example.ui.BackupSerializer
 import com.example.ui.DashboardState
 import com.example.ui.theme.MasroufiPalettes
 import com.example.ui.theme.paletteForKey
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -25,10 +31,13 @@ import org.robolectric.annotation.Config
 class ExampleRobolectricTest {
 
     @Test
-    fun `read string from context`() {
+    fun `read string from context and verify translations`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("Masroufi", appName)
+        assertEquals(false, Translations.forLang("fr").isRtl)
+        assertEquals(true, Translations.forLang("ar").isRtl)
+        assertEquals(true, Translations.forLang("darija").isRtl)
     }
 
     @Test
@@ -104,7 +113,6 @@ class ExampleRobolectricTest {
                 toAccountId = "acc_cash",
                 isoDate = "2026-05-05"
             ),
-            // Previous cycle transaction
             TransactionItem(
                 id = "tx_prev",
                 type = "expense",
@@ -119,9 +127,7 @@ class ExampleRobolectricTest {
         val balances = PayCycleEngine.computeAccountBalances(accounts, txs)
         val cashBal = balances.first { it.account.id == "acc_cash" }.currentBalance
         val bankBal = balances.first { it.account.id == "acc_bank" }.currentBalance
-        // Cash: 1000 - 200 - 400 + 300 = 700
         assertEquals(700.0, cashBal, 0.01)
-        // Bank: 5000 + 1500 - 300 = 6200
         assertEquals(6200.0, bankBal, 0.01)
 
         val envConfigs = listOf(
@@ -149,7 +155,6 @@ class ExampleRobolectricTest {
             allTransactions = txs
         )
         val marche = envelopes.first()
-        // Base cap = 25% of 6000 = 1500. Prev spent = 400 -> rolloverAmount = 1100. totalAvailable = 2600.
         assertEquals(1500.0, marche.baseAllocated, 0.01)
         assertEquals(400.0, marche.previousSpent, 0.01)
         assertEquals(1100.0, marche.rolloverAmount, 0.01)
@@ -255,5 +260,43 @@ class ExampleRobolectricTest {
         assertEquals(2500.0, restored.financialItems.first().secondaryAmount, 0.01)
         assertEquals(1, restored.transactions.size)
         assertEquals(120.0, restored.transactions.first().amount, 0.01)
+    }
+
+    @Test
+    fun `security manager hashes PIN with salt and manages FLAG_SECURE and clipboard safely`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        AppSecurityManager.clearPin(context)
+        assertFalse(AppSecurityManager.hasPinConfigured(context))
+        assertFalse(AppSecurityManager.isAppLockEnabled(context))
+
+        // Reject invalid non-digit or short PIN
+        assertNull(AppSecurityManager.createSaltedPinHash("12"))
+        assertNull(AppSecurityManager.createSaltedPinHash("abcd"))
+        assertFalse(AppSecurityManager.setPin(context, "12"))
+        assertFalse(AppSecurityManager.setPin(context, "abcd"))
+
+        // Two hashes of the same PIN must have distinct salts and distinct hashes
+        val first = AppSecurityManager.createSaltedPinHash("2580")
+        val second = AppSecurityManager.createSaltedPinHash("2580")
+        assertNotNull(first)
+        assertNotNull(second)
+        assertNotEquals(first!!.first, second!!.first)
+        assertNotEquals(first.second, second.second)
+
+        // Store and verify PIN via Context SharedPreferences
+        assertTrue(AppSecurityManager.setPin(context, "2580"))
+        assertTrue(AppSecurityManager.hasPinConfigured(context))
+        assertTrue(AppSecurityManager.verifyPin(context, "2580"))
+        assertFalse(AppSecurityManager.verifyPin(context, "0000"))
+
+        // Toggle FLAG_SECURE preference
+        AppSecurityManager.setFlagSecureEnabled(context, true)
+        assertTrue(AppSecurityManager.isFlagSecureEnabled(context))
+        AppSecurityManager.setFlagSecureEnabled(context, false)
+        assertFalse(AppSecurityManager.isFlagSecureEnabled(context))
+
+        // Sensitive clipboard copy & clear
+        AppSecurityManager.copySensitiveToClipboard(context, "Test", "{\"secret\":1}")
+        AppSecurityManager.clearSensitiveClipboard(context)
     }
 }

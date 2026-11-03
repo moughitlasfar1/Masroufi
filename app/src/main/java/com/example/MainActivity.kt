@@ -1,14 +1,15 @@
 package com.example
 
-import android.content.ClipData
-import android.content.ClipboardManager
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -117,6 +118,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.security.AppSecurityManager
+import com.example.security.MasroufiSecurityLockScreen
+import kotlinx.coroutines.delay
+
 internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     val listener = FirebaseAuth.AuthStateListener { auth ->
         trySend(auth.currentUser)
@@ -129,6 +139,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
         initFirebaseSecurityAndOfflineCache()
         val launchedFromQuickAdd = intent?.action == "com.aistudio.masroufi.ACTION_QUICK_ADD"
         setContent {
@@ -212,6 +223,71 @@ fun MainFeatureScreen(
     var editingAccountItem by remember { mutableStateOf<AccountItem?>(null) }
     var showRestoreSheet by remember { mutableStateOf(false) }
 
+    var flagSecureEnabled by remember { mutableStateOf(AppSecurityManager.isFlagSecureEnabled(context)) }
+    var appLockEnabled by remember { mutableStateOf(AppSecurityManager.isAppLockEnabled(context)) }
+    var isSessionUnlocked by remember { mutableStateOf(!AppSecurityManager.isAppLockEnabled(context)) }
+
+    val activity = context as? Activity
+    LaunchedEffect(flagSecureEnabled) {
+        AppSecurityManager.applyWindowFlagSecure(activity, flagSecureEnabled)
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, appLockEnabled) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP && AppSecurityManager.isAppLockEnabled(context)) {
+                isSessionUnlocked = false
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val exportJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            val ok = AppSecurityManager.writeTextToUri(context, uri, viewModel.exportBackupJson())
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    if (ok) "Fichier JSON sauvegardé en toute sécurité !" else "Erreur lors de l'enregistrement"
+                )
+            }
+        }
+    }
+
+    val exportCsvLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/csv")
+    ) { uri ->
+        if (uri != null) {
+            val ok = AppSecurityManager.writeTextToUri(context, uri, viewModel.exportCsv())
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    if (ok) "Fichier CSV sauvegardé en toute sécurité !" else "Erreur lors de l'enregistrement"
+                )
+            }
+        }
+    }
+
+    val importJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val raw = AppSecurityManager.readTextFromUri(context, uri)
+            if (!raw.isNullOrBlank()) {
+                viewModel.restoreFromJson(raw) { ok ->
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            if (ok) "Sauvegarde restaurée depuis le fichier !" else "Fichier JSON invalide"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     if (activeTab != "vue") {
         BackHandler {
             activeTab = "vue"
@@ -225,6 +301,20 @@ fun MainFeatureScreen(
         accentPalette = state.customPrefs.accentPalette
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+            if (appLockEnabled && !isSessionUnlocked) {
+                MasroufiSecurityLockScreen(
+                    language = state.profile.language,
+                    accentPalette = state.customPrefs.accentPalette,
+                    onUnlocked = { isSessionUnlocked = true },
+                    onSignOutRecovery = {
+                        appLockEnabled = false
+                        isSessionUnlocked = true
+                        signOutUser(context, onSignOutComplete = {}, scope = scope)
+                    }
+                )
+                return@CompositionLocalProvider
+            }
+
             Scaffold(
                 snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
                 topBar = {
@@ -482,12 +572,40 @@ fun MainFeatureScreen(
                                 },
                                 onCopyJson = {
                                     copyToClipboard(context, viewModel.exportBackupJson())
-                                    scope.launch { snackbarHostState.showSnackbar("JSON copié !") }
+                                    scope.launch {
+                                        launch {
+                                            delay(60_000L)
+                                            AppSecurityManager.clearSensitiveClipboard(context)
+                                        }
+                                        val res = snackbarHostState.showSnackbar(
+                                            message = "JSON copié (masqué & auto-effacé dans 60s)",
+                                            actionLabel = "Vider",
+                                            duration = SnackbarDuration.Short
+                                        )
+                                        if (res == SnackbarResult.ActionPerformed) {
+                                            AppSecurityManager.clearSensitiveClipboard(context)
+                                        }
+                                    }
                                 },
                                 onShareCsv = {
                                     shareTextContent(context, viewModel.exportCsv(), "masroufi_export.csv", "text/csv")
                                 },
-                                onOpenRestoreModal = { showRestoreSheet = true }
+                                onOpenRestoreModal = { showRestoreSheet = true },
+                                onExportJsonFile = {
+                                    exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
+                                },
+                                onExportCsvFile = {
+                                    exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")
+                                },
+                                onImportJsonFile = {
+                                    importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                                },
+                                onClearClipboard = {
+                                    AppSecurityManager.clearSensitiveClipboard(context)
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("Presse-papiers vidé par sécurité !")
+                                    }
+                                }
                             )
                         }
                     }
@@ -541,6 +659,22 @@ fun MainFeatureScreen(
                             scope.launch {
                                 snackbarHostState.showSnackbar("Compte réinitialisé à 0 DH !")
                             }
+                        }
+                    },
+                    onFlagSecureChanged = { enabled ->
+                        flagSecureEnabled = enabled
+                        AppSecurityManager.applyWindowFlagSecure(activity, enabled)
+                    },
+                    onAppLockChanged = { enabled ->
+                        appLockEnabled = enabled
+                        if (enabled) {
+                            isSessionUnlocked = true
+                        }
+                    },
+                    onClearClipboard = {
+                        AppSecurityManager.clearSensitiveClipboard(context)
+                        scope.launch {
+                            snackbarHostState.showSnackbar("Presse-papiers vidé !")
                         }
                     },
                     onSignOut = {
@@ -606,6 +740,9 @@ fun MainFeatureScreen(
                                 snackbarHostState.showSnackbar(if (ok) "Restauration réussie !" else "Erreur JSON")
                             }
                         }
+                    },
+                    onImportFile = {
+                        importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                     }
                 )
             }
@@ -816,8 +953,5 @@ private fun shareTextContent(context: Context, content: String, fileName: String
 }
 
 private fun copyToClipboard(context: Context, content: String) {
-    runCatching {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-        clipboard?.setPrimaryClip(ClipData.newPlainText("Masroufi JSON", content))
-    }
+    AppSecurityManager.copySensitiveToClipboard(context, "Masroufi JSON", content)
 }

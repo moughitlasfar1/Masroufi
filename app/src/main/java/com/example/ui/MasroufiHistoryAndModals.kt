@@ -73,6 +73,13 @@ import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.MasroufiPalettes
 
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.example.security.AppSecurityManager
+
 @Composable
 fun HistoryScreen(
     state: DashboardState,
@@ -83,7 +90,11 @@ fun HistoryScreen(
     onShareJson: () -> Unit,
     onCopyJson: () -> Unit,
     onShareCsv: () -> Unit,
-    onOpenRestoreModal: () -> Unit
+    onOpenRestoreModal: () -> Unit,
+    onExportJsonFile: () -> Unit = {},
+    onExportCsvFile: () -> Unit = {},
+    onImportJsonFile: () -> Unit = {},
+    onClearClipboard: () -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     LazyColumn(
@@ -348,7 +359,9 @@ fun HistoryScreen(
                         }
                         FilledTonalButton(
                             onClick = onCopyJson,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("copy_sensitive_json_btn")
                         ) {
                             Text(strings.btnCopyJson, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
@@ -369,6 +382,87 @@ fun HistoryScreen(
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(strings.btnRestoreJson, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = onExportJsonFile,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("save_json_file_btn")
+                        ) {
+                            Text(
+                                text = when (state.profile.language) {
+                                    "ar" -> "حفظ ملف JSON آمن"
+                                    "darija" -> "سجل ملف JSON"
+                                    "en" -> "Save JSON File"
+                                    else -> "Fichier JSON"
+                                },
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = onExportCsvFile,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("save_csv_file_btn")
+                        ) {
+                            Text(
+                                text = when (state.profile.language) {
+                                    "ar" -> "حفظ ملف CSV آمن"
+                                    "darija" -> "سجل ملف CSV"
+                                    "en" -> "Save CSV File"
+                                    else -> "Fichier CSV"
+                                },
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalButton(
+                            onClick = onImportJsonFile,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("import_json_file_btn")
+                        ) {
+                            Text(
+                                text = when (state.profile.language) {
+                                    "ar" -> "استيراد ملف JSON"
+                                    "darija" -> "جب ملف JSON"
+                                    "en" -> "Import JSON File"
+                                    else -> "Importer Fichier JSON"
+                                },
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = onClearClipboard,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("clear_clipboard_btn")
+                        ) {
+                            Text(
+                                text = when (state.profile.language) {
+                                    "ar" -> "مسح الحافظة فوراً"
+                                    "darija" -> "مسح الكوبي (Clipboard)"
+                                    "en" -> "Clear Clipboard"
+                                    else -> "Vider Presse-papiers"
+                                },
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -616,11 +710,23 @@ fun SettingsBottomSheet(
     onOpenCustomizationStudio: () -> Unit,
     onLoadDemoData: () -> Unit = {},
     onResetCleanAccount: () -> Unit = {},
+    onFlagSecureChanged: (Boolean) -> Unit = {},
+    onAppLockChanged: (Boolean) -> Unit = {},
+    onClearClipboard: () -> Unit = {},
     onSignOut: () -> Unit
 ) {
+    val context = LocalContext.current
+    val lang = state.profile.language
     var budgetText by remember { mutableStateOf(state.profile.baseBudget.safeRoundToInt().toString()) }
     var payDayText by remember { mutableStateOf(state.profile.payCycleDay.toString()) }
     var rolloverEnabled by remember { mutableStateOf(state.profile.rolloverEnabled) }
+
+    var flagSecureEnabled by remember { mutableStateOf(AppSecurityManager.isFlagSecureEnabled(context)) }
+    var appLockEnabled by remember { mutableStateOf(AppSecurityManager.isAppLockEnabled(context)) }
+    var allowDeviceCredential by remember { mutableStateOf(AppSecurityManager.isDeviceCredentialAllowed(context)) }
+    var hasPinConfigured by remember { mutableStateOf(AppSecurityManager.hasPinConfigured(context)) }
+    var newPinInput by remember { mutableStateOf("") }
+    var pinFeedback by remember { mutableStateOf<String?>(null) }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -667,6 +773,248 @@ fun SettingsBottomSheet(
                     checked = rolloverEnabled,
                     onCheckedChange = { rolloverEnabled = it }
                 )
+            }
+
+            // Security & Privacy Hardening Section
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("security_privacy_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "الأمان والخصوصية (حماية البيانات المالية)"
+                                "darija" -> "الأمان والخصوصية (حماية الفلوس والبيانات)"
+                                "en" -> "Security & Privacy Protection"
+                                else -> "Sécurité & Confidentialité"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    // 1. Screenshot & Screen Recording Protection (FLAG_SECURE)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "منع تصوير وتسجيل الشاشة (FLAG_SECURE)"
+                                    "darija" -> "منع السكرين شوت وتصوير الشاشة (FLAG_SECURE)"
+                                    "en" -> "Block Screenshots & Screen Recording"
+                                    else -> "Bloquer Captures d'écran (FLAG_SECURE)"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "يخفي الأرقام المالية في التطبيقات الحديثة ويمنع التجسس المرئي"
+                                    "darija" -> "كيخبي الأرقام فـ التطبيقات المفتوحة وكيمنع التصوير"
+                                    "en" -> "Hides financial balances in recent apps and blocks screen capture"
+                                    else -> "Masque l'aperçu dans les applications récentes"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = flagSecureEnabled,
+                            onCheckedChange = { enabled ->
+                                flagSecureEnabled = enabled
+                                AppSecurityManager.setFlagSecureEnabled(context, enabled)
+                                onFlagSecureChanged(enabled)
+                            },
+                            modifier = Modifier.testTag("settings_flag_secure_switch")
+                        )
+                    }
+
+                    // 2. Local App Lock (PIN / Biometrics)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "قفل التطبيق المحلي (PIN / بصمة الجهاز)"
+                                    "darija" -> "قفل التطبيق بـ كود PIN أو بصمة التليفون"
+                                    "en" -> "Local App Lock (PIN / Device Biometrics)"
+                                    else -> "Verrouillage de l'application (PIN / Biométrie)"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (hasPinConfigured) {
+                                    when (lang) {
+                                        "ar" -> "رمز PIN مفعّل ومشفر بـ SHA-256"
+                                        "darija" -> "كود PIN مسجل ومشفر بـ SHA-256"
+                                        "en" -> "PIN configured (SHA-256 salted hash)"
+                                        else -> "Code PIN configuré (SHA-256 salé)"
+                                    }
+                                } else {
+                                    when (lang) {
+                                        "ar" -> "قم بتعيين رمز PIN من 4 أرقام لتفعيل القفل"
+                                        "darija" -> "دير كود PIN من 4 أرقام باش تفعل القفل"
+                                        "en" -> "Set a 4-digit PIN below to protect on launch"
+                                        else -> "Définissez un code PIN à 4 chiffres ci-dessous"
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (hasPinConfigured) AccentEmerald else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = appLockEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled && !hasPinConfigured && !AppSecurityManager.isDeviceSecure(context)) {
+                                    pinFeedback = when (lang) {
+                                        "ar" -> "يرجى إدخال وحفظ رمز PIN من 4 أرقام أولاً"
+                                        "darija" -> "دخل بعدا كود PIN ديال 4 أرقام لتحت"
+                                        "en" -> "Please set a 4-digit PIN first"
+                                        else -> "Veuillez d'abord définir un code PIN à 4 chiffres"
+                                    }
+                                } else {
+                                    appLockEnabled = enabled
+                                    AppSecurityManager.setAppLockEnabled(context, enabled)
+                                    onAppLockChanged(enabled)
+                                }
+                            },
+                            modifier = Modifier.testTag("settings_app_lock_switch")
+                        )
+                    }
+
+                    // PIN Configuration Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = newPinInput,
+                            onValueChange = { input ->
+                                if (input.length <= 4 && input.all { it.isDigit() }) {
+                                    newPinInput = input
+                                }
+                            },
+                            label = {
+                                Text(
+                                    when (lang) {
+                                        "ar" -> "رمز PIN جديد (4 أرقام)"
+                                        "darija" -> "كود PIN جديد (4 أرقام)"
+                                        "en" -> "New 4-digit PIN"
+                                        else -> "Nouveau PIN (4 chiffres)"
+                                    },
+                                    fontSize = 12.sp
+                                )
+                            },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("settings_pin_input")
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                if (AppSecurityManager.setPin(context, newPinInput)) {
+                                    hasPinConfigured = true
+                                    appLockEnabled = true
+                                    AppSecurityManager.setAppLockEnabled(context, true)
+                                    onAppLockChanged(true)
+                                    newPinInput = ""
+                                    pinFeedback = when (lang) {
+                                        "ar" -> "تم حفظ وتشفير رمز PIN وتفعيل القفل!"
+                                        "darija" -> "تم تسجيل كود PIN وتفعيل القفل!"
+                                        "en" -> "PIN saved & App Lock activated!"
+                                        else -> "Code PIN enregistré et verrouillage activé !"
+                                    }
+                                } else {
+                                    pinFeedback = when (lang) {
+                                        "ar" -> "يجب أن يتكون الرمز من 4 أرقام"
+                                        "darija" -> "خاص الكود يكون فيه 4 أرقام"
+                                        "en" -> "PIN must be 4 digits"
+                                        else -> "Le PIN doit contenir 4 chiffres"
+                                    }
+                                }
+                            },
+                            modifier = Modifier.testTag("settings_save_pin_btn")
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "حفظ PIN"
+                                    "darija" -> "سجل PIN"
+                                    "en" -> "Set PIN"
+                                    else -> "Définir PIN"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (!pinFeedback.isNullOrBlank()) {
+                        Text(
+                            text = pinFeedback!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentEmerald,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Device Credential / Biometric fallback toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "السماح بالفتح عبر بصمة / قفل شاشة الجهاز"
+                                "darija" -> "فتح القفل ببصمة التليفون"
+                                "en" -> "Allow Device Biometrics / Screen Lock"
+                                else -> "Autoriser Biométrie / Verrouillage appareil"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = allowDeviceCredential,
+                            onCheckedChange = { allowed ->
+                                allowDeviceCredential = allowed
+                                AppSecurityManager.setDeviceCredentialAllowed(context, allowed)
+                            },
+                            modifier = Modifier.testTag("settings_device_credential_switch")
+                        )
+                    }
+                }
             }
 
             FilledTonalButton(
@@ -1534,7 +1882,8 @@ fun AddFinancialItemSheet(
 fun RestoreJsonSheet(
     strings: AppStrings,
     onDismiss: () -> Unit,
-    onRestore: (String) -> Unit
+    onRestore: (String) -> Unit,
+    onImportFile: () -> Unit = {}
 ) {
     var rawJson by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -1545,10 +1894,21 @@ fun RestoreJsonSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(text = strings.btnRestoreJson, style = MaterialTheme.typography.titleLarge)
+            FilledTonalButton(
+                onClick = {
+                    onDismiss()
+                    onImportFile()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("restore_sheet_import_file_btn")
+            ) {
+                Text("📂 Choisir un fichier de sauvegarde (.json)", fontWeight = FontWeight.Bold)
+            }
             OutlinedTextField(
                 value = rawJson,
                 onValueChange = { rawJson = it },
-                label = { Text("Collez votre JSON Masroufi ici...") },
+                label = { Text("Ou collez votre JSON Masroufi ici...") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(160.dp)
