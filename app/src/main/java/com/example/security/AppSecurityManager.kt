@@ -102,13 +102,18 @@ object AppSecurityManager {
         return !hash.isNullOrBlank() && !salt.isNullOrBlank()
     }
 
-    fun setPin(context: Context, rawPin: String): Boolean {
+    internal fun createSaltedPinHash(rawPin: String): Pair<String, String>? {
         val normalized = rawPin.trim()
-        if (normalized.length < 4 || !normalized.all { it.isDigit() }) return false
+        if (normalized.length < 4 || !normalized.all { it.isDigit() }) return null
         val saltBytes = ByteArray(16)
         SecureRandom().nextBytes(saltBytes)
         val saltHex = bytesToHex(saltBytes)
         val hashHex = sha256Hex("$saltHex:$normalized")
+        return saltHex to hashHex
+    }
+
+    fun setPin(context: Context, rawPin: String): Boolean {
+        val (saltHex, hashHex) = createSaltedPinHash(rawPin) ?: return false
         prefs(context).edit()
             .putString(KEY_PIN_SALT, saltHex)
             .putString(KEY_PIN_HASH, hashHex)

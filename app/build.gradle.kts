@@ -148,6 +148,12 @@ dependencies {
 tasks.withType<Test> {
   failFast = true
   timeout.set(Duration.ofMinutes(2))
+  val preCachedRobolectricDir =
+    file("/home/appuser/.m2/repository/org/robolectric/android-all-instrumented/16-robolectric-13921718-i7")
+  if (preCachedRobolectricDir.exists()) {
+    systemProperty("robolectric.offline", "true")
+    systemProperty("robolectric.dependency.dir", preCachedRobolectricDir.absolutePath)
+  }
   testLogging {
     events("passed", "failed", "skipped")
   }
