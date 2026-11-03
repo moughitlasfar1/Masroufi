@@ -387,5 +387,52 @@ class ExampleRobolectricTest {
         assertEquals(1, validPreview.transactionsCount)
         assertTrue(validPreview.isSingleAtomicBatch)
     }
+
+    @Test
+    fun `banking UX privacy eye persistence, last active tab, and customizable dashboard card order work accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Privacy Eye Toggle persistence & amount masking
+        AppSecurityManager.setHideAmountsEnabled(context, false)
+        assertFalse(AppSecurityManager.isHideAmountsEnabled(context))
+        assertEquals("2 450", PayCycleEngine.formatAmountOrMask(2450.0, false).replace('\u00A0', '\u202F'))
+        AppSecurityManager.setHideAmountsEnabled(context, true)
+        assertTrue(AppSecurityManager.isHideAmountsEnabled(context))
+        assertEquals("••••", PayCycleEngine.formatAmountOrMask(2450.0, true))
+        assertEquals("•••• DH", PayCycleEngine.formatCurrencyOrMask(2450.0, "DH", true))
+
+        // 2. Last Active Tab persistence
+        AppSecurityManager.setLastActiveTab(context, "categories")
+        assertEquals("categories", AppSecurityManager.getLastActiveTab(context))
+        AppSecurityManager.setLastActiveTab(context, "invalid_tab")
+        assertEquals("categories", AppSecurityManager.getLastActiveTab(context))
+
+        // 3. Customizable Home Dashboard Card Order & Visibility
+        val customOrder = listOf("presets", "accounts", "week_summary", "monthly_review", "bills", "insights")
+        val prefs = CustomizationPrefs(
+            accentPalette = "amber",
+            currencySymbol = "DH",
+            showAccountsCard = true,
+            showQuickPresetsCard = true,
+            showBillsCard = false,
+            dashboardOrder = customOrder
+        )
+        assertEquals(customOrder, prefs.normalizedOrder())
+        assertFalse(prefs.isSectionVisible("bills"))
+        val updatedPrefs = prefs.withSectionVisibility("bills", true)
+        assertTrue(updatedPrefs.isSectionVisible("bills"))
+
+        val storedItem = FinancialItem(
+            id = "custom_prefs",
+            itemType = "custom_prefs",
+            name = "Masroufi",
+            subtitle = "amber|DH|${customOrder.joinToString(",")}",
+            dayOrTurn = prefs.toVisibilityMask()
+        )
+        val decoded = CustomizationPrefs.fromFinancialItem(storedItem)
+        assertEquals("amber", decoded.accentPalette)
+        assertEquals(customOrder, decoded.normalizedOrder())
+        assertFalse(decoded.showBillsCard)
+    }
 }
 

@@ -73,12 +73,29 @@ import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.MasroufiPalettes
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.layout.offset
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Swipe
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.IntOffset
 import com.example.security.AppSecurityManager
+import com.example.ui.theme.AccentAmber
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun HistoryScreen(
@@ -96,9 +113,12 @@ fun HistoryScreen(
     onImportJsonFile: () -> Unit = {},
     onClearClipboard: () -> Unit = {},
     hasRollbackSnapshot: Boolean = false,
-    onRollbackRestore: () -> Unit = {}
+    onRollbackRestore: () -> Unit = {},
+    onAddFirstTransaction: () -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    val hide = state.hideAmounts
+    val lang = state.profile.language
     var backupPassword by remember { mutableStateOf("") }
     LazyColumn(
         modifier = Modifier
@@ -206,110 +226,111 @@ fun HistoryScreen(
             }
         }
 
-        // Transactions List (Tap to Edit, Delete button with Undo Snackbar)
-        items(state.filteredHistory, key = { it.id }) { tx ->
-            val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
-            val amountColor = when (tx.type) {
-                "income" -> AccentEmerald
-                "transfer" -> AccentSkyBlue
-                else -> AccentCoral
-            }
-            val prefix = when (tx.type) {
-                "income" -> "+"
-                "transfer" -> "⇄ "
-                else -> "-"
-            }
-
-            Surface(
-                shape = RoundedCornerShape(22.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(22.dp))
-                    .clickable { onEditTransaction(tx) }
-                    .testTag("tx_row_${tx.id}")
-            ) {
-                Row(
+        // Swipe hint pill
+        if (state.filteredHistory.isNotEmpty()) {
+            item(key = "swipe_hint_pill") {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .testTag("history_swipe_hint")
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = tx.desc.ifBlank { tx.category },
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Icon(
-                                imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(14.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceContainerHighest
-                            ) {
-                                Text(
-                                    text = tx.category.take(22),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                            ) {
-                                Text(
-                                    text = accountName.take(14),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                )
-                            }
-                            Text(
-                                text = tx.isoDate,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
                     Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Swipe,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "اسحب يميناً للتعديل · اسحب يساراً للحذف (مع زر تراجع)"
+                                "darija" -> "جر لليمين باش تبدل · جر لليسار باش تمسح (مع زر رجع)"
+                                "en" -> "Swipe right to edit · Swipe left to delete (with Undo)"
+                                else -> "Glissez à droite pour modifier · à gauche pour supprimer (avec Annuler)"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        } else {
+            // Actionable Empty State Card
+            item(key = "empty_history_state") {
+                Card(
+                    shape = RoundedCornerShape(26.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("history_empty_state_card")
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            text = "$prefix${PayCycleEngine.formatDh(tx.amount)} $cur",
+                            text = when (lang) {
+                                "ar" -> "لا توجد عمليات مسجلة في هذه الدورة"
+                                "darija" -> "مازال ما قيدتي حتى عملية فهاد الشهر"
+                                "en" -> "No transactions recorded in this cycle yet"
+                                else -> "Aucune opération enregistrée sur ce cycle"
+                            },
                             style = MaterialTheme.typography.titleMedium,
-                            color = amountColor,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.Bold
                         )
-                        IconButton(
-                            onClick = { onDeleteTransaction(tx) },
-                            modifier = Modifier.testTag("delete_tx_${tx.id}")
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "سجل أول مصروف أو مدخول بضغطة واحدة لمتابعة ميزانيتك."
+                                "darija" -> "زيد أول مصروف أو مدخول بضغطة وحدة باش تتبع حساباتك."
+                                "en" -> "Log your first expense or income in one tap to start tracking."
+                                else -> "Ajoutez votre première dépense ou entrée en un geste."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onAddFirstTransaction,
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier.testTag("empty_history_add_btn")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.DeleteOutline,
-                                contentDescription = strings.deleteBtn,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(strings.btnAddAction, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
+        }
+
+        // Transactions List (Swipe Right to Edit, Swipe Left to Delete + Tap to Edit + Delete Button)
+        items(state.filteredHistory, key = { it.id }) { tx ->
+            val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
+            SwipeableTransactionRow(
+                tx = tx,
+                accountName = accountName,
+                currencySymbol = cur,
+                hideAmounts = hide,
+                deleteLabel = strings.deleteBtn,
+                editLabel = when (lang) {
+                    "ar" -> "تعديل"
+                    "darija" -> "بدل"
+                    "en" -> "Edit"
+                    else -> "Modifier"
+                },
+                onEditTransaction = { onEditTransaction(tx) },
+                onDeleteTransaction = { onDeleteTransaction(tx) }
+            )
         }
 
         // Export & Backup Card
@@ -1255,8 +1276,31 @@ fun CustomizationStudioSheet(
     var showWeekSummaryRow by remember { mutableStateOf(state.customPrefs.showWeekSummaryRow) }
     var showMonthlyReviewCard by remember { mutableStateOf(state.customPrefs.showMonthlyReviewCard) }
     var showBillsCard by remember { mutableStateOf(state.customPrefs.showBillsCard) }
+    var showSmartInsightsCard by remember { mutableStateOf(state.customPrefs.showSmartInsightsCard) }
+    var dashboardOrder by remember { mutableStateOf(state.customPrefs.normalizedOrder()) }
 
     val lang = state.profile.language
+
+    fun isVisibleFor(key: String): Boolean = when (key) {
+        "accounts" -> showAccountsCard
+        "presets" -> showQuickPresetsCard
+        "insights" -> showSmartInsightsCard
+        "bills" -> showBillsCard
+        "week_summary" -> showWeekSummaryRow
+        "monthly_review" -> showMonthlyReviewCard
+        else -> true
+    }
+
+    fun setVisibleFor(key: String, v: Boolean) {
+        when (key) {
+            "accounts" -> showAccountsCard = v
+            "presets" -> showQuickPresetsCard = v
+            "insights" -> showSmartInsightsCard = v
+            "bills" -> showBillsCard = v
+            "week_summary" -> showWeekSummaryRow = v
+            "monthly_review" -> showMonthlyReviewCard = v
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -1405,42 +1449,90 @@ fun CustomizationStudioSheet(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            // 4. Home Dashboard Layout Visibility Toggles
+            // 4. Home Dashboard Layout Order & Visibility
             Text(
                 text = when (lang) {
-                    "darija" -> "4. الكارطات اللي يبانو فـ الصفحة الرئيسية"
-                    "ar" -> "4. البطاقات المعروضة في الصفحة الرئيسية"
-                    "en" -> "4. Visible Home Screen Cards"
-                    else -> "4. Sections visibles sur l'écran d'accueil"
+                    "darija" -> "4. ترتيب وإظهار الكارطات فـ الصفحة الرئيسية"
+                    "ar" -> "4. ترتيب وإظهار البطاقات في الصفحة الرئيسية"
+                    "en" -> "4. Home Screen Card Order & Visibility"
+                    else -> "4. Ordre & Visibilité des cartes d'accueil"
                 },
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary
             )
 
-            val toggles = listOf(
-                Triple("Afficher Safe-to-Spend / Rythme par jour", showSafeToSpend) { v: Boolean -> showSafeToSpend = v },
-                Triple("Afficher Mes Comptes (Cash, Banque, Wallet)", showAccountsCard) { v: Boolean -> showAccountsCard = v },
-                Triple("Afficher les Achats Rapides (1-Tap)", showQuickPresetsCard) { v: Boolean -> showQuickPresetsCard = v },
-                Triple("Afficher le Résumé de la Semaine", showWeekSummaryRow) { v: Boolean -> showWeekSummaryRow = v },
-                Triple("Afficher le Bilan Mensuel automatique", showMonthlyReviewCard) { v: Boolean -> showMonthlyReviewCard = v },
-                Triple("Afficher les Factures & Abonnements", showBillsCard) { v: Boolean -> showBillsCard = v }
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Afficher Safe-to-Spend / Rythme par jour (dans la carte principale)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = showSafeToSpend,
+                    onCheckedChange = { showSafeToSpend = it }
+                )
+            }
 
-            toggles.forEach { (title, checked, onChange) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            dashboardOrder.forEachIndexed { idx, sectionKey ->
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("studio_order_row_$sectionKey")
                 ) {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Switch(
-                        checked = checked,
-                        onCheckedChange = onChange
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${idx + 1}. ${dashboardSectionLabel(sectionKey, lang)}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    if (idx > 0) {
+                                        val next = dashboardOrder.toMutableList()
+                                        val item = next.removeAt(idx)
+                                        next.add(idx - 1, item)
+                                        dashboardOrder = next
+                                    }
+                                },
+                                enabled = idx > 0,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Monter")
+                            }
+                            IconButton(
+                                onClick = {
+                                    if (idx < dashboardOrder.lastIndex) {
+                                        val next = dashboardOrder.toMutableList()
+                                        val item = next.removeAt(idx)
+                                        next.add(idx + 1, item)
+                                        dashboardOrder = next
+                                    }
+                                },
+                                enabled = idx < dashboardOrder.lastIndex,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Descendre")
+                            }
+                            Switch(
+                                checked = isVisibleFor(sectionKey),
+                                onCheckedChange = { setVisibleFor(sectionKey, it) }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1457,7 +1549,9 @@ fun CustomizationStudioSheet(
                             showQuickPresetsCard = showQuickPresetsCard,
                             showWeekSummaryRow = showWeekSummaryRow,
                             showMonthlyReviewCard = showMonthlyReviewCard,
-                            showBillsCard = showBillsCard
+                            showBillsCard = showBillsCard,
+                            showSmartInsightsCard = showSmartInsightsCard,
+                            dashboardOrder = dashboardOrder
                         )
                     )
                     onDismiss()
@@ -2185,6 +2279,344 @@ fun RestoreJsonSheet(
             ) {
                 Text("2. Exécuter la restauration (Phase 2)", fontWeight = FontWeight.ExtraBold)
             }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun SwipeableTransactionRow(
+    tx: TransactionItem,
+    accountName: String,
+    currencySymbol: String,
+    hideAmounts: Boolean,
+    deleteLabel: String,
+    editLabel: String,
+    onEditTransaction: () -> Unit,
+    onDeleteTransaction: () -> Unit
+) {
+    val density = LocalDensity.current
+    val haptics = LocalHapticFeedback.current
+    val thresholdPx = with(density) { 88.dp.toPx() }
+    val maxDragPx = with(density) { 140.dp.toPx() }
+    var rawOffsetX by remember(tx.id) { mutableFloatStateOf(0f) }
+    val animatedOffsetX by animateFloatAsState(targetValue = rawOffsetX, label = "txSwipeOffset")
+
+    val amountColor = when (tx.type) {
+        "income" -> AccentEmerald
+        "transfer" -> AccentSkyBlue
+        else -> AccentCoral
+    }
+    val prefix = when (tx.type) {
+        "income" -> "+"
+        "transfer" -> "⇄ "
+        else -> "-"
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+    ) {
+        // Background Reveal Banner (Right Swipe = Emerald Edit, Left Swipe = Coral Delete)
+        val isSwipingRight = animatedOffsetX > 8f
+        val isSwipingLeft = animatedOffsetX < -8f
+        if (isSwipingRight || isSwipingLeft) {
+            val bgColor = if (isSwipingRight) AccentEmerald.copy(alpha = 0.24f) else AccentCoral.copy(alpha = 0.24f)
+            val contentColor = if (isSwipingRight) AccentEmerald else AccentCoral
+            Row(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(bgColor)
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = if (isSwipingRight) Arrangement.Start else Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isSwipingRight) Icons.Default.Edit else Icons.Default.DeleteOutline,
+                        contentDescription = if (isSwipingRight) editLabel else deleteLabel,
+                        tint = contentColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = if (isSwipingRight) editLabel else deleteLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = contentColor,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
+                .clip(RoundedCornerShape(22.dp))
+                .pointerInput(tx.id) {
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            rawOffsetX = (rawOffsetX + dragAmount).coerceIn(-maxDragPx, maxDragPx)
+                        },
+                        onDragEnd = {
+                            when {
+                                rawOffsetX >= thresholdPx -> {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    rawOffsetX = 0f
+                                    onEditTransaction()
+                                }
+                                rawOffsetX <= -thresholdPx -> {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    rawOffsetX = 0f
+                                    onDeleteTransaction()
+                                }
+                                else -> {
+                                    rawOffsetX = 0f
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            rawOffsetX = 0f
+                        }
+                    )
+                }
+                .clickable { onEditTransaction() }
+                .testTag("tx_row_${tx.id}")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = tx.desc.ifBlank { tx.category },
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = editLabel,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest
+                        ) {
+                            Text(
+                                text = tx.category.take(22),
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                        ) {
+                            Text(
+                                text = accountName.take(14),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                        Text(
+                            text = tx.isoDate,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = if (hideAmounts) "•••• $currencySymbol" else "$prefix${PayCycleEngine.formatDh(tx.amount)} $currencySymbol",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = amountColor,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    IconButton(
+                        onClick = onDeleteTransaction,
+                        modifier = Modifier.testTag("delete_tx_${tx.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = deleteLabel,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun QuickPresetPickerSheet(
+    state: DashboardState,
+    strings: AppStrings,
+    onDismiss: () -> Unit,
+    onSelectPreset: (FinancialItem) -> Unit,
+    onCreateNewPreset: () -> Unit
+) {
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    val hide = state.hideAmounts
+    val lang = state.profile.language
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = AccentAmber
+                    )
+                    Text(
+                        text = strings.quickPresetsTitle,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                }
+                FilledTonalButton(
+                    onClick = {
+                        onDismiss()
+                        onCreateNewPreset()
+                    },
+                    modifier = Modifier.testTag("picker_add_new_preset_btn")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("+ Preset", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Text(
+                text = when (lang) {
+                    "ar" -> "اضغط على أي مصروف متكرر لتسجيله فوراً بضغطة واحدة:"
+                    "darija" -> "ورك على أي مصروف يومي باش يتقيد دابا بضغطة وحدة:"
+                    "en" -> "Tap any common expense below to log it immediately in one tap:"
+                    else -> "Touchez une dépense fréquente ci-dessous pour l'enregistrer instantanément :"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (state.presets.isEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Aucun achat rapide configuré",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Button(
+                            onClick = {
+                                onDismiss()
+                                onCreateNewPreset()
+                            }
+                        ) {
+                            Text("Créer mon premier Preset 1-Tap")
+                        }
+                    }
+                }
+            } else {
+                state.presets.forEach { preset ->
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable {
+                                onSelectPreset(preset)
+                                onDismiss()
+                            }
+                            .testTag("quick_picker_preset_${preset.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = null,
+                                    tint = AccentAmber,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = preset.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "${PayCycleEngine.formatAmountOrMask(preset.amount, hide)} $cur",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
         }
     }

@@ -74,6 +74,8 @@ fun MonthScreen(
     onDeleteItem: (String) -> Unit
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    val hide = state.hideAmounts
+    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
     val pct = if (state.totalAvailableBudget > 0) {
         ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).safeRoundToInt()
     } else 0
@@ -115,12 +117,12 @@ fun MonthScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${strings.incomes}: ${PayCycleEngine.formatDh(state.totalAvailableBudget)} $cur",
+                            text = "${strings.incomes}: ${fmt(state.totalAvailableBudget)} $cur",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "${strings.expenses}: ${PayCycleEngine.formatDh(state.cycleExpenses)} $cur",
+                            text = "${strings.expenses}: ${fmt(state.cycleExpenses)} $cur",
                             style = MaterialTheme.typography.labelLarge,
                             color = AccentCoral
                         )
@@ -142,7 +144,7 @@ fun MonthScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
-                        text = "${if (isOver) "-" else ""}${PayCycleEngine.formatDh(abs(state.remainingBudget))} $cur",
+                        text = "${if (isOver && !hide) "-" else ""}${fmt(abs(state.remainingBudget))} $cur",
                         style = MaterialTheme.typography.displayMedium,
                         color = if (isOver) AccentCoral else AccentEmerald
                     )
@@ -152,12 +154,12 @@ fun MonthScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${strings.extraIncome}: ${PayCycleEngine.formatDh(state.cycleIncomes)} $cur",
+                            text = "${strings.extraIncome}: ${fmt(state.cycleIncomes)} $cur",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = "${strings.endOfMonthProj}: ${PayCycleEngine.formatDh(state.projectedCycleSpend)} $cur",
+                            text = "${strings.endOfMonthProj}: ${fmt(state.projectedCycleSpend)} $cur",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -198,9 +200,9 @@ fun MonthScreen(
                             val projectedDelta = state.totalAvailableBudget - state.projectedCycleSpend
                             Text(
                                 text = if (projectedDelta >= 0) {
-                                    "Projection fin de cycle : Excédent estimé de +${PayCycleEngine.formatDh(projectedDelta)} $cur"
+                                    "Projection fin de cycle : Excédent estimé de +${fmt(projectedDelta)} $cur"
                                 } else {
-                                    "Projection fin de cycle : Déficit estimé de -${PayCycleEngine.formatDh(abs(projectedDelta))} $cur"
+                                    "Projection fin de cycle : Déficit estimé de -${fmt(abs(projectedDelta))} $cur"
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = if (projectedDelta >= 0) AccentEmerald else AccentCoral
@@ -216,9 +218,9 @@ fun MonthScreen(
                         val diff = curSpent - prevSpent
                         val badgeText = when {
                             prevSpent <= 0.0 && curSpent <= 0.0 -> "Stable (0 $cur)"
-                            prevSpent <= 0.0 -> "Nouveau (${PayCycleEngine.formatDh(curSpent)} $cur)"
-                            diff <= 0.0 -> "-${PayCycleEngine.formatDh(abs(diff))} $cur vs mois préc."
-                            else -> "+${PayCycleEngine.formatDh(diff)} $cur vs mois préc."
+                            prevSpent <= 0.0 -> "Nouveau (${fmt(curSpent)} $cur)"
+                            diff <= 0.0 -> "-${fmt(abs(diff))} $cur vs mois préc."
+                            else -> "+${fmt(diff)} $cur vs mois préc."
                         }
                         val badgeColor = if (diff <= 0.0) AccentEmerald else AccentCoral
                         Surface(
@@ -242,7 +244,7 @@ fun MonthScreen(
                                         maxLines = 1
                                     )
                                     Text(
-                                        text = "Actuel: ${PayCycleEngine.formatDh(curSpent)} $cur · Préc.: ${PayCycleEngine.formatDh(prevSpent)} $cur",
+                                        text = "Actuel: ${fmt(curSpent)} $cur · Préc.: ${fmt(prevSpent)} $cur",
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontSize = 11.5.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -426,7 +428,7 @@ fun MonthScreen(
                                             )
                                         }
                                         Text(
-                                            text = "${PayCycleEngine.formatDh(item.secondaryAmount)} / ${PayCycleEngine.formatDh(item.amount)} $cur · ${item.dateOrCycle}",
+                                            text = "${fmt(item.secondaryAmount)} / ${fmt(item.amount)} $cur · ${item.dateOrCycle}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -483,6 +485,8 @@ fun BudgetAndDaretScreen(
     onDeleteItem: (String) -> Unit
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    val hide = state.hideAmounts
+    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -531,7 +535,8 @@ fun BudgetAndDaretScreen(
                         envelopes = state.envelopes,
                         totalSpent = state.cycleExpenses,
                         lang = state.profile.language,
-                        currencySymbol = cur
+                        currencySymbol = cur,
+                        hideAmounts = hide
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -559,7 +564,7 @@ fun BudgetAndDaretScreen(
                                     )
                                     Text(
                                         text = if (envStatus.config.hasCap) {
-                                            "${PayCycleEngine.formatDh(envStatus.totalAvailable)} $cur (${envStatus.config.percentage.safeRoundToInt()}%)"
+                                            "${fmt(envStatus.totalAvailable)} $cur (${envStatus.config.percentage.safeRoundToInt()}%)"
                                         } else {
                                             strings.noCap
                                         },
@@ -571,7 +576,7 @@ fun BudgetAndDaretScreen(
                                 if (envStatus.rolloverAmount > 0) {
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = strings.rolloverBadge.replace("{amt}", PayCycleEngine.formatDh(envStatus.rolloverAmount)),
+                                        text = strings.rolloverBadge.replace("{amt}", fmt(envStatus.rolloverAmount)),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = AccentAmber
                                     )
@@ -584,7 +589,7 @@ fun BudgetAndDaretScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text(
-                                        text = "${strings.expenses}: ${PayCycleEngine.formatDh(envStatus.spent)} $cur",
+                                        text = "${strings.expenses}: ${fmt(envStatus.spent)} $cur",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
@@ -688,12 +693,12 @@ fun BudgetAndDaretScreen(
                                             text = strings.daretTurnLabel
                                                 .replace("{turn}", daret.dayOrTurn.toString())
                                                 .replace("{total}", totalMembers.toString())
-                                                .replace("{pot}", PayCycleEngine.formatDh(totalPot)),
+                                                .replace("{pot}", fmt(totalPot)),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            text = "${PayCycleEngine.formatDh(daret.amount)} $cur/mois · Payé: ${daret.extraInt}/$totalMembers · Réception: ${daret.dateOrCycle}",
+                                            text = "${fmt(daret.amount)} $cur/mois · Payé: ${daret.extraInt}/$totalMembers · Réception: ${daret.dateOrCycle}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontSize = 11.5.sp,
                                             color = AccentViolet
@@ -794,7 +799,7 @@ fun BudgetAndDaretScreen(
                                             )
                                         }
                                         Text(
-                                            text = "Reste: ${PayCycleEngine.formatDh(remDebt)} $cur / ${PayCycleEngine.formatDh(debt.amount)} $cur",
+                                            text = "Reste: ${fmt(remDebt)} $cur / ${fmt(debt.amount)} $cur",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -888,7 +893,7 @@ fun BudgetAndDaretScreen(
                                             )
                                         }
                                         Text(
-                                            text = "${PayCycleEngine.formatDh(goal.secondaryAmount)} / ${PayCycleEngine.formatDh(goal.amount)} $cur (${(prog * 100f).safeRoundToInt()}%)",
+                                            text = "${fmt(goal.secondaryAmount)} / ${fmt(goal.amount)} $cur (${(prog * 100f).safeRoundToInt()}%)",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -928,7 +933,8 @@ fun CategoryDonutChart(
     envelopes: List<EnvelopeStatus>,
     totalSpent: Double,
     lang: String,
-    currencySymbol: String = "DH"
+    currencySymbol: String = "DH",
+    hideAmounts: Boolean = false
 ) {
     val palette = listOf(AccentEmerald, AccentSkyBlue, AccentAmber, AccentViolet, AccentCoral)
     Row(
@@ -973,7 +979,7 @@ fun CategoryDonutChart(
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = PayCycleEngine.formatDh(totalSpent),
+                    text = PayCycleEngine.formatAmountOrMask(totalSpent, hideAmounts),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.ExtraBold
                 )

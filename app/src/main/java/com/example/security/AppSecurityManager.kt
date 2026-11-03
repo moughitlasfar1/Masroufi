@@ -92,6 +92,9 @@ object AppSecurityManager {
     private const val KEY_LEGACY_PIN_SALT = "pin_sha256_salt"
     private const val KEY_FAILED_ATTEMPTS = "pin_failed_attempts"
     private const val KEY_LOCKOUT_UNTIL_MS = "pin_lockout_until_ms"
+    private const val KEY_HIDE_AMOUNTS = "ux_hide_amounts_enabled"
+    private const val KEY_LAST_ACTIVE_TAB = "ux_last_active_tab"
+    private const val KEY_DASHBOARD_ORDER = "ux_dashboard_card_order"
 
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val PIN_KEYSTORE_ALIAS = "masroufi_pin_keystore_v1"
@@ -104,6 +107,34 @@ object AppSecurityManager {
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    fun isHideAmountsEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_HIDE_AMOUNTS, false)
+
+    fun setHideAmountsEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_HIDE_AMOUNTS, enabled).apply()
+    }
+
+    fun getLastActiveTab(context: Context): String {
+        val saved = prefs(context).getString(KEY_LAST_ACTIVE_TAB, "vue").orEmpty()
+        return if (saved in listOf("vue", "semaine", "mois", "categories", "historique")) saved else "vue"
+    }
+
+    fun setLastActiveTab(context: Context, tab: String) {
+        if (tab in listOf("vue", "semaine", "mois", "categories", "historique")) {
+            prefs(context).edit().putString(KEY_LAST_ACTIVE_TAB, tab).apply()
+        }
+    }
+
+    fun getDashboardCardOrder(context: Context): List<String>? {
+        val raw = prefs(context).getString(KEY_DASHBOARD_ORDER, null) ?: return null
+        val list = raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        return list.ifEmpty { null }
+    }
+
+    fun setDashboardCardOrder(context: Context, order: List<String>) {
+        prefs(context).edit().putString(KEY_DASHBOARD_ORDER, order.joinToString(",")).apply()
+    }
 
     fun isFlagSecureEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_FLAG_SECURE, false)

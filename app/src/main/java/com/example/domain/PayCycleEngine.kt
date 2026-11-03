@@ -577,4 +577,12 @@ object PayCycleEngine {
         val nf = NumberFormat.getIntegerInstance(Locale.FRANCE)
         return nf.format(value.roundToLong())
     }
+
+    fun formatAmountOrMask(value: Double, hideAmounts: Boolean): String {
+        return if (hideAmounts) "••••" else formatDh(value)
+    }
+
+    fun formatCurrencyOrMask(value: Double, currencySymbol: String, hideAmounts: Boolean): String {
+        return if (hideAmounts) "•••• $currencySymbol" else "${formatDh(value)} $currencySymbol"
+    }
 }

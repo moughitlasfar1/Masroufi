@@ -4,27 +4,40 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,7 +45,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudOff
@@ -43,12 +59,17 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -60,6 +81,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,14 +93,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
@@ -86,7 +115,10 @@ import com.example.data.AccountItem
 import com.example.data.FinancialItem
 import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
+import com.example.domain.AppStrings
 import com.example.domain.Translations
+import com.example.security.AppSecurityManager
+import com.example.security.MasroufiSecurityLockScreen
 import com.example.ui.AddFinancialItemSheet
 import com.example.ui.AuthScreen
 import com.example.ui.BudgetAndDaretScreen
@@ -96,15 +128,18 @@ import com.example.ui.HistoryScreen
 import com.example.ui.MasroufiViewModel
 import com.example.ui.MonthScreen
 import com.example.ui.OverviewScreen
+import com.example.ui.QuickPresetPickerSheet
 import com.example.ui.RestoreJsonSheet
 import com.example.ui.SettingsBottomSheet
 import com.example.ui.TransactionEditorSheet
 import com.example.ui.WeekScreen
 import com.example.ui.signOutUser
+import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
+import com.example.ui.theme.AccentEmerald
+import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.paletteForKey
-import android.util.Log
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.AppCheckProviderFactory
@@ -118,24 +153,18 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.PersistentCacheSettings
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
-
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.security.AppSecurityManager
-import com.example.security.MasroufiSecurityLockScreen
-import kotlinx.coroutines.delay
 
 private const val APP_CHECK_TAG = "AppCheckInit"
 private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
 private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
+
+private val MAIN_TAB_KEYS = listOf("vue", "semaine", "mois", "categories", "historique")
 
 fun configureAppCheck(context: Context, intent: Intent?) {
     try {
@@ -161,8 +190,6 @@ fun configureAppCheck(context: Context, intent: Intent?) {
             )
             Log.d(APP_CHECK_TAG, "DebugAppCheckProviderFactory installed for debug build.")
         } else {
-            // Production Release Attestation:
-            // 1. Prefer Google Play Integrity Provider when available on the release classpath
             val playIntegrityInstalled = runCatching {
                 val clazz = Class.forName("com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory")
                 val factory = clazz.getMethod("getInstance").invoke(null) as? AppCheckProviderFactory
@@ -175,7 +202,6 @@ fun configureAppCheck(context: Context, intent: Intent?) {
                 }
             }.getOrDefault(false)
 
-            // 2. Fallback to Recaptcha Enterprise Provider if configured via recaptcha_site_key resource
             if (!playIntegrityInstalled) {
                 val resId = context.resources.getIdentifier(RECAPTCHA_SITE_KEY_RES, "string", context.packageName)
                 if (resId != 0) {
@@ -246,6 +272,7 @@ fun AppNavigation(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainFeatureScreen(
     currentUserId: String,
@@ -269,10 +296,38 @@ fun MainFeatureScreen(
     val strings = Translations.forLang(state.profile.language)
     val layoutDirection = if (strings.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
     val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    var activeTab by remember { mutableStateOf("vue") }
+    // Restore persistent privacy mask & last active tab on first composition
+    LaunchedEffect(Unit) {
+        viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
+    }
+
+    val initialTabKey = remember { AppSecurityManager.getLastActiveTab(context) }
+    val initialPageIndex = remember { MAIN_TAB_KEYS.indexOf(initialTabKey).coerceAtLeast(0) }
+    val pagerState = rememberPagerState(
+        initialPage = initialPageIndex,
+        pageCount = { MAIN_TAB_KEYS.size }
+    )
+    val activeTab = MAIN_TAB_KEYS.getOrElse(pagerState.currentPage) { "vue" }
+
+    var hasInitializedPager by remember { mutableStateOf(false) }
+    LaunchedEffect(pagerState.currentPage) {
+        val currentKey = MAIN_TAB_KEYS.getOrElse(pagerState.currentPage) { "vue" }
+        AppSecurityManager.setLastActiveTab(context, currentKey)
+        if (hasInitializedPager) {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        } else {
+            hasInitializedPager = true
+        }
+    }
+
+    var isSpeedDialOpen by remember { mutableStateOf(false) }
+    var showQuickPresetPicker by remember { mutableStateOf(false) }
+    var shortcutSheetTabKey by remember { mutableStateOf<String?>(null) }
+
     var showAddTxSheet by remember { mutableStateOf(openQuickAddOnLaunch) }
     var initialTxType by remember { mutableStateOf("expense") }
     var editingTx by remember { mutableStateOf<TransactionItem?>(null) }
@@ -355,13 +410,40 @@ fun MainFeatureScreen(
         }
     }
 
-    if (activeTab != "vue") {
+    // Predictive Back Handler: close speed-dial first, then return to Home tab ("vue")
+    if (isSpeedDialOpen || activeTab != "vue") {
         BackHandler {
-            activeTab = "vue"
+            if (isSpeedDialOpen) {
+                isSpeedDialOpen = false
+            } else {
+                scope.launch {
+                    pagerState.animateScrollToPage(0)
+                }
+            }
         }
     }
 
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+
+    fun togglePrivacyMask() {
+        val next = viewModel.toggleHideAmounts()
+        AppSecurityManager.setHideAmountsEnabled(context, next)
+    }
+
+    fun triggerQuickPreset(preset: FinancialItem) {
+        viewModel.quickAddPreset(preset) { added ->
+            scope.launch {
+                val res = snackbarHostState.showSnackbar(
+                    message = "+ ${added.desc} (${if (state.hideAmounts) "••••" else added.amount.toInt().toString()} $cur)",
+                    actionLabel = strings.undoLabel,
+                    duration = SnackbarDuration.Short
+                )
+                if (res == SnackbarResult.ActionPerformed) {
+                    viewModel.deleteTransactionWithUndo(added)
+                }
+            }
+        }
+    }
 
     MasroufiTheme(
         darkTheme = state.profile.isDarkTheme,
@@ -388,6 +470,7 @@ fun MainFeatureScreen(
                     MasroufiTopBar(
                         language = state.profile.language,
                         isDarkTheme = state.profile.isDarkTheme,
+                        hideAmounts = state.hideAmounts,
                         appTitle = state.customPrefs.customTitle.ifBlank { "Masroufi" },
                         subTitle = state.customPrefs.customSubtitle.ifBlank { strings.subTitle },
                         currencySymbol = cur,
@@ -401,6 +484,10 @@ fun MainFeatureScreen(
                                 else -> "fr"
                             }
                             viewModel.updateLanguage(nextLang)
+                        },
+                        onTogglePrivacy = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            togglePrivacyMask()
                         },
                         onToggleTheme = { viewModel.toggleTheme() },
                         onOpenCustomization = { showCustomizationSheet = true },
@@ -419,30 +506,143 @@ fun MainFeatureScreen(
                             Triple("categories", strings.navCat, Icons.Default.PieChart),
                             Triple("historique", strings.navHist, Icons.Default.History)
                         )
-                        tabs.forEach { (key, label, icon) ->
+                        tabs.forEachIndexed { pageIdx, (key, label, icon) ->
                             NavigationBarItem(
                                 selected = activeTab == key,
-                                onClick = { activeTab = key },
-                                icon = { Icon(imageVector = icon, contentDescription = label) },
-                                label = { Text(text = label, maxLines = 1, fontSize = 11.sp) },
+                                onClick = {
+                                    isSpeedDialOpen = false
+                                    scope.launch {
+                                        pagerState.animateScrollToPage(pageIdx)
+                                    }
+                                },
+                                icon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .combinedClickable(
+                                                onClick = {
+                                                    isSpeedDialOpen = false
+                                                    scope.launch {
+                                                        pagerState.animateScrollToPage(pageIdx)
+                                                    }
+                                                },
+                                                onLongClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    shortcutSheetTabKey = key
+                                                }
+                                            )
+                                            .padding(4.dp)
+                                            .testTag("nav_icon_$key")
+                                    ) {
+                                        Icon(imageVector = icon, contentDescription = label)
+                                    }
+                                },
+                                label = {
+                                    Text(
+                                        text = label,
+                                        maxLines = 1,
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.combinedClickable(
+                                            onClick = {
+                                                isSpeedDialOpen = false
+                                                scope.launch {
+                                                    pagerState.animateScrollToPage(pageIdx)
+                                                }
+                                            },
+                                            onLongClick = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                shortcutSheetTabKey = key
+                                            }
+                                        )
+                                    )
+                                },
                                 modifier = Modifier.testTag("nav_tab_$key")
                             )
                         }
                     }
                 },
                 floatingActionButton = {
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            editingTx = null
-                            initialTxType = "expense"
-                            showAddTxSheet = true
-                        },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        text = { Text(strings.btnAddAction, fontWeight = FontWeight.ExtraBold) },
-                        modifier = Modifier.testTag("fab_add_expense")
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        AnimatedVisibility(
+                            visible = isSpeedDialOpen,
+                            enter = fadeIn() + scaleIn(initialScale = 0.85f),
+                            exit = fadeOut() + scaleOut(targetScale = 0.85f)
+                        ) {
+                            SpeedDialFanItems(
+                                lang = state.profile.language,
+                                onSelectExpense = {
+                                    isSpeedDialOpen = false
+                                    editingTx = null
+                                    initialTxType = "expense"
+                                    showAddTxSheet = true
+                                },
+                                onSelectIncome = {
+                                    isSpeedDialOpen = false
+                                    editingTx = null
+                                    initialTxType = "income"
+                                    showAddTxSheet = true
+                                },
+                                onSelectTransfer = {
+                                    isSpeedDialOpen = false
+                                    editingTx = null
+                                    initialTxType = "transfer"
+                                    showAddTxSheet = true
+                                },
+                                onSelectPreset = {
+                                    isSpeedDialOpen = false
+                                    showQuickPresetPicker = true
+                                }
+                            )
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // Speed-Dial Fan Toggle Pill
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isSpeedDialOpen) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
+                                shadowElevation = 6.dp,
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        isSpeedDialOpen = !isSpeedDialOpen
+                                    }
+                                    .testTag("fab_speed_dial_toggle")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = if (isSpeedDialOpen) Icons.Default.Close else Icons.Default.Bolt,
+                                        contentDescription = "Menu Actions Rapides",
+                                        tint = if (isSpeedDialOpen) MaterialTheme.colorScheme.onErrorContainer else AccentAmber
+                                    )
+                                }
+                            }
+
+                            ExtendedFloatingActionButton(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    if (isSpeedDialOpen) {
+                                        isSpeedDialOpen = false
+                                    }
+                                    editingTx = null
+                                    initialTxType = "expense"
+                                    showAddTxSheet = true
+                                },
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                                text = { Text(strings.btnAddAction, fontWeight = FontWeight.ExtraBold) },
+                                modifier = Modifier.testTag("fab_add_expense")
+                            )
+                        }
+                    }
                 }
             ) { innerPadding ->
                 Box(
@@ -511,196 +711,273 @@ fun MainFeatureScreen(
                             }
                         }
 
-                        when (activeTab) {
-                            "vue" -> OverviewScreen(
-                                state = state,
-                                strings = strings,
-                                onOpenAddModal = { type ->
-                                    editingTx = null
-                                    initialTxType = type
-                                    showAddTxSheet = true
-                                },
-                                onQuickPresetTap = { preset ->
-                                    viewModel.quickAddPreset(preset) { added ->
+                        // Synchronized HorizontalPager for 1-handed swipe navigation across all 5 tabs
+                        HorizontalPager(
+                            state = pagerState,
+                            beyondViewportPageCount = 1,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("main_horizontal_pager")
+                        ) { pageIndex ->
+                            val tabKey = MAIN_TAB_KEYS.getOrElse(pageIndex) { "vue" }
+                            when (tabKey) {
+                                "vue" -> OverviewScreen(
+                                    state = state,
+                                    strings = strings,
+                                    onOpenAddModal = { type ->
+                                        editingTx = null
+                                        initialTxType = type
+                                        showAddTxSheet = true
+                                    },
+                                    onQuickPresetTap = { preset ->
+                                        triggerQuickPreset(preset)
+                                    },
+                                    onOpenAccountModal = { acc ->
+                                        editingAccountItem = acc
+                                        editingFinancialItem = null
+                                        activeItemSheetType = "account"
+                                    },
+                                    onPayBill = { bill -> viewModel.payRecurringBill(bill) },
+                                    onAddPresetModal = { preset ->
+                                        editingFinancialItem = preset
+                                        editingAccountItem = null
+                                        activeItemSheetType = "preset"
+                                    },
+                                    onDeletePreset = { id -> viewModel.deleteFinancialItem(id) },
+                                    onOpenCustomizationModal = { showCustomizationSheet = true },
+                                    onLoadDemoData = {
+                                        viewModel.loadDemoData {
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar("Mode Démo activé !")
+                                            }
+                                        }
+                                    },
+                                    onTriggerReminderAction = { reminder ->
+                                        when (reminder.kind) {
+                                            "bill" -> viewModel.payRecurringBill(reminder.item)
+                                            "daret" -> viewModel.payDaretRound(reminder.item)
+                                            "debt" -> viewModel.settleDebt(reminder.item, 100.0)
+                                        }
+                                    },
+                                    onToggleHideAmounts = { togglePrivacyMask() },
+                                    onOpenQuickPresetPicker = { showQuickPresetPicker = true },
+                                    onMoveDashboardSection = { sectionKey, dir ->
+                                        viewModel.moveDashboardSection(sectionKey, dir)
+                                    },
+                                    onSetDashboardSectionVisibility = { sectionKey, visible ->
+                                        viewModel.setDashboardSectionVisibility(sectionKey, visible)
+                                    }
+                                )
+
+                                "semaine" -> WeekScreen(
+                                    state = state,
+                                    strings = strings
+                                )
+
+                                "mois" -> MonthScreen(
+                                    state = state,
+                                    strings = strings,
+                                    onUpdateWhatIf = { key, pct -> viewModel.updateWhatIf(key, pct) },
+                                    onContributeSeasonal = { item -> viewModel.contributeToGoalOrSeasonal(item, 200.0) },
+                                    onOpenNewSeasonal = { item ->
+                                        editingFinancialItem = item
+                                        editingAccountItem = null
+                                        activeItemSheetType = "seasonal"
+                                    },
+                                    onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
+                                )
+
+                                "categories" -> BudgetAndDaretScreen(
+                                    state = state,
+                                    strings = strings,
+                                    onOpenCustomizeEnvelopes = { showEnvelopesSheet = true },
+                                    onPayDaretRound = { daret -> viewModel.payDaretRound(daret) },
+                                    onOpenNewDaret = { item ->
+                                        editingFinancialItem = item
+                                        editingAccountItem = null
+                                        activeItemSheetType = "daret"
+                                    },
+                                    onSettleDebt = { debt -> viewModel.settleDebt(debt, 100.0) },
+                                    onOpenNewDebt = { item ->
+                                        editingFinancialItem = item
+                                        editingAccountItem = null
+                                        activeItemSheetType = "debt"
+                                    },
+                                    onContributeGoal = { goal -> viewModel.contributeToGoalOrSeasonal(goal, 200.0) },
+                                    onOpenNewGoal = { item ->
+                                        editingFinancialItem = item
+                                        editingAccountItem = null
+                                        activeItemSheetType = "goal"
+                                    },
+                                    onOpenNewBill = { item ->
+                                        editingFinancialItem = item
+                                        editingAccountItem = null
+                                        activeItemSheetType = "bill"
+                                    },
+                                    onPayBill = { bill -> viewModel.payRecurringBill(bill) },
+                                    onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
+                                )
+
+                                "historique" -> HistoryScreen(
+                                    state = state,
+                                    strings = strings,
+                                    onUpdateFilter = { fn -> viewModel.updateFilter(fn) },
+                                    onEditTransaction = { tx ->
+                                        editingTx = tx
+                                        initialTxType = tx.type
+                                        showAddTxSheet = true
+                                    },
+                                    onDeleteTransaction = { tx ->
+                                        viewModel.deleteTransactionWithUndo(tx)
                                         scope.launch {
                                             val res = snackbarHostState.showSnackbar(
-                                                message = "+ ${added.desc} (${added.amount.toInt()} $cur)",
+                                                message = "${strings.deletedToast}: ${tx.desc}",
                                                 actionLabel = strings.undoLabel,
                                                 duration = SnackbarDuration.Short
                                             )
                                             if (res == SnackbarResult.ActionPerformed) {
-                                                viewModel.deleteTransactionWithUndo(added)
+                                                viewModel.undoDeleteTransaction()
                                             }
                                         }
-                                    }
-                                },
-                                onOpenAccountModal = { acc ->
-                                    editingAccountItem = acc
-                                    editingFinancialItem = null
-                                    activeItemSheetType = "account"
-                                },
-                                onPayBill = { bill -> viewModel.payRecurringBill(bill) },
-                                onAddPresetModal = { preset ->
-                                    editingFinancialItem = preset
-                                    editingAccountItem = null
-                                    activeItemSheetType = "preset"
-                                },
-                                onDeletePreset = { id -> viewModel.deleteFinancialItem(id) },
-                                onOpenCustomizationModal = { showCustomizationSheet = true },
-                                onLoadDemoData = {
-                                    viewModel.loadDemoData {
+                                    },
+                                    onShareJson = { pwd ->
+                                        pendingBackupPassword = pwd
+                                        val payload = runCatching { viewModel.exportBackupJson(pwd) }
+                                            .getOrElse { viewModel.exportBackupJson("") }
+                                        shareTextContent(context, payload, "masroufi_backup.json", "application/json")
+                                    },
+                                    onCopyJson = { pwd ->
+                                        pendingBackupPassword = pwd
+                                        val payload = runCatching { viewModel.exportBackupJson(pwd) }
+                                            .getOrElse { viewModel.exportBackupJson("") }
+                                        copyToClipboard(context, payload)
                                         scope.launch {
-                                            snackbarHostState.showSnackbar("Mode Démo activé !")
-                                        }
-                                    }
-                                },
-                                onTriggerReminderAction = { reminder ->
-                                    when (reminder.kind) {
-                                        "bill" -> viewModel.payRecurringBill(reminder.item)
-                                        "daret" -> viewModel.payDaretRound(reminder.item)
-                                        "debt" -> viewModel.settleDebt(reminder.item, 100.0)
-                                    }
-                                }
-                            )
-
-                            "semaine" -> WeekScreen(
-                                state = state,
-                                strings = strings
-                            )
-
-                            "mois" -> MonthScreen(
-                                state = state,
-                                strings = strings,
-                                onUpdateWhatIf = { key, pct -> viewModel.updateWhatIf(key, pct) },
-                                onContributeSeasonal = { item -> viewModel.contributeToGoalOrSeasonal(item, 200.0) },
-                                onOpenNewSeasonal = { item ->
-                                    editingFinancialItem = item
-                                    editingAccountItem = null
-                                    activeItemSheetType = "seasonal"
-                                },
-                                onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
-                            )
-
-                            "categories" -> BudgetAndDaretScreen(
-                                state = state,
-                                strings = strings,
-                                onOpenCustomizeEnvelopes = { showEnvelopesSheet = true },
-                                onPayDaretRound = { daret -> viewModel.payDaretRound(daret) },
-                                onOpenNewDaret = { item ->
-                                    editingFinancialItem = item
-                                    editingAccountItem = null
-                                    activeItemSheetType = "daret"
-                                },
-                                onSettleDebt = { debt -> viewModel.settleDebt(debt, 100.0) },
-                                onOpenNewDebt = { item ->
-                                    editingFinancialItem = item
-                                    editingAccountItem = null
-                                    activeItemSheetType = "debt"
-                                },
-                                onContributeGoal = { goal -> viewModel.contributeToGoalOrSeasonal(goal, 200.0) },
-                                onOpenNewGoal = { item ->
-                                    editingFinancialItem = item
-                                    editingAccountItem = null
-                                    activeItemSheetType = "goal"
-                                },
-                                onOpenNewBill = { item ->
-                                    editingFinancialItem = item
-                                    editingAccountItem = null
-                                    activeItemSheetType = "bill"
-                                },
-                                onPayBill = { bill -> viewModel.payRecurringBill(bill) },
-                                onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
-                            )
-
-                            "historique" -> HistoryScreen(
-                                state = state,
-                                strings = strings,
-                                onUpdateFilter = { fn -> viewModel.updateFilter(fn) },
-                                onEditTransaction = { tx ->
-                                    editingTx = tx
-                                    initialTxType = tx.type
-                                    showAddTxSheet = true
-                                },
-                                onDeleteTransaction = { tx ->
-                                    viewModel.deleteTransactionWithUndo(tx)
-                                    scope.launch {
-                                        val res = snackbarHostState.showSnackbar(
-                                            message = "${strings.deletedToast}: ${tx.desc}",
-                                            actionLabel = strings.undoLabel,
-                                            duration = SnackbarDuration.Short
-                                        )
-                                        if (res == SnackbarResult.ActionPerformed) {
-                                            viewModel.undoDeleteTransaction()
-                                        }
-                                    }
-                                },
-                                onShareJson = { pwd ->
-                                    pendingBackupPassword = pwd
-                                    val payload = runCatching { viewModel.exportBackupJson(pwd) }
-                                        .getOrElse { viewModel.exportBackupJson("") }
-                                    shareTextContent(context, payload, "masroufi_backup.json", "application/json")
-                                },
-                                onCopyJson = { pwd ->
-                                    pendingBackupPassword = pwd
-                                    val payload = runCatching { viewModel.exportBackupJson(pwd) }
-                                        .getOrElse { viewModel.exportBackupJson("") }
-                                    copyToClipboard(context, payload)
-                                    scope.launch {
-                                        launch {
-                                            delay(60_000L)
-                                            AppSecurityManager.clearSensitiveClipboard(context)
-                                        }
-                                        val res = snackbarHostState.showSnackbar(
-                                            message = if (pwd.trim().length >= 4) {
-                                                "JSON chiffré AES-256-GCM copié (auto-effacé dans 60s)"
-                                            } else {
-                                                "JSON copié (masqué & auto-effacé dans 60s)"
-                                            },
-                                            actionLabel = "Vider",
-                                            duration = SnackbarDuration.Short
-                                        )
-                                        if (res == SnackbarResult.ActionPerformed) {
-                                            AppSecurityManager.clearSensitiveClipboard(context)
-                                        }
-                                    }
-                                },
-                                onShareCsv = {
-                                    shareTextContent(context, viewModel.exportCsv(), "masroufi_export.csv", "text/csv")
-                                },
-                                onOpenRestoreModal = {
-                                    pendingRestoreRawContent = ""
-                                    showRestoreSheet = true
-                                },
-                                onExportJsonFile = { pwd ->
-                                    pendingBackupPassword = pwd
-                                    exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
-                                },
-                                onExportCsvFile = {
-                                    exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")
-                                },
-                                onImportJsonFile = {
-                                    importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-                                },
-                                onClearClipboard = {
-                                    AppSecurityManager.clearSensitiveClipboard(context)
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar("Presse-papiers vidé par sécurité !")
-                                    }
-                                },
-                                hasRollbackSnapshot = !rollbackSnapshot.isNullOrBlank(),
-                                onRollbackRestore = {
-                                    viewModel.rollbackLastRestore { ok ->
-                                        scope.launch {
-                                            snackbarHostState.showSnackbar(
-                                                if (ok) "État précédent restauré (Rollback effectué) !" else "Rollback indisponible"
+                                            launch {
+                                                delay(60_000L)
+                                                AppSecurityManager.clearSensitiveClipboard(context)
+                                            }
+                                            val res = snackbarHostState.showSnackbar(
+                                                message = if (pwd.trim().length >= 4) {
+                                                    "JSON chiffré AES-256-GCM copié (auto-effacé dans 60s)"
+                                                } else {
+                                                    "JSON copié (masqué & auto-effacé dans 60s)"
+                                                },
+                                                actionLabel = "Vider",
+                                                duration = SnackbarDuration.Short
                                             )
+                                            if (res == SnackbarResult.ActionPerformed) {
+                                                AppSecurityManager.clearSensitiveClipboard(context)
+                                            }
                                         }
+                                    },
+                                    onShareCsv = {
+                                        shareTextContent(context, viewModel.exportCsv(), "masroufi_export.csv", "text/csv")
+                                    },
+                                    onOpenRestoreModal = {
+                                        pendingRestoreRawContent = ""
+                                        showRestoreSheet = true
+                                    },
+                                    onExportJsonFile = { pwd ->
+                                        pendingBackupPassword = pwd
+                                        exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
+                                    },
+                                    onExportCsvFile = {
+                                        exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")
+                                    },
+                                    onImportJsonFile = {
+                                        importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                                    },
+                                    onClearClipboard = {
+                                        AppSecurityManager.clearSensitiveClipboard(context)
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Presse-papiers vidé par sécurité !")
+                                        }
+                                    },
+                                    hasRollbackSnapshot = !rollbackSnapshot.isNullOrBlank(),
+                                    onRollbackRestore = {
+                                        viewModel.rollbackLastRestore { ok ->
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(
+                                                    if (ok) "État précédent restauré (Rollback effectué) !" else "Rollback indisponible"
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onAddFirstTransaction = {
+                                        editingTx = null
+                                        initialTxType = "expense"
+                                        showAddTxSheet = true
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
+
+                    // Dimmed Scrim when Speed-Dial Fan Menu is expanded
+                    if (isSpeedDialOpen) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.38f))
+                                .clickable { isSpeedDialOpen = false }
+                                .testTag("speed_dial_scrim")
+                        )
+                    }
                 }
+            }
+
+            if (showQuickPresetPicker) {
+                QuickPresetPickerSheet(
+                    state = state,
+                    strings = strings,
+                    onDismiss = { showQuickPresetPicker = false },
+                    onSelectPreset = { preset -> triggerQuickPreset(preset) },
+                    onCreateNewPreset = {
+                        editingFinancialItem = null
+                        editingAccountItem = null
+                        activeItemSheetType = "preset"
+                    }
+                )
+            }
+
+            val shortcutTab = shortcutSheetTabKey
+            if (shortcutTab != null) {
+                NavTabShortcutsSheet(
+                    tabKey = shortcutTab,
+                    strings = strings,
+                    lang = state.profile.language,
+                    onDismiss = { shortcutSheetTabKey = null },
+                    onQuickExpense = {
+                        editingTx = null
+                        initialTxType = "expense"
+                        showAddTxSheet = true
+                    },
+                    onQuickIncome = {
+                        editingTx = null
+                        initialTxType = "income"
+                        showAddTxSheet = true
+                    },
+                    onQuickTransfer = {
+                        editingTx = null
+                        initialTxType = "transfer"
+                        showAddTxSheet = true
+                    },
+                    onQuickPresetPicker = { showQuickPresetPicker = true },
+                    onOpenCustomizeEnvelopes = { showEnvelopesSheet = true },
+                    onOpenNewItem = { itemType ->
+                        editingFinancialItem = null
+                        editingAccountItem = null
+                        activeItemSheetType = itemType
+                    },
+                    onExportCsv = {
+                        shareTextContent(context, viewModel.exportCsv(), "masroufi_export.csv", "text/csv")
+                    },
+                    onOpenRestore = {
+                        pendingRestoreRawContent = ""
+                        showRestoreSheet = true
+                    },
+                    onOpenCustomization = { showCustomizationSheet = true }
+                )
             }
 
             if (showAddTxSheet) {
@@ -833,7 +1110,7 @@ fun MainFeatureScreen(
                         pendingRestoreRawContent = ""
                     },
                     onRestore = { raw, pwd, replaceExisting ->
-                        viewModel.restoreFromJson(raw, pwd, replaceExisting) { ok, msg ->
+                        viewModel.restoreFromJson(raw, pwd, replaceExisting) { _, msg ->
                             scope.launch {
                                 snackbarHostState.showSnackbar(msg)
                             }
@@ -849,15 +1126,224 @@ fun MainFeatureScreen(
 }
 
 @Composable
+private fun SpeedDialFanItems(
+    lang: String,
+    onSelectExpense: () -> Unit,
+    onSelectIncome: () -> Unit,
+    onSelectTransfer: () -> Unit,
+    onSelectPreset: () -> Unit
+) {
+    val items = listOf(
+        SpeedDialItemData(
+            label = when (lang) {
+                "ar" -> "شراء سريع 1-Tap"
+                "darija" -> "تقضية دغيا 1-Tap"
+                "en" -> "Quick Preset (1-Tap)"
+                else -> "Achat Rapide (1-Tap)"
+            },
+            icon = Icons.Default.Bolt,
+            accent = AccentAmber,
+            testTag = "speed_dial_preset",
+            onClick = onSelectPreset
+        ),
+        SpeedDialItemData(
+            label = when (lang) {
+                "ar" -> "تحويل بين الحسابات"
+                "darija" -> "تحويل بين الحسابات"
+                "en" -> "Transfer Accounts"
+                else -> "Transfert entre comptes"
+            },
+            icon = Icons.Default.SwapHoriz,
+            accent = AccentSkyBlue,
+            testTag = "speed_dial_transfer",
+            onClick = onSelectTransfer
+        ),
+        SpeedDialItemData(
+            label = when (lang) {
+                "ar" -> "إضافة مدخول"
+                "darija" -> "زيد مدخول"
+                "en" -> "Add Income"
+                else -> "Ajouter un Revenu"
+            },
+            icon = Icons.Default.ArrowDownward,
+            accent = AccentEmerald,
+            testTag = "speed_dial_income",
+            onClick = onSelectIncome
+        ),
+        SpeedDialItemData(
+            label = when (lang) {
+                "ar" -> "إضافة مصروف"
+                "darija" -> "زيد مصروف"
+                "en" -> "Add Expense"
+                else -> "Ajouter une Dépense"
+            },
+            icon = Icons.Default.ArrowUpward,
+            accent = AccentCoral,
+            testTag = "speed_dial_expense",
+            onClick = onSelectExpense
+        )
+    )
+
+    Column(
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.testTag("speed_dial_fan_menu")
+    ) {
+        items.forEach { item ->
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable(onClick = item.onClick)
+                    .testTag(item.testTag)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = item.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(item.accent.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = item.icon,
+                            contentDescription = item.label,
+                            tint = item.accent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private data class SpeedDialItemData(
+    val label: String,
+    val icon: ImageVector,
+    val accent: Color,
+    val testTag: String,
+    val onClick: () -> Unit
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NavTabShortcutsSheet(
+    tabKey: String,
+    strings: AppStrings,
+    lang: String,
+    onDismiss: () -> Unit,
+    onQuickExpense: () -> Unit,
+    onQuickIncome: () -> Unit,
+    onQuickTransfer: () -> Unit,
+    onQuickPresetPicker: () -> Unit,
+    onOpenCustomizeEnvelopes: () -> Unit,
+    onOpenNewItem: (String) -> Unit,
+    onExportCsv: () -> Unit,
+    onOpenRestore: () -> Unit,
+    onOpenCustomization: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = when (lang) {
+                    "ar" -> "اختصارات سريعة"
+                    "darija" -> "اختصارات دغيا"
+                    "en" -> "Quick Navigation Shortcuts"
+                    else -> "Raccourcis Rapides"
+                },
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold
+            )
+
+            val actions: List<Pair<String, () -> Unit>> = when (tabKey) {
+                "categories" -> listOf(
+                    strings.editEnvelopesBtn to onOpenCustomizeEnvelopes,
+                    "+ Daret (Tontine)" to { onOpenNewItem("daret") },
+                    "+ Facture récurrente" to { onOpenNewItem("bill") },
+                    "+ Crédit / Dette" to { onOpenNewItem("debt") },
+                    "+ Objectif d'épargne" to { onOpenNewItem("goal") }
+                )
+                "historique" -> listOf(
+                    strings.expenseTab to onQuickExpense,
+                    strings.btnShareCsv to onExportCsv,
+                    strings.btnRestoreJson to onOpenRestore
+                )
+                else -> listOf(
+                    strings.expenseTab to onQuickExpense,
+                    strings.incomeTab to onQuickIncome,
+                    strings.transferTab to onQuickTransfer,
+                    strings.quickPresetsTitle to onQuickPresetPicker,
+                    "Studio de Personnalisation" to onOpenCustomization
+                )
+            }
+
+            actions.forEachIndexed { idx, (label, action) ->
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable {
+                            onDismiss()
+                            action()
+                        }
+                        .testTag("nav_shortcut_${tabKey}_$idx")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(20.dp))
+        }
+    }
+}
+
+@Composable
 private fun MasroufiTopBar(
     language: String,
     isDarkTheme: Boolean,
+    hideAmounts: Boolean,
     appTitle: String,
     subTitle: String,
     currencySymbol: String,
     accentPalette: String,
     cycleLabel: String,
     onCycleLanguage: () -> Unit,
+    onTogglePrivacy: () -> Unit,
     onToggleTheme: () -> Unit,
     onOpenCustomization: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -936,7 +1422,7 @@ private fun MasroufiTopBar(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    horizontalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
                     val langDisplay = when (language) {
                         "ar" -> "AR 🇸🇦"
@@ -956,7 +1442,18 @@ private fun MasroufiTopBar(
                             text = langDisplay,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onTogglePrivacy,
+                        modifier = Modifier.testTag("privacy_eye_button")
+                    ) {
+                        Icon(
+                            imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (hideAmounts) "Show Amounts" else "Hide Amounts",
+                            tint = if (hideAmounts) AccentAmber else MaterialTheme.colorScheme.primary
                         )
                     }
 

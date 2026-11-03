@@ -136,6 +136,7 @@ object BackupSerializer {
                     put("customTitle", state.customPrefs.customTitle)
                     put("customSubtitle", state.customPrefs.customSubtitle)
                     put("visibilityMask", state.customPrefs.toVisibilityMask())
+                    put("dashboardOrder", state.customPrefs.normalizedOrder().joinToString(","))
                 }
             )
 
@@ -248,7 +249,9 @@ object BackupSerializer {
 
         val customObj = obj.optJSONObject("customPrefs")
         val restoredCustomPrefs = if (customObj != null) {
-            val mask = customObj.optInt("visibilityMask", 63)
+            val mask = customObj.optInt("visibilityMask", 127)
+            val hasInsightsBit = mask >= 64
+            val orderStr = customObj.optString("dashboardOrder", "")
             CustomizationPrefs(
                 accentPalette = customObj.optString("accentPalette", "emerald").ifBlank { "emerald" },
                 currencySymbol = customObj.optString("currencySymbol", "DH").ifBlank { "DH" },
@@ -259,7 +262,9 @@ object BackupSerializer {
                 showQuickPresetsCard = (mask and 4) != 0,
                 showWeekSummaryRow = (mask and 8) != 0,
                 showMonthlyReviewCard = (mask and 16) != 0,
-                showBillsCard = (mask and 32) != 0
+                showBillsCard = (mask and 32) != 0,
+                showSmartInsightsCard = if (hasInsightsBit) (mask and 64) != 0 else true,
+                dashboardOrder = CustomizationPrefs.normalizeOrderString(orderStr)
             )
         } else null
 
@@ -452,6 +457,7 @@ data class DashboardState(
     val smartInsights: List<SmartInsight> = emptyList(),
     val smartReminders: List<SmartReminder> = emptyList(),
     val isCleanFreshAccount: Boolean = false,
+    val hideAmounts: Boolean = false,
     val filterState: FilterState = FilterState(),
     val whatIfState: WhatIfSimulatorState = WhatIfSimulatorState(),
     val errorMessage: String? = null
@@ -465,6 +471,7 @@ class MasroufiViewModel(
     private val _selectedCycleKey = MutableStateFlow<String?>(null)
     private val _filterState = MutableStateFlow(FilterState())
     private val _whatIfState = MutableStateFlow(WhatIfSimulatorState())
+    private val _hideAmounts = MutableStateFlow(false)
     private val _lastDeletedTx = MutableStateFlow<TransactionItem?>(null)
     val lastDeletedTx: StateFlow<TransactionItem?> = _lastDeletedTx.asStateFlow()
 
@@ -539,8 +546,11 @@ class MasroufiViewModel(
     val uiState: StateFlow<DashboardState> = combine(
         combine(profileFlow, _optimisticProfile, transactionsFlow) { p, optP, t -> Triple(optP ?: p, t, Unit) },
         combine(accountsFlow, envelopesFlow, itemsFlow) { a, e, i -> Triple(a, e, i) },
-        combine(_selectedCycleKey, _filterState, _whatIfState, _optimisticCustomPrefs, _errorMessage) { c, f, w, cp, err ->
-            listOf(c, f, w, cp, err)
+        combine(
+            combine(_selectedCycleKey, _filterState, _whatIfState) { c, f, w -> Triple(c, f, w) },
+            combine(_optimisticCustomPrefs, _errorMessage, _hideAmounts) { cp, err, hide -> Triple(cp, err, hide) }
+        ) { (c, f, w), (cp, err, hide) ->
+            listOf(c, f, w, cp, err, hide)
         }
     ) { (profileOpt, txs, _), (accs, envs, finItems), extraList ->
         val selCycle = extraList[0] as? String
@@ -548,6 +558,7 @@ class MasroufiViewModel(
         val whatIf = extraList[2] as WhatIfSimulatorState
         val optCustomPrefs = extraList[3] as? CustomizationPrefs
         val errMsg = extraList[4] as? String
+        val hideAmounts = extraList[5] as? Boolean ?: false
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find { it.itemType == "custom_prefs" || it.id == "custom_prefs" }
@@ -691,6 +702,7 @@ class MasroufiViewModel(
             smartInsights = smartInsights,
             smartReminders = smartReminders,
             isCleanFreshAccount = txs.isEmpty() && netWorth == 0.0,
+            hideAmounts = hideAmounts,
             filterState = filter,
             whatIfState = whatIf,
             errorMessage = errMsg
@@ -758,6 +770,16 @@ class MasroufiViewModel(
         }
     }
 
+    fun setHideAmounts(hide: Boolean) {
+        _hideAmounts.value = hide
+    }
+
+    fun toggleHideAmounts(): Boolean {
+        val next = !_hideAmounts.value
+        _hideAmounts.value = next
+        return next
+    }
+
     fun saveCustomizationPrefs(prefs: CustomizationPrefs) {
         _optimisticCustomPrefs.value = prefs
         val item = buildCustomPrefsFinancialItem(prefs)
@@ -766,13 +788,31 @@ class MasroufiViewModel(
         }
     }
 
+    fun moveDashboardSection(sectionKey: String, direction: Int) {
+        val curPrefs = uiState.value.customPrefs
+        val order = curPrefs.normalizedOrder().toMutableList()
+        val idx = order.indexOf(sectionKey)
+        if (idx == -1) return
+        val targetIdx = (idx + direction).coerceIn(0, order.lastIndex)
+        if (targetIdx == idx) return
+        val item = order.removeAt(idx)
+        order.add(targetIdx, item)
+        saveCustomizationPrefs(curPrefs.copy(dashboardOrder = order))
+    }
+
+    fun setDashboardSectionVisibility(sectionKey: String, visible: Boolean) {
+        val curPrefs = uiState.value.customPrefs
+        saveCustomizationPrefs(curPrefs.withSectionVisibility(sectionKey, visible))
+    }
+
     private fun buildCustomPrefsFinancialItem(prefs: CustomizationPrefs): FinancialItem {
+        val orderCsv = prefs.normalizedOrder().joinToString(",")
         return FinancialItem(
             id = "custom_prefs",
             userId = currentUserId,
             itemType = "custom_prefs",
             name = prefs.customTitle.ifBlank { "Masroufi" }.take(80),
-            subtitle = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}",
+            subtitle = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}|$orderCsv",
             amount = 0.0,
             secondaryAmount = 0.0,
             dayOrTurn = prefs.toVisibilityMask(),

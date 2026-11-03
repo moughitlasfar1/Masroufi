@@ -99,7 +99,9 @@ data class CustomizationPrefs(
     val showQuickPresetsCard: Boolean = true,
     val showWeekSummaryRow: Boolean = true,
     val showMonthlyReviewCard: Boolean = true,
-    val showBillsCard: Boolean = true
+    val showBillsCard: Boolean = true,
+    val showSmartInsightsCard: Boolean = true,
+    val dashboardOrder: List<String> = DEFAULT_DASHBOARD_ORDER
 ) {
     fun toVisibilityMask(): Int {
         var mask = 0
@@ -109,27 +111,74 @@ data class CustomizationPrefs(
         if (showWeekSummaryRow) mask = mask or 8
         if (showMonthlyReviewCard) mask = mask or 16
         if (showBillsCard) mask = mask or 32
+        if (showSmartInsightsCard) mask = mask or 64
         return mask
     }
 
+    fun normalizedOrder(): List<String> {
+        val valid = dashboardOrder.filter { it in DEFAULT_DASHBOARD_ORDER }.distinct()
+        val missing = DEFAULT_DASHBOARD_ORDER.filter { it !in valid }
+        return valid + missing
+    }
+
+    fun isSectionVisible(sectionKey: String): Boolean = when (sectionKey) {
+        "accounts" -> showAccountsCard
+        "presets" -> showQuickPresetsCard
+        "insights" -> showSmartInsightsCard
+        "bills" -> showBillsCard
+        "week_summary" -> showWeekSummaryRow
+        "monthly_review" -> showMonthlyReviewCard
+        else -> true
+    }
+
+    fun withSectionVisibility(sectionKey: String, visible: Boolean): CustomizationPrefs = when (sectionKey) {
+        "accounts" -> copy(showAccountsCard = visible)
+        "presets" -> copy(showQuickPresetsCard = visible)
+        "insights" -> copy(showSmartInsightsCard = visible)
+        "bills" -> copy(showBillsCard = visible)
+        "week_summary" -> copy(showWeekSummaryRow = visible)
+        "monthly_review" -> copy(showMonthlyReviewCard = visible)
+        else -> this
+    }
+
     companion object {
+        val DEFAULT_DASHBOARD_ORDER = listOf(
+            "accounts",
+            "presets",
+            "insights",
+            "bills",
+            "week_summary",
+            "monthly_review"
+        )
+
+        fun normalizeOrderString(rawOrder: String?): List<String> {
+            if (rawOrder.isNullOrBlank()) return DEFAULT_DASHBOARD_ORDER
+            val parsed = rawOrder.split(",").map { it.trim() }.filter { it in DEFAULT_DASHBOARD_ORDER }.distinct()
+            val missing = DEFAULT_DASHBOARD_ORDER.filter { it !in parsed }
+            return parsed + missing
+        }
+
         fun fromFinancialItem(item: FinancialItem?): CustomizationPrefs {
             if (item == null) return CustomizationPrefs()
             val parts = item.subtitle.split("|")
             val palette = parts.getOrNull(0)?.ifBlank { "emerald" } ?: "emerald"
             val currency = parts.getOrNull(1)?.ifBlank { "DH" } ?: "DH"
-            val mask = if (item.dayOrTurn > 0) item.dayOrTurn else 63
+            val orderList = normalizeOrderString(parts.getOrNull(2))
+            val rawMask = if (item.dayOrTurn > 0) item.dayOrTurn else 127
+            val hasInsightsBit = item.dayOrTurn >= 64 || item.dayOrTurn <= 0
             return CustomizationPrefs(
                 accentPalette = palette,
                 currencySymbol = currency,
                 customTitle = item.name.ifBlank { "Masroufi" },
                 customSubtitle = item.dateOrCycle,
-                showSafeToSpend = (mask and 1) != 0,
-                showAccountsCard = (mask and 2) != 0,
-                showQuickPresetsCard = (mask and 4) != 0,
-                showWeekSummaryRow = (mask and 8) != 0,
-                showMonthlyReviewCard = (mask and 16) != 0,
-                showBillsCard = (mask and 32) != 0
+                showSafeToSpend = (rawMask and 1) != 0,
+                showAccountsCard = (rawMask and 2) != 0,
+                showQuickPresetsCard = (rawMask and 4) != 0,
+                showWeekSummaryRow = (rawMask and 8) != 0,
+                showMonthlyReviewCard = (rawMask and 16) != 0,
+                showBillsCard = (rawMask and 32) != 0,
+                showSmartInsightsCard = if (hasInsightsBit) (rawMask and 64) != 0 else true,
+                dashboardOrder = orderList
             )
         }
     }
