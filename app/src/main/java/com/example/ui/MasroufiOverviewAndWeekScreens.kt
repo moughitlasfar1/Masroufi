@@ -84,11 +84,19 @@ import com.example.domain.AppStrings
 import com.example.domain.DetectedSubscription
 import com.example.domain.PayCycleEngine
 import com.example.domain.SmartReminder
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.ExpressiveAnimatedProgressBar
+import com.example.ui.theme.ExpressiveGlassCard
+import com.example.ui.theme.ExpressiveGlassSurface
+import com.example.ui.theme.ExpressiveMotion
+import com.example.ui.theme.ExpressiveSectionHeader
 import com.example.ui.theme.heroGradientColors
 import kotlin.math.ceil
 import kotlin.math.max
@@ -274,16 +282,24 @@ fun OverviewScreen(
             }
         }
 
-        // 1. Hero Expressive Card (Cycle Spend + Safe to Spend Today + No-Spend Streak + Month-End Forecast + Privacy Eye Button)
+        // 1. Hero Expressive Glass Card (Cycle Spend + Safe to Spend Today + No-Spend Streak + Month-End Forecast + Privacy Eye Button)
         item(key = "hero_card") {
+            val heroColors = heroGradientColors(state.customPrefs.accentPalette, isOverBudget)
+            val heroShape = RoundedCornerShape(topStart = 38.dp, topEnd = 38.dp, bottomEnd = 38.dp, bottomStart = 16.dp)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp, bottomEnd = 36.dp, bottomStart = 14.dp))
-                    .background(
-                        Brush.linearGradient(
-                            colors = heroGradientColors(state.customPrefs.accentPalette, isOverBudget)
-                        )
+                    .clip(heroShape)
+                    .background(Brush.linearGradient(colors = heroColors))
+                    .border(
+                        width = 1.dp,
+                        brush = Brush.linearGradient(
+                            listOf(
+                                Color.White.copy(alpha = 0.28f),
+                                Color.White.copy(alpha = 0.06f)
+                            )
+                        ),
+                        shape = heroShape
                     )
                     .padding(22.dp)
             ) {
@@ -296,7 +312,7 @@ fun OverviewScreen(
                         Text(
                             text = "${strings.thisMonth} (${state.activeWindow.startIso.takeLast(5)} → ${state.activeWindow.endIso.takeLast(5)})",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.85f)
+                            color = Color.White.copy(alpha = 0.88f)
                         )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -306,6 +322,7 @@ fun OverviewScreen(
                             Surface(
                                 shape = CircleShape,
                                 color = Color.Black.copy(alpha = 0.28f),
+                                border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.4f)),
                                 modifier = Modifier.testTag("hero_no_spend_streak_badge")
                             ) {
                                 Text(
@@ -327,6 +344,7 @@ fun OverviewScreen(
                             Surface(
                                 shape = CircleShape,
                                 color = Color.Black.copy(alpha = 0.28f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
                                 modifier = Modifier
                                     .clip(CircleShape)
                                     .clickable {
@@ -336,7 +354,7 @@ fun OverviewScreen(
                                     .testTag("hero_privacy_eye_button")
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
@@ -344,7 +362,7 @@ fun OverviewScreen(
                                         imageVector = if (hide) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                         contentDescription = if (hide) "Afficher les montants" else "Masquer les montants",
                                         tint = Color.White,
-                                        modifier = Modifier.size(15.dp)
+                                        modifier = Modifier.size(14.dp)
                                     )
                                     Text(
                                         text = if (hide) {
@@ -364,14 +382,15 @@ fun OverviewScreen(
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                         color = Color.White,
-                                        fontSize = 11.sp
+                                        fontSize = 10.5.sp
                                     )
                                 }
                             }
 
                             Surface(
                                 shape = CircleShape,
-                                color = Color.Black.copy(alpha = 0.28f)
+                                color = Color.Black.copy(alpha = 0.28f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
                             ) {
                                 Text(
                                     text = "$pct%",
@@ -383,7 +402,7 @@ fun OverviewScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Row(
                         verticalAlignment = Alignment.Bottom,
@@ -412,7 +431,7 @@ fun OverviewScreen(
                         Text(
                             text = "${strings.budgetLabel}: ${fmt(state.totalAvailableBudget)} $cur",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.9f),
+                            color = Color.White.copy(alpha = 0.92f),
                             fontWeight = FontWeight.Bold
                         )
                         if (state.totalCycleRollover > 0) {
@@ -426,21 +445,19 @@ fun OverviewScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    LinearProgressIndicator(
-                        progress = { (pct / 100f).safeFraction() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(12.dp)
-                            .clip(CircleShape),
+                    ExpressiveAnimatedProgressBar(
+                        progress = (pct / 100f).safeFraction(),
                         color = if (isOverBudget) AccentCoral else Color.White,
-                        trackColor = Color.Black.copy(alpha = 0.35f)
+                        trackColor = Color.Black.copy(alpha = 0.35f),
+                        height = 11.dp
                     )
 
                     if (state.monthEndForecastMessage.isNotBlank()) {
                         Spacer(modifier = Modifier.height(10.dp))
                         Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = Color.Black.copy(alpha = 0.22f),
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color.Black.copy(alpha = 0.24f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("hero_month_end_forecast_text")
@@ -450,7 +467,7 @@ fun OverviewScreen(
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White.copy(alpha = 0.95f),
                                 fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                             )
                         }
                     }
@@ -459,8 +476,9 @@ fun OverviewScreen(
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Surface(
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color.Black.copy(alpha = 0.26f),
+                            shape = RoundedCornerShape(22.dp),
+                            color = Color.Black.copy(alpha = 0.28f),
+                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -474,7 +492,7 @@ fun OverviewScreen(
                                     Text(
                                         text = strings.safeToSpendTitle,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = Color.White.copy(alpha = 0.9f)
+                                        color = Color.White.copy(alpha = 0.92f)
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
@@ -489,13 +507,15 @@ fun OverviewScreen(
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = Color.White.copy(alpha = 0.2f),
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = Color.White.copy(alpha = 0.22f),
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.30f)),
                                     modifier = Modifier.testTag("hero_safe_to_spend_today_badge")
                                 ) {
                                     Text(
                                         text = "${fmt(state.safeToSpendToday)} ${strings.dhPerDay.replace("DH", cur)}",
                                         style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold,
                                         color = Color.White,
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                                     )
@@ -728,123 +748,122 @@ fun OverviewScreen(
                 "accounts" -> {
                     if (state.customPrefs.showAccountsCard) {
                         item(key = "section_accounts") {
-                            Card(
-                                shape = RoundedCornerShape(28.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            ExpressiveGlassCard(
+                                cornerRadius = 28.dp,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(modifier = Modifier.padding(18.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = strings.accountsTitle,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = strings.accountsTitle,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${strings.totalNetWorth}: ${fmt(state.totalNetWorth)} $cur",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilledTonalButton(
+                                            onClick = { onOpenAddModal("transfer") },
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                            modifier = Modifier.testTag("btn_transfer_accounts")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.SwapHoriz,
+                                                contentDescription = strings.transferAction,
+                                                modifier = Modifier.size(16.dp)
                                             )
-                                            Text(
-                                                text = "${strings.totalNetWorth}: ${fmt(state.totalNetWorth)} $cur",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(text = strings.transferAction, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            FilledTonalButton(
-                                                onClick = { onOpenAddModal("transfer") },
-                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                                modifier = Modifier.testTag("btn_transfer_accounts")
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.SwapHoriz,
-                                                    contentDescription = strings.transferAction,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text(text = strings.transferAction, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                            FilledTonalButton(
-                                                onClick = { onOpenAccountModal(null) },
-                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                                modifier = Modifier.testTag("btn_add_account")
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Add,
-                                                    contentDescription = "Add Account",
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
+                                        FilledTonalButton(
+                                            onClick = { onOpenAccountModal(null) },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                            modifier = Modifier.testTag("btn_add_account")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = "Add Account",
+                                                modifier = Modifier.size(16.dp)
+                                            )
                                         }
                                     }
+                                }
 
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                Spacer(modifier = Modifier.height(12.dp))
 
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        state.accounts.forEach { accWithBal ->
-                                            val icon = when (accWithBal.account.kind) {
-                                                "bank" -> Icons.Default.AccountBalance
-                                                "wallet" -> Icons.Default.Smartphone
-                                                else -> Icons.Default.Payments
-                                            }
-                                            val accent = when (accWithBal.account.kind) {
-                                                "bank" -> AccentSkyBlue
-                                                "wallet" -> AccentAmber
-                                                else -> AccentEmerald
-                                            }
-                                            Surface(
-                                                shape = RoundedCornerShape(20.dp),
-                                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                modifier = Modifier
-                                                    .width(172.dp)
-                                                    .clip(RoundedCornerShape(20.dp))
-                                                    .clickable { onOpenAccountModal(accWithBal.account) }
-                                                    .testTag("account_card_${accWithBal.account.id}")
-                                            ) {
-                                                Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    state.accounts.forEach { accWithBal ->
+                                        val icon = when (accWithBal.account.kind) {
+                                            "bank" -> Icons.Default.AccountBalance
+                                            "wallet" -> Icons.Default.Smartphone
+                                            else -> Icons.Default.Payments
+                                        }
+                                        val accent = when (accWithBal.account.kind) {
+                                            "bank" -> AccentSkyBlue
+                                            "wallet" -> AccentAmber
+                                            else -> AccentEmerald
+                                        }
+                                        ExpressiveGlassSurface(
+                                            shape = RoundedCornerShape(20.dp),
+                                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            accentBorderColor = accent,
+                                            onClick = { onOpenAccountModal(accWithBal.account) },
+                                            modifier = Modifier
+                                                .width(172.dp)
+                                                .testTag("account_card_${accWithBal.account.id}")
+                                        ) {
+                                            Column(modifier = Modifier.padding(14.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
                                                     Row(
-                                                        modifier = Modifier.fillMaxWidth(),
                                                         verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        modifier = Modifier.weight(1f)
                                                     ) {
-                                                        Row(
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                            modifier = Modifier.weight(1f)
-                                                        ) {
-                                                            Icon(
-                                                                imageVector = icon,
-                                                                contentDescription = null,
-                                                                tint = accent,
-                                                                modifier = Modifier.size(18.dp)
-                                                            )
-                                                            Text(
-                                                                text = accWithBal.account.name,
-                                                                style = MaterialTheme.typography.labelLarge,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                        }
                                                         Icon(
-                                                            imageVector = Icons.Default.Edit,
-                                                            contentDescription = "Edit Account",
-                                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                            modifier = Modifier.size(13.dp)
+                                                            imageVector = icon,
+                                                            contentDescription = null,
+                                                            tint = accent,
+                                                            modifier = Modifier.size(18.dp)
+                                                        )
+                                                        Text(
+                                                            text = accWithBal.account.name,
+                                                            style = MaterialTheme.typography.labelLarge,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
-                                                    Spacer(modifier = Modifier.height(8.dp))
-                                                    Text(
-                                                        text = "${fmt(accWithBal.currentBalance)} $cur",
-                                                        style = MaterialTheme.typography.titleLarge,
-                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = "Edit Account",
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                        modifier = Modifier.size(13.dp)
                                                     )
                                                 }
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Text(
+                                                    text = "${fmt(accWithBal.currentBalance)} $cur",
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
                                             }
                                         }
                                     }
@@ -857,129 +876,126 @@ fun OverviewScreen(
                 "presets" -> {
                     if (state.customPrefs.showQuickPresetsCard) {
                         item(key = "section_presets") {
-                            Card(
-                                shape = RoundedCornerShape(28.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            ExpressiveGlassCard(
+                                cornerRadius = 28.dp,
+                                accentRimColor = AccentAmber,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(modifier = Modifier.padding(18.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.weight(1f)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            modifier = Modifier.weight(1f)
+                                        Icon(
+                                            imageVector = Icons.Default.Bolt,
+                                            contentDescription = null,
+                                            tint = AccentAmber,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Text(
+                                            text = strings.quickPresetsTitle,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = if (editPresetsMode) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .clickable { editPresetsMode = !editPresetsMode }
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Bolt,
-                                                contentDescription = null,
-                                                tint = AccentAmber,
-                                                modifier = Modifier.size(18.dp)
-                                            )
                                             Text(
-                                                text = strings.quickPresetsTitle,
+                                                text = if (editPresetsMode) "Terminé" else "Modifier",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                color = if (editPresetsMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                             )
                                         }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            Surface(
-                                                shape = CircleShape,
-                                                color = if (editPresetsMode) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-                                                modifier = Modifier
-                                                    .clip(CircleShape)
-                                                    .clickable { editPresetsMode = !editPresetsMode }
-                                            ) {
-                                                Text(
-                                                    text = if (editPresetsMode) "Terminé" else "Modifier",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = if (editPresetsMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                                )
-                                            }
-                                            Surface(
-                                                shape = CircleShape,
-                                                color = MaterialTheme.colorScheme.primaryContainer,
-                                                modifier = Modifier
-                                                    .clip(CircleShape)
-                                                    .clickable { onAddPresetModal(null) }
-                                            ) {
-                                                Text(
-                                                    text = "+ Preset",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                                )
-                                            }
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .clickable { onAddPresetModal(null) }
+                                        ) {
+                                            Text(
+                                                text = "+ Preset",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
                                         }
                                     }
+                                }
 
-                                    Spacer(modifier = Modifier.height(10.dp))
+                                Spacer(modifier = Modifier.height(10.dp))
 
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .horizontalScroll(rememberScrollState()),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        state.presets.forEach { preset ->
-                                            Surface(
-                                                shape = CircleShape,
-                                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                modifier = Modifier
-                                                    .clip(CircleShape)
-                                                    .clickable {
-                                                        if (editPresetsMode) {
-                                                            onAddPresetModal(preset)
-                                                        } else {
-                                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                            onQuickPresetTap(preset)
-                                                        }
-                                                    }
-                                                    .testTag("preset_${preset.id}")
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    state.presets.forEach { preset ->
+                                        ExpressiveGlassSurface(
+                                            shape = CircleShape,
+                                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            accentBorderColor = AccentAmber,
+                                            onClick = {
+                                                if (editPresetsMode) {
+                                                    onAddPresetModal(preset)
+                                                } else {
+                                                    onQuickPresetTap(preset)
+                                                }
+                                            },
+                                            modifier = Modifier.testTag("preset_${preset.id}")
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                Row(
-                                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                                ) {
-                                                    if (editPresetsMode) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Edit,
-                                                            contentDescription = "Edit preset",
-                                                            tint = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.size(14.dp)
-                                                        )
-                                                    }
-                                                    Text(
-                                                        text = preset.name,
-                                                        style = MaterialTheme.typography.labelLarge,
-                                                        color = MaterialTheme.colorScheme.onSurface
+                                                if (editPresetsMode) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = "Edit preset",
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(14.dp)
                                                     )
-                                                    Surface(
-                                                        shape = CircleShape,
-                                                        color = MaterialTheme.colorScheme.primaryContainer
-                                                    ) {
-                                                        Text(
-                                                            text = "${fmt(preset.amount)} $cur",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = MaterialTheme.colorScheme.primary,
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                                        )
-                                                    }
-                                                    if (editPresetsMode) {
-                                                        Icon(
-                                                            imageVector = Icons.Default.Close,
-                                                            contentDescription = "Delete preset",
-                                                            tint = AccentCoral,
-                                                            modifier = Modifier
-                                                                .size(16.dp)
-                                                                .clickable { onDeletePreset(preset.id) }
-                                                        )
-                                                    }
+                                                }
+                                                Text(
+                                                    text = preset.name,
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = MaterialTheme.colorScheme.primaryContainer
+                                                ) {
+                                                    Text(
+                                                        text = "${fmt(preset.amount)} $cur",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                                if (editPresetsMode) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Close,
+                                                        contentDescription = "Delete preset",
+                                                        tint = AccentCoral,
+                                                        modifier = Modifier
+                                                            .size(16.dp)
+                                                            .clickable { onDeletePreset(preset.id) }
+                                                    )
                                                 }
                                             }
                                         }
@@ -993,118 +1009,108 @@ fun OverviewScreen(
                 "insights" -> {
                     if (state.customPrefs.showSmartInsightsCard && (state.smartInsights.isNotEmpty() || state.detectedSubscriptions.isNotEmpty())) {
                         item(key = "section_insights") {
-                            Card(
-                                shape = RoundedCornerShape(28.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            ExpressiveGlassCard(
+                                cornerRadius = 28.dp,
+                                accentRimColor = AccentAmber,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("smart_assistant_card")
                             ) {
-                                Column(modifier = Modifier.padding(18.dp)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ExpressiveSectionHeader(
+                                    title = when (lang) {
+                                        "darija" -> "المستشار الذكي (Smart Assistant)"
+                                        "ar" -> "المساعد المالي الذكي"
+                                        "en" -> "Smart Financial Assistant"
+                                        else -> "Assistant Financier Intelligent"
+                                    },
+                                    icon = Icons.Default.AutoAwesome,
+                                    accentColor = AccentAmber
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                state.smartInsights.forEach { insight ->
+                                    val badgeColor = when (insight.severity) {
+                                        "warn" -> AccentCoral
+                                        "good" -> AccentEmerald
+                                        else -> AccentSkyBlue
+                                    }
+                                    ExpressiveGlassSurface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        accentBorderColor = badgeColor,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.AutoAwesome,
-                                            contentDescription = null,
-                                            tint = AccentAmber,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Text(
-                                            text = when (lang) {
-                                                "darija" -> "المستشار الذكي (Smart Assistant)"
-                                                "ar" -> "المساعد المالي الذكي"
-                                                "en" -> "Smart Financial Assistant"
-                                                else -> "Assistant Financier Intelligent"
-                                            },
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    state.smartInsights.forEach { insight ->
-                                        val badgeColor = when (insight.severity) {
-                                            "warn" -> AccentCoral
-                                            "good" -> AccentEmerald
-                                            else -> AccentSkyBlue
-                                        }
-                                        Surface(
-                                            shape = RoundedCornerShape(18.dp),
-                                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(vertical = 4.dp)
-                                        ) {
-                                            Column(modifier = Modifier.padding(14.dp)) {
-                                                Text(
-                                                    text = insight.title,
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    color = badgeColor,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(
-                                                    text = insight.body,
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
+                                        Column(modifier = Modifier.padding(14.dp)) {
+                                            Text(
+                                                text = insight.title,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = badgeColor,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = insight.body,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
                                     }
+                                }
 
-                                    // Subscription Detector Section
-                                    if (state.detectedSubscriptions.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Surface(
-                                            shape = RoundedCornerShape(18.dp),
-                                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .testTag("detected_subscriptions_section")
+                                // Subscription Detector Section
+                                if (state.detectedSubscriptions.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    ExpressiveGlassSurface(
+                                        shape = RoundedCornerShape(18.dp),
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                                        accentBorderColor = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("detected_subscriptions_section")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(14.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
-                                            Column(
-                                                modifier = Modifier.padding(14.dp),
-                                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                Text(
-                                                    text = when (lang) {
-                                                        "ar" -> "🔍 اشتراكات متكررة مكتشفة تلقائياً"
-                                                        "darija" -> "🔍 اشتراكات كتعاود كل شهر (Subscription Detector)"
-                                                        "en" -> "🔍 Recurring Charges Detected Automatically"
-                                                        else -> "🔍 Abonnements récurrents détectés"
-                                                    },
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                state.detectedSubscriptions.forEach { sub ->
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                                        verticalAlignment = Alignment.CenterVertically
+                                            Text(
+                                                text = when (lang) {
+                                                    "ar" -> "🔍 اشتراكات متكررة مكتشفة تلقائياً"
+                                                    "darija" -> "🔍 اشتراكات كتعاود كل شهر (Subscription Detector)"
+                                                    "en" -> "🔍 Recurring Charges Detected Automatically"
+                                                    else -> "🔍 Abonnements récurrents détectés"
+                                                },
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            state.detectedSubscriptions.forEach { sub ->
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = sub.name,
+                                                            style = MaterialTheme.typography.labelLarge,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        Text(
+                                                            text = "${fmt(sub.amount)} $cur • ${sub.occurrences}x (~le ${sub.typicalDayOfMonth})",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                    FilledTonalButton(
+                                                        onClick = {
+                                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                            onConvertSubscriptionToBill(sub)
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                        modifier = Modifier.testTag("btn_convert_sub_${sub.name.take(10)}")
                                                     ) {
-                                                        Column(modifier = Modifier.weight(1f)) {
-                                                            Text(
-                                                                text = sub.name,
-                                                                style = MaterialTheme.typography.labelLarge,
-                                                                fontWeight = FontWeight.Bold
-                                                            )
-                                                            Text(
-                                                                text = "${fmt(sub.amount)} $cur • ${sub.occurrences}x (~le ${sub.typicalDayOfMonth})",
-                                                                style = MaterialTheme.typography.labelSmall,
-                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                            )
-                                                        }
-                                                        FilledTonalButton(
-                                                            onClick = {
-                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                                onConvertSubscriptionToBill(sub)
-                                                            },
-                                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                            modifier = Modifier.testTag("btn_convert_sub_${sub.name.take(10)}")
-                                                        ) {
-                                                            Text("+ Facture", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                        }
+                                                        Text("+ Facture", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                                     }
                                                 }
                                             }
@@ -1119,40 +1125,36 @@ fun OverviewScreen(
                 "bills" -> {
                     if (state.customPrefs.showBillsCard && state.smartReminders.isNotEmpty()) {
                         item(key = "section_bills") {
-                            Card(
-                                shape = RoundedCornerShape(28.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            ExpressiveGlassCard(
+                                cornerRadius = 28.dp,
+                                accentRimColor = AccentViolet,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("smart_reminders_card")
                             ) {
-                                Column(modifier = Modifier.padding(18.dp)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ExpressiveSectionHeader(
+                                    title = when (lang) {
+                                        "darija" -> "تذكيرات ذكية (الفواتير، دارت، الكريدي)"
+                                        "ar" -> "تذكيرات ذكية (الفواتير، دارت، الديون)"
+                                        "en" -> "Smart Reminders (Bills, Daret, Debts)"
+                                        else -> "Rappels Intelligents (Factures, Daret, Crédits)"
+                                    },
+                                    icon = Icons.Default.NotificationsActive,
+                                    accentColor = AccentViolet
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                state.smartReminders.take(5).forEach { rem ->
+                                    ExpressiveGlassSurface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.NotificationsActive,
-                                            contentDescription = null,
-                                            tint = AccentViolet,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                        Text(
-                                            text = when (lang) {
-                                                "darija" -> "تذكيرات ذكية (الفواتير، دارت، الكريدي)"
-                                                "ar" -> "تذكيرات ذكية (الفواتير، دارت، الديون)"
-                                                "en" -> "Smart Reminders (Bills, Daret, Debts)"
-                                                else -> "Rappels Intelligents (Factures, Daret, Crédits)"
-                                            },
-                                            style = MaterialTheme.typography.titleMedium
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    state.smartReminders.take(5).forEach { rem ->
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 6.dp),
+                                                .padding(horizontal = 12.dp, vertical = 10.dp),
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -1189,58 +1191,55 @@ fun OverviewScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Card(
-                                    shape = RoundedCornerShape(26.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                                ExpressiveGlassCard(
+                                    cornerRadius = 26.dp,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text(
-                                            text = strings.thisWeek,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = "${fmt(state.weekTotalSpend)} $cur",
-                                            style = MaterialTheme.typography.headlineMedium,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = "${strings.prevWeek}: ${fmt(state.prevWeekTotalSpend)} $cur",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    Text(
+                                        text = strings.thisWeek,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "${fmt(state.weekTotalSpend)} $cur",
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "${strings.prevWeek}: ${fmt(state.prevWeekTotalSpend)} $cur",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
 
-                                Card(
-                                    shape = RoundedCornerShape(26.dp),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                                ExpressiveGlassCard(
+                                    cornerRadius = 26.dp,
+                                    accentRimColor = AccentSkyBlue,
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text(
-                                            text = strings.dailyAvg,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = "${fmt(state.dailyAverageSpend)} $cur",
-                                            style = MaterialTheme.typography.headlineMedium,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        Text(
-                                            text = strings.basedOnMonth,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    Text(
+                                        text = strings.dailyAvg,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "${fmt(state.dailyAverageSpend)} $cur",
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = strings.basedOnMonth,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
                             }
                         }
@@ -1265,192 +1264,193 @@ fun OverviewScreen(
                                 "${state.biggestSpendingDayIso} (${fmt(state.biggestSpendingDayAmount)} $cur)"
                             } else "—"
 
-                            Card(
-                                shape = RoundedCornerShape(topStart = 14.dp, topEnd = 28.dp, bottomEnd = 28.dp, bottomStart = 28.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                            ExpressiveGlassCard(
+                                cornerRadius = 28.dp,
+                                accentRimColor = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("monthly_recap_card")
                             ) {
-                                Column(modifier = Modifier.padding(18.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        modifier = Modifier.weight(1f)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(40.dp)
-                                                    .clip(RoundedCornerShape(14.dp))
-                                                    .background(MaterialTheme.colorScheme.primary),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Lightbulb,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onPrimary
-                                                )
-                                            }
-                                            Column {
-                                                Text(
-                                                    text = "${strings.monthlyReviewTitle} • $vsLastMonthText",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.primary
-                                                )
-                                                Text(
-                                                    text = if (state.remainingBudget >= 0) {
-                                                        "Reste ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j restants)"
-                                                    } else {
-                                                        "Dépassement de ${fmt(-state.remainingBudget)} $cur"
-                                                    },
-                                                    style = MaterialTheme.typography.titleMedium,
-                                                    color = MaterialTheme.colorScheme.onSurface
-                                                )
-                                            }
-                                        }
-                                        FilledTonalButton(
-                                            onClick = {
-                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                val sharePayload = buildString {
-                                                    appendLine("📊 Mon Bilan Masroufi (${state.activeWindow.cycleKey})")
-                                                    appendLine("• Budget utilisé : $pct% (montants masqués •••• $cur)")
-                                                    appendLine("• Top catégorie : $topCatName ($topCatPct%)")
-                                                    appendLine("• Plus grosse journée : ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
-                                                    appendLine("• Évolution : $vsLastMonthText")
-                                                    appendLine("• Série sans dépense : 🔥 ${state.noSpendStreakDays}j")
-                                                }
-                                                onShareText(sharePayload)
-                                            },
-                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                            modifier = Modifier.testTag("btn_share_monthly_recap")
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Share,
-                                                contentDescription = "Partager le bilan",
-                                                modifier = Modifier.size(14.dp)
+                                                imageVector = Icons.Default.Lightbulb,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary
                                             )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text("Partager", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        Column {
+                                            Text(
+                                                text = "${strings.monthlyReviewTitle} • $vsLastMonthText",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = if (state.remainingBudget >= 0) {
+                                                    "Reste ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j restants)"
+                                                } else {
+                                                    "Dépassement de ${fmt(-state.remainingBudget)} $cur"
+                                                },
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
                                         }
                                     }
-
-                                    Spacer(modifier = Modifier.height(10.dp))
-
-                                    // Top category + Biggest spending day summary banner
-                                    Surface(
-                                        shape = RoundedCornerShape(14.dp),
-                                        color = MaterialTheme.colorScheme.surfaceContainer,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
-                                                    text = "🏆 Top catégorie : $topCatName",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Text(
-                                                    text = "📅 Jour record : $biggestDayLabel",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                    FilledTonalButton(
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            val sharePayload = buildString {
+                                                appendLine("📊 Mon Bilan Masroufi (${state.activeWindow.cycleKey})")
+                                                appendLine("• Budget utilisé : $pct% (montants masqués •••• $cur)")
+                                                appendLine("• Top catégorie : $topCatName ($topCatPct%)")
+                                                appendLine("• Plus grosse journée : ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
+                                                appendLine("• Évolution : $vsLastMonthText")
+                                                appendLine("• Série sans dépense : 🔥 ${state.noSpendStreakDays}j")
                                             }
+                                            onShareText(sharePayload)
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier.testTag("btn_share_monthly_recap")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = "Partager le bilan",
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Partager", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Top category + Biggest spending day summary banner
+                                ExpressiveGlassSurface(
+                                    shape = RoundedCornerShape(16.dp),
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = vsLastMonthText,
+                                                text = "🏆 Top catégorie : $topCatName",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = if (vsLastMonthDiff <= 0) AccentEmerald else AccentCoral,
                                                 fontWeight = FontWeight.Bold
                                             )
+                                            Text(
+                                                text = "📅 Jour record : $biggestDayLabel",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            text = vsLastMonthText,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (vsLastMonthDiff <= 0) AccentEmerald else AccentCoral,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    ExpressiveGlassSurface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        accentBorderColor = AccentEmerald,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.TrendingDown,
+                                                    contentDescription = null,
+                                                    tint = AccentEmerald,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = strings.bestCategory,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = AccentEmerald
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = state.bestControlledEnvelope?.config?.localizedName(lang) ?: "—",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${state.bestControlledEnvelope?.usagePercent ?: 0}% utilisé",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
                                     }
 
-                                    Spacer(modifier = Modifier.height(10.dp))
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ExpressiveGlassSurface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                        accentBorderColor = AccentCoral,
+                                        modifier = Modifier.weight(1f)
                                     ) {
-                                        Surface(
-                                            shape = RoundedCornerShape(16.dp),
-                                            color = MaterialTheme.colorScheme.surfaceContainer,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Column(modifier = Modifier.padding(12.dp)) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(
-                                                        imageVector = Icons.AutoMirrored.Filled.TrendingDown,
-                                                        contentDescription = null,
-                                                        tint = AccentEmerald,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text(
-                                                        text = strings.bestCategory,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = AccentEmerald
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(
-                                                    text = state.bestControlledEnvelope?.config?.localizedName(lang) ?: "—",
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.TrendingUp,
+                                                    contentDescription = null,
+                                                    tint = AccentCoral,
+                                                    modifier = Modifier.size(16.dp)
                                                 )
+                                                Spacer(modifier = Modifier.width(4.dp))
                                                 Text(
-                                                    text = "${state.bestControlledEnvelope?.usagePercent ?: 0}% utilisé",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontSize = 11.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    text = strings.worstCategory,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = AccentCoral
                                                 )
                                             }
-                                        }
-
-                                        Surface(
-                                            shape = RoundedCornerShape(16.dp),
-                                            color = MaterialTheme.colorScheme.surfaceContainer,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Column(modifier = Modifier.padding(12.dp)) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    Icon(
-                                                        imageVector = Icons.AutoMirrored.Filled.TrendingUp,
-                                                        contentDescription = null,
-                                                        tint = AccentCoral,
-                                                        modifier = Modifier.size(16.dp)
-                                                    )
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text(
-                                                        text = strings.worstCategory,
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = AccentCoral
-                                                    )
-                                                }
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                Text(
-                                                    text = state.worstControlledEnvelope?.config?.localizedName(lang) ?: "—",
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Text(
-                                                    text = "${state.worstControlledEnvelope?.usagePercent ?: 0}% utilisé",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontSize = 11.sp,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = state.worstControlledEnvelope?.config?.localizedName(lang) ?: "—",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "${state.worstControlledEnvelope?.usagePercent ?: 0}% utilisé",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
                                         }
                                     }
                                 }
@@ -1461,44 +1461,60 @@ fun OverviewScreen(
             }
         }
 
-        // 8. Hero Add Expense Button + Customization Studio Shortcut
+        // 8. Compact Expressive Footer Bar (Add Expense + Customization Studio side-by-side)
         item(key = "bottom_cta") {
-            Button(
-                onClick = { onOpenAddModal("expense") },
-                shape = RoundedCornerShape(22.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(58.dp)
-                    .testTag("hero_add_expense_button")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(imageVector = Icons.Default.Add, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = strings.btnQuickAdd,
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Button(
+                    onClick = { onOpenAddModal("expense") },
+                    shape = RoundedCornerShape(22.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .testTag("hero_add_expense_button")
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = strings.btnQuickAdd,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                FilledTonalButton(
+                    onClick = onOpenCustomizationModal,
+                    shape = RoundedCornerShape(22.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .testTag("open_customization_studio_button")
+                ) {
+                    Icon(imageVector = Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = when (lang) {
+                            "ar" -> "تخصيص المظهر"
+                            "darija" -> "تخصيص الواجهة"
+                            "en" -> "Customize UI"
+                            else -> "Studio Thème"
+                        },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            FilledTonalButton(
-                onClick = onOpenCustomizationModal,
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("open_customization_studio_button")
-            ) {
-                Icon(imageVector = Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Personnaliser le thème, la devise & l'écran d'accueil",
-                    style = MaterialTheme.typography.labelLarge
-                )
-            }
-            Spacer(modifier = Modifier.height(76.dp))
+            Spacer(modifier = Modifier.height(88.dp))
         }
     }
 }
@@ -1517,23 +1533,11 @@ private fun ModernBankingQuickActionsCard(
         "en" -> "Expense"
         else -> "Dépense"
     }
-    val expenseSub = when (lang) {
-        "ar" -> "بضغطة واحدة"
-        "darija" -> "بضغطة وحدة"
-        "en" -> "One tap to add"
-        else -> "1-tap ajout"
-    }
     val incomeTitle = when (lang) {
         "ar" -> "مدخول"
         "darija" -> "مدخول"
         "en" -> "Income"
         else -> "Revenu"
-    }
-    val incomeSub = when (lang) {
-        "ar" -> "بضغطة واحدة"
-        "darija" -> "زيد مدخول"
-        "en" -> "One tap to add"
-        else -> "1-tap entrée"
     }
     val transferTitle = when (lang) {
         "ar" -> "تحويل"
@@ -1541,82 +1545,57 @@ private fun ModernBankingQuickActionsCard(
         "en" -> "Transfer"
         else -> "Transfert"
     }
-    val transferSub = when (lang) {
-        "ar" -> "بين الحسابات"
-        "darija" -> "بين الحسابات"
-        "en" -> "Between accounts"
-        else -> "Entre comptes"
-    }
     val presetTitle = when (lang) {
         "ar" -> "شراء سريع"
         "darija" -> "تقضية دغيا"
-        "en" -> "Quick preset"
-        else -> "Achat rapide"
-    }
-    val presetSub = when (lang) {
-        "ar" -> "مصاريف متكررة"
-        "darija" -> "مصاريف يومية"
-        "en" -> "Common expenses"
-        else -> "Dépenses fréquentes"
+        "en" -> "1-Tap"
+        else -> "1-Tap"
     }
 
-    Card(
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ExpressiveGlassCard(
+        cornerRadius = 28.dp,
+        contentPadding = PaddingValues(12.dp),
         modifier = Modifier
             .fillMaxWidth()
             .testTag("home_quick_actions_card")
     ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                BankingQuickActionTile(
-                    title = expenseTitle,
-                    subtitle = expenseSub,
-                    icon = Icons.Default.ArrowUpward,
-                    accentColor = AccentCoral,
-                    onClick = onAddExpense,
-                    testTag = "quick_action_expense",
-                    modifier = Modifier.weight(1f)
-                )
-                BankingQuickActionTile(
-                    title = incomeTitle,
-                    subtitle = incomeSub,
-                    icon = Icons.Default.ArrowDownward,
-                    accentColor = AccentEmerald,
-                    onClick = onAddIncome,
-                    testTag = "quick_action_income",
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                BankingQuickActionTile(
-                    title = transferTitle,
-                    subtitle = transferSub,
-                    icon = Icons.Default.SwapHoriz,
-                    accentColor = AccentSkyBlue,
-                    onClick = onTransfer,
-                    testTag = "quick_action_transfer",
-                    modifier = Modifier.weight(1f)
-                )
-                BankingQuickActionTile(
-                    title = presetTitle,
-                    subtitle = presetSub,
-                    icon = Icons.Default.Bolt,
-                    accentColor = AccentAmber,
-                    onClick = onQuickPreset,
-                    testTag = "quick_action_preset",
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            BankingQuickActionTile(
+                title = expenseTitle,
+                icon = Icons.Default.ArrowUpward,
+                accentColor = AccentCoral,
+                onClick = onAddExpense,
+                testTag = "quick_action_expense",
+                modifier = Modifier.weight(1f)
+            )
+            BankingQuickActionTile(
+                title = incomeTitle,
+                icon = Icons.Default.ArrowDownward,
+                accentColor = AccentEmerald,
+                onClick = onAddIncome,
+                testTag = "quick_action_income",
+                modifier = Modifier.weight(1f)
+            )
+            BankingQuickActionTile(
+                title = transferTitle,
+                icon = Icons.Default.SwapHoriz,
+                accentColor = AccentSkyBlue,
+                onClick = onTransfer,
+                testTag = "quick_action_transfer",
+                modifier = Modifier.weight(1f)
+            )
+            BankingQuickActionTile(
+                title = presetTitle,
+                icon = Icons.Default.Bolt,
+                accentColor = AccentAmber,
+                onClick = onQuickPreset,
+                testTag = "quick_action_preset",
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
@@ -1624,33 +1603,31 @@ private fun ModernBankingQuickActionsCard(
 @Composable
 private fun BankingQuickActionTile(
     title: String,
-    subtitle: String,
     icon: ImageVector,
     accentColor: Color,
     onClick: () -> Unit,
     testTag: String,
     modifier: Modifier = Modifier
 ) {
-    Surface(
+    ExpressiveGlassSurface(
         shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
-            .testTag(testTag)
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        accentBorderColor = accentColor,
+        onClick = onClick,
+        modifier = modifier.testTag(testTag)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                .padding(horizontal = 6.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(38.dp)
                     .clip(RoundedCornerShape(13.dp))
-                    .background(accentColor.copy(alpha = 0.16f)),
+                    .background(accentColor.copy(alpha = 0.18f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -1660,23 +1637,14 @@ private fun BankingQuickActionTile(
                     modifier = Modifier.size(20.dp)
                 )
             }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -1702,33 +1670,30 @@ fun WeekScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ExpressiveGlassCard(
+                cornerRadius = 28.dp,
+                accentRimColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                ExpressiveSectionHeader(
+                    title = strings.weeklyAnalysis,
+                    subtitle = strings.weeklySub,
+                    icon = Icons.AutoMirrored.Filled.TrendingUp,
+                    accentColor = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.32f))
+                ) {
                     Text(
-                        text = strings.weeklyAnalysis,
-                        style = MaterialTheme.typography.titleMedium
+                        text = "${strings.currentWeekBadge} · ${state.weekRangeLabel}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = strings.weeklySub,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest
-                    ) {
-                        Text(
-                            text = "${strings.currentWeekBadge} · ${state.weekRangeLabel}",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
-                    }
                 }
             }
         }
@@ -1738,78 +1703,77 @@ fun WeekScreen(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Card(
-                    shape = RoundedCornerShape(26.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                ExpressiveGlassCard(
+                    cornerRadius = 26.dp,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = strings.weekTotal,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "${PayCycleEngine.formatAmountOrMask(state.weekTotalSpend, hide)} $cur",
-                            style = MaterialTheme.typography.headlineMedium
-                        )
-                    }
+                    Text(
+                        text = strings.weekTotal,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "${PayCycleEngine.formatAmountOrMask(state.weekTotalSpend, hide)} $cur",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
 
-                Card(
-                    shape = RoundedCornerShape(26.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                ExpressiveGlassCard(
+                    cornerRadius = 26.dp,
+                    accentRimColor = AccentSkyBlue,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = strings.mostSpentDay,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        val dayName = if (state.mostExpensiveDayIndex in 0..6) {
-                            strings.daysFull[state.mostExpensiveDayIndex]
-                        } else "—"
-                        Text(
-                            text = dayName,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = AccentSkyBlue
-                        )
-                        Text(
-                            text = "${PayCycleEngine.formatAmountOrMask(state.mostExpensiveDayAmount, hide)} $cur",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        text = strings.mostSpentDay,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val dayName = if (state.mostExpensiveDayIndex in 0..6) {
+                        strings.daysFull[state.mostExpensiveDayIndex]
+                    } else "—"
+                    Text(
+                        text = dayName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = AccentSkyBlue
+                    )
+                    Text(
+                        text = "${PayCycleEngine.formatAmountOrMask(state.mostExpensiveDayAmount, hide)} $cur",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
 
         item {
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ExpressiveGlassCard(
+                cornerRadius = 28.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Text(
-                        text = strings.chartTitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
+                Text(
+                    text = strings.chartTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(14.dp))
 
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(22.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(210.dp)
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .fillMaxSize()
                             .padding(14.dp)
                     ) {
-                        val lineColor = MaterialTheme.colorScheme.outlineVariant
+                        val lineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val chartHeight = size.height - 28.dp.toPx()
                             for (i in 1..4) {
@@ -1830,7 +1794,12 @@ fun WeekScreen(
                             verticalAlignment = Alignment.Bottom
                         ) {
                             state.weekDaysSpend.forEachIndexed { idx, value ->
-                                val ratio = (value / ceilVal).toFloat().safeFraction(0.04f, 1f)
+                                val rawRatio = (value / ceilVal).toFloat().safeFraction(0.05f, 1f)
+                                val animatedRatio by animateFloatAsState(
+                                    targetValue = rawRatio,
+                                    animationSpec = ExpressiveMotion.fluidSpring(),
+                                    label = "week_bar_$idx"
+                                )
                                 val isPeak = idx == state.mostExpensiveDayIndex && value > 0
                                 Column(
                                     modifier = Modifier
@@ -1844,15 +1813,16 @@ fun WeekScreen(
                                             text = if (hide) "••" else value.safeRoundToInt().toString(),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isPeak) AccentCoral else MaterialTheme.colorScheme.onSurface
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                     }
                                     Box(
                                         modifier = Modifier
-                                            .width(26.dp)
-                                            .fillMaxHeight(ratio * 0.72f)
-                                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
+                                            .width(28.dp)
+                                            .fillMaxHeight(animatedRatio * 0.72f)
+                                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 5.dp, bottomEnd = 5.dp))
                                             .background(
                                                 Brush.verticalGradient(
                                                     colors = when {
@@ -1874,6 +1844,7 @@ fun WeekScreen(
                                         text = strings.daysShort.getOrElse(idx) { "" },
                                         style = MaterialTheme.typography.labelSmall,
                                         fontSize = 11.sp,
+                                        fontWeight = if (isPeak) FontWeight.ExtraBold else FontWeight.Medium,
                                         color = if (isPeak) AccentCoral else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -1882,7 +1853,7 @@ fun WeekScreen(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(76.dp))
+            Spacer(modifier = Modifier.height(88.dp))
         }
     }
 }

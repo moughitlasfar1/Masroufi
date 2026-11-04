@@ -74,8 +74,13 @@ import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.MasroufiPalettes
+import com.example.ui.theme.ExpressiveGlassCard
+import com.example.ui.theme.ExpressiveGlassSurface
+import com.example.ui.theme.ExpressivePillChip
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material.icons.filled.Add
@@ -86,6 +91,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Swipe
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -278,11 +284,14 @@ fun HistoryScreen(
                     )
                     Surface(
                         shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f))
                     ) {
                         Text(
                             text = "${state.filteredHistory.size} op. · ${groupedByDay.size} j",
                             style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
@@ -291,9 +300,9 @@ fun HistoryScreen(
 
             if (state.filteredHistory.isNotEmpty()) {
                 item(key = "swipe_hint_pill") {
-                    Surface(
+                    ExpressiveGlassSurface(
                         shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("history_swipe_hint")
@@ -327,9 +336,9 @@ fun HistoryScreen(
             } else {
                 // Actionable Empty State Card
                 item(key = "empty_history_state") {
-                    Card(
-                        shape = RoundedCornerShape(26.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    ExpressiveGlassCard(
+                        cornerRadius = 26.dp,
+                        accentRimColor = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("history_empty_state_card")
@@ -337,7 +346,7 @@ fun HistoryScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(22.dp),
+                                .padding(6.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
@@ -381,9 +390,10 @@ fun HistoryScreen(
                 val dayIncomes = dayTxs.filter { it.type == "income" }.sumOf { it.amount }
                 val dayNet = dayIncomes - dayExpenses
                 item(key = "day_header_$dayIso") {
-                    Surface(
+                    ExpressiveGlassSurface(
                         shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        accentBorderColor = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("history_day_header_$dayIso")
@@ -450,12 +460,11 @@ fun HistoryScreen(
 
             // Export & Backup Card
             item {
-                Card(
-                    shape = RoundedCornerShape(28.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    accentRimColor = AccentEmerald,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -687,88 +696,92 @@ fun HistoryScreen(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
             }
-            Spacer(modifier = Modifier.height(16.dp))
-        }
         }
 
-        // Docked Bottom Thumb-Reach Search & Filter Bar (One-Handed Ergonomics)
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 6.dp,
-            shadowElevation = 8.dp,
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        // Floating Glass Thumb-Reach Search & Filter Bar (with bottom clearance for the floating dock & FAB)
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("history_thumb_filter_bar")
+                .padding(start = 14.dp, end = 14.dp, bottom = 84.dp)
         ) {
-            Column(
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(26.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                accentBorderColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .testTag("history_thumb_filter_bar")
             ) {
-                // Category & Account Filter Chips within thumb reach
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    FilterChip(
-                        selected = state.filterState.selectedCategoryKey == "all",
-                        onClick = { onUpdateFilter { it.copy(selectedCategoryKey = "all") } },
-                        label = { Text(strings.filterAll, fontSize = 11.5.sp) }
-                    )
-                    state.envelopes.forEach { env ->
-                        FilterChip(
-                            selected = state.filterState.selectedCategoryKey == env.config.key,
-                            onClick = { onUpdateFilter { it.copy(selectedCategoryKey = env.config.key) } },
-                            label = {
-                                Text(env.config.localizedName(state.profile.language).take(16), fontSize = 11.5.sp)
-                            }
-                        )
-                    }
-                    FilterChip(
-                        selected = state.filterState.selectedAccountId == "all",
-                        onClick = { onUpdateFilter { it.copy(selectedAccountId = "all") } },
-                        label = { Text("Tous comptes", fontSize = 11.5.sp) }
-                    )
-                    state.accounts.forEach { acc ->
-                        FilterChip(
-                            selected = state.filterState.selectedAccountId == acc.account.id,
-                            onClick = { onUpdateFilter { it.copy(selectedAccountId = acc.account.id) } },
-                            label = { Text(acc.account.name.take(14), fontSize = 11.5.sp) }
-                        )
-                    }
-                }
-
-                // Thumb-reach Search Field (paired with FAB clearance on the right)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 96.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = state.filterState.searchQuery,
-                        onValueChange = { q -> onUpdateFilter { it.copy(searchQuery = q) } },
-                        placeholder = { Text(strings.searchHint, fontSize = 12.sp, maxLines = 1) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                        trailingIcon = {
-                            if (state.filterState.searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { onUpdateFilter { it.copy(searchQuery = "") } }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(18.dp),
+                    // Category & Account Filter Chips within thumb reach
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("history_search_input")
-                    )
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilterChip(
+                            selected = state.filterState.selectedCategoryKey == "all",
+                            onClick = { onUpdateFilter { it.copy(selectedCategoryKey = "all") } },
+                            label = { Text(strings.filterAll, fontSize = 11.5.sp) }
+                        )
+                        state.envelopes.forEach { env ->
+                            FilterChip(
+                                selected = state.filterState.selectedCategoryKey == env.config.key,
+                                onClick = { onUpdateFilter { it.copy(selectedCategoryKey = env.config.key) } },
+                                label = {
+                                    Text(env.config.localizedName(state.profile.language).take(16), fontSize = 11.5.sp)
+                                }
+                            )
+                        }
+                        FilterChip(
+                            selected = state.filterState.selectedAccountId == "all",
+                            onClick = { onUpdateFilter { it.copy(selectedAccountId = "all") } },
+                            label = { Text("Tous comptes", fontSize = 11.5.sp) }
+                        )
+                        state.accounts.forEach { acc ->
+                            FilterChip(
+                                selected = state.filterState.selectedAccountId == acc.account.id,
+                                onClick = { onUpdateFilter { it.copy(selectedAccountId = acc.account.id) } },
+                                label = { Text(acc.account.name.take(14), fontSize = 11.5.sp) }
+                            )
+                        }
+                    }
+
+                    // Thumb-reach Search Field (paired with FAB clearance on the end)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 92.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = state.filterState.searchQuery,
+                            onValueChange = { q -> onUpdateFilter { it.copy(searchQuery = q) } },
+                            placeholder = { Text(strings.searchHint, fontSize = 12.sp, maxLines = 1) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                            trailingIcon = {
+                                if (state.filterState.searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { onUpdateFilter { it.copy(searchQuery = "") } }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("history_search_input")
+                        )
+                    }
                 }
             }
         }
@@ -848,6 +861,7 @@ fun TransactionEditorSheet(
     }
     var desc by remember { mutableStateOf(existingTx?.desc ?: "") }
     var twoTapInstantSave by remember { mutableStateOf(existingTx == null) }
+    var showAdvancedFields by remember { mutableStateOf(existingTx != null) }
     var dateError by remember { mutableStateOf<String?>(null) }
     var smartDefaultHint by remember { mutableStateOf<String?>(null) }
     var duplicateWarningTx by remember { mutableStateOf<TransactionItem?>(null) }
@@ -885,6 +899,7 @@ fun TransactionEditorSheet(
         val normalizedDate = isoDate.trim().ifEmpty { PayCycleEngine.todayIso() }
         if (!PayCycleEngine.isValidIsoDate(normalizedDate)) {
             dateError = "Date invalide ('$normalizedDate'). Format requis : YYYY-MM-DD réel (ex: ${PayCycleEngine.todayIso()})."
+            showAdvancedFields = true
             return false
         }
         if (txType == "transfer" && (toAccountId.isBlank() || toAccountId == selectedAccountId)) {
@@ -943,27 +958,70 @@ fun TransactionEditorSheet(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = if (existingTx != null) strings.editOperationTitle else strings.addOperationTitle,
-                style = MaterialTheme.typography.titleLarge
-            )
-
-            // Type Switcher (Expense, Income, Transfer)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                listOf(
-                    "expense" to strings.expenseTab,
-                    "income" to strings.incomeTab,
-                    "transfer" to strings.transferTab
-                ).forEach { (typeKey, label) ->
-                    FilterChip(
-                        selected = txType == typeKey,
-                        onClick = { txType = typeKey },
-                        label = { Text(label, fontWeight = FontWeight.Bold) },
-                        modifier = Modifier.weight(1f)
-                    )
+                Text(
+                    text = if (existingTx != null) strings.editOperationTitle else strings.addOperationTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                ExpressivePillChip(
+                    label = when (lang) {
+                        "ar" -> if (showAdvancedFields) "إخفاء الخيارات" else "خيارات متقدمة"
+                        "darija" -> if (showAdvancedFields) "خبي التفاصيل" else "خيارات متقدمة"
+                        "en" -> if (showAdvancedFields) "Less Options" else "Advanced Options"
+                        else -> if (showAdvancedFields) "Moins d'options" else "Options avancées"
+                    },
+                    selected = showAdvancedFields,
+                    onClick = { showAdvancedFields = !showAdvancedFields },
+                    icon = Icons.Default.Tune,
+                    testTag = "tx_advanced_options_toggle"
+                )
+            }
+
+            // Expressive Glass Type Switcher (Expense, Income, Transfer)
+            ExpressiveGlassSurface(
+                shape = CircleShape,
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        Triple("expense", strings.expenseTab, AccentCoral),
+                        Triple("income", strings.incomeTab, AccentEmerald),
+                        Triple("transfer", strings.transferTab, AccentSkyBlue)
+                    ).forEach { (typeKey, label, accent) ->
+                        val isSelected = txType == typeKey
+                        Surface(
+                            shape = CircleShape,
+                            color = if (isSelected) accent.copy(alpha = 0.22f) else Color.Transparent,
+                            border = if (isSelected) BorderStroke(1.dp, accent.copy(alpha = 0.65f)) else null,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(CircleShape)
+                                .clickable {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    txType = typeKey
+                                }
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                color = if (isSelected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(vertical = 10.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1009,10 +1067,168 @@ fun TransactionEditorSheet(
                 }
             )
 
+            // Duplicate Warning Banner
+            if (duplicateWarningTx != null) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = AccentAmber.copy(alpha = 0.18f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, AccentAmber, RoundedCornerShape(16.dp))
+                        .testTag("duplicate_tx_warning_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "⚠️ Doublon détecté : ${PayCycleEngine.formatDh(duplicateWarningTx!!.amount)} $cur dans '${duplicateWarningTx!!.category}' a déjà été ajouté il y a quelques instants.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AccentAmber,
+                            fontWeight = FontWeight.Bold
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                tryCommitTransaction(ignoreDuplicateCheck = true)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("btn_confirm_duplicate_tx")
+                        ) {
+                            Text("Ajouter quand même", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+
+            // Source Account & Envelope Quick Pills
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(22.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = if (txType == "transfer") "Compte source :" else "Compte :",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        state.accounts.forEach { acc ->
+                            FilterChip(
+                                selected = selectedAccountId == acc.account.id,
+                                onClick = { selectedAccountId = acc.account.id },
+                                label = { Text(acc.account.name) }
+                            )
+                        }
+                    }
+
+                    if (txType == "transfer") {
+                        Text(
+                            text = "Vers le compte :",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            state.accounts.forEach { acc ->
+                                FilterChip(
+                                    selected = toAccountId == acc.account.id,
+                                    onClick = { toAccountId = acc.account.id },
+                                    label = { Text(acc.account.name) }
+                                )
+                            }
+                        }
+                    } else if (txType == "expense") {
+                        Text(
+                            text = "Toutes les Enveloppes / Catégories :",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            state.envelopes.forEach { env ->
+                                val catLabel = env.config.localizedName(state.profile.language)
+                                FilterChip(
+                                    selected = selectedEnvelopeKey == env.config.key,
+                                    onClick = {
+                                        selectedEnvelopeKey = env.config.key
+                                        customCategory = catLabel
+                                        duplicateWarningTx = null
+                                        if (twoTapInstantSave) {
+                                            tryCommitTransaction(
+                                                overrideCategory = catLabel,
+                                                overrideEnvKey = env.config.key
+                                            )
+                                        }
+                                    },
+                                    label = { Text(catLabel.take(22)) }
+                                )
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = desc,
+                        onValueChange = { newDesc ->
+                            desc = newDesc
+                            if (existingTx == null && newDesc.trim().length >= 2) {
+                                val guessed = PayCycleEngine.inferSmartDefaults(
+                                    description = newDesc,
+                                    allTransactions = state.allTransactions,
+                                    envelopes = state.envelopes.map { it.config },
+                                    accounts = state.accounts.map { it.account },
+                                    lang = lang
+                                )
+                                selectedEnvelopeKey = guessed.envelopeKey
+                                customCategory = guessed.categoryName
+                                selectedAccountId = guessed.accountId
+                                smartDefaultHint = "✨ Catégorie & compte suggérés : ${guessed.categoryName}"
+                            } else {
+                                smartDefaultHint = null
+                            }
+                        },
+                        label = { Text("Description / Note (Smart Default auto)") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("tx_desc_input")
+                    )
+
+                    if (!smartDefaultHint.isNullOrBlank()) {
+                        Text(
+                            text = smartDefaultHint!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentEmerald,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("smart_default_hint_text")
+                        )
+                    }
+                }
+            }
+
             // 2B. Multi-Currency Selector (MAD / EUR / USD for MRE users & trips)
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(18.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                accentBorderColor = AccentSkyBlue,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("multi_currency_bar")
@@ -1079,181 +1295,52 @@ fun TransactionEditorSheet(
                 }
             }
 
-            OutlinedTextField(
-                value = amountText,
-                onValueChange = {
-                    amountText = it
-                    duplicateWarningTx = null
-                },
-                label = { Text("${strings.amountLabel} (${if (entryCurrency == baseCurrencyCode) cur else entryCurrency})") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("tx_amount_input")
-            )
-
-            // Duplicate Warning Banner
-            if (duplicateWarningTx != null) {
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = AccentAmber.copy(alpha = 0.18f),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, AccentAmber, RoundedCornerShape(16.dp))
-                        .testTag("duplicate_tx_warning_card")
+            // Collapsible Advanced Details (Manual Amount Field, Custom Category Name & Date)
+            AnimatedVisibility(visible = showAdvancedFields || !dateError.isNullOrBlank()) {
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text(
-                            text = "⚠️ Doublon détecté : ${PayCycleEngine.formatDh(duplicateWarningTx!!.amount)} $cur dans '${duplicateWarningTx!!.category}' a déjà été ajouté il y a quelques instants.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = AccentAmber,
-                            fontWeight = FontWeight.Bold
-                        )
-                        FilledTonalButton(
-                            onClick = {
-                                tryCommitTransaction(ignoreDuplicateCheck = true)
+                        OutlinedTextField(
+                            value = amountText,
+                            onValueChange = {
+                                amountText = it
+                                duplicateWarningTx = null
                             },
+                            label = { Text("${strings.amountLabel} (${if (entryCurrency == baseCurrencyCode) cur else entryCurrency})") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("btn_confirm_duplicate_tx")
-                        ) {
-                            Text("Ajouter quand même", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-
-            // Source Account selector
-            Text(
-                text = if (txType == "transfer") "Compte source :" else "Compte :",
-                style = MaterialTheme.typography.labelLarge
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                state.accounts.forEach { acc ->
-                    FilterChip(
-                        selected = selectedAccountId == acc.account.id,
-                        onClick = { selectedAccountId = acc.account.id },
-                        label = { Text(acc.account.name) }
-                    )
-                }
-            }
-
-            if (txType == "transfer") {
-                Text(
-                    text = "Vers le compte :",
-                    style = MaterialTheme.typography.labelLarge
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    state.accounts.forEach { acc ->
-                        FilterChip(
-                            selected = toAccountId == acc.account.id,
-                            onClick = { toAccountId = acc.account.id },
-                            label = { Text(acc.account.name) }
+                                .testTag("tx_amount_input")
                         )
-                    }
-                }
-            } else if (txType == "expense") {
-                Text(
-                    text = "Toutes les Enveloppes / Catégories :",
-                    style = MaterialTheme.typography.labelLarge
-                )
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    state.envelopes.forEach { env ->
-                        val catLabel = env.config.localizedName(state.profile.language)
-                        FilterChip(
-                            selected = selectedEnvelopeKey == env.config.key,
-                            onClick = {
-                                selectedEnvelopeKey = env.config.key
-                                customCategory = catLabel
-                                duplicateWarningTx = null
-                                if (twoTapInstantSave) {
-                                    tryCommitTransaction(
-                                        overrideCategory = catLabel,
-                                        overrideEnvKey = env.config.key
-                                    )
-                                }
-                            },
-                            label = { Text(catLabel.take(22)) }
+
+                        OutlinedTextField(
+                            value = customCategory,
+                            onValueChange = { customCategory = it },
+                            label = { Text("Nom de la catégorie") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = isoDate,
+                            onValueChange = { isoDate = it },
+                            label = { Text("Date (YYYY-MM-DD)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
             }
-
-            OutlinedTextField(
-                value = desc,
-                onValueChange = { newDesc ->
-                    desc = newDesc
-                    if (existingTx == null && newDesc.trim().length >= 2) {
-                        val guessed = PayCycleEngine.inferSmartDefaults(
-                            description = newDesc,
-                            allTransactions = state.allTransactions,
-                            envelopes = state.envelopes.map { it.config },
-                            accounts = state.accounts.map { it.account },
-                            lang = lang
-                        )
-                        selectedEnvelopeKey = guessed.envelopeKey
-                        customCategory = guessed.categoryName
-                        selectedAccountId = guessed.accountId
-                        smartDefaultHint = "✨ Catégorie & compte suggérés : ${guessed.categoryName}"
-                    } else {
-                        smartDefaultHint = null
-                    }
-                },
-                label = { Text("Description / Note (Smart Default auto)") },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("tx_desc_input")
-            )
-
-            if (!smartDefaultHint.isNullOrBlank()) {
-                Text(
-                    text = smartDefaultHint!!,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AccentEmerald,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.testTag("smart_default_hint_text")
-                )
-            }
-
-            OutlinedTextField(
-                value = customCategory,
-                onValueChange = { customCategory = it },
-                label = { Text("Nom de la catégorie") },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            OutlinedTextField(
-                value = isoDate,
-                onValueChange = { isoDate = it },
-                label = { Text("Date (YYYY-MM-DD)") },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
 
             if (!dateError.isNullOrBlank()) {
                 Text(
@@ -1288,9 +1375,10 @@ fun TransactionEditorSheet(
                     onClick = {
                         tryCommitTransaction()
                     },
+                    shape = RoundedCornerShape(20.dp),
                     modifier = Modifier
                         .weight(2f)
-                        .height(52.dp)
+                        .height(54.dp)
                         .testTag("tx_save_button")
                 ) {
                     Text(strings.saveBtn, fontWeight = FontWeight.ExtraBold)
@@ -1358,49 +1446,61 @@ fun SettingsBottomSheet(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text(text = strings.settingsTitle, style = MaterialTheme.typography.titleLarge)
+            Text(text = strings.settingsTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
 
-            OutlinedTextField(
-                value = budgetText,
-                onValueChange = { budgetText = it },
-                label = { Text(strings.salaryLabel) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.fillMaxWidth()
-            )
-
-            OutlinedTextField(
-                value = payDayText,
-                onValueChange = { payDayText = it },
-                label = { Text(strings.payCycleDayLabel) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = strings.rolloverToggleLabel,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Switch(
-                    checked = rolloverEnabled,
-                    onCheckedChange = { rolloverEnabled = it }
-                )
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = budgetText,
+                        onValueChange = { budgetText = it },
+                        label = { Text(strings.salaryLabel) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    OutlinedTextField(
+                        value = payDayText,
+                        onValueChange = { payDayText = it },
+                        label = { Text(strings.payCycleDayLabel) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.rolloverToggleLabel,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Switch(
+                            checked = rolloverEnabled,
+                            onCheckedChange = { rolloverEnabled = it }
+                        )
+                    }
+                }
             }
 
             // Security & Privacy Hardening Section
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                accentBorderColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("security_privacy_card")
@@ -1685,9 +1785,10 @@ fun SettingsBottomSheet(
             }
 
             // WorkManager Notifications Card (Bills, Daret, 80% Budget, Evening Reminder)
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                accentBorderColor = AccentAmber,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("settings_notifications_card")
@@ -1918,9 +2019,9 @@ fun SettingsBottomSheet(
             }
 
             // Clean Account vs Optional Demo Data Mode
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
@@ -1972,6 +2073,7 @@ fun SettingsBottomSheet(
                     onSaveSettings(b, d, rolloverEnabled)
                     onDismiss()
                 },
+                shape = RoundedCornerShape(20.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)

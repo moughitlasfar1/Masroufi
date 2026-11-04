@@ -141,10 +141,15 @@ import com.example.ui.SplitBillToSellefSheet
 import com.example.ui.TransactionEditorSheet
 import com.example.ui.WeekScreen
 import com.example.ui.signOutUser
+import androidx.compose.foundation.BorderStroke
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
+import com.example.ui.theme.ExpressiveAmbientBackground
+import com.example.ui.theme.ExpressiveGlassBottomDock
+import com.example.ui.theme.ExpressiveGlassSurface
+import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.paletteForKey
 import com.example.widget.MasroufiAppWidget
@@ -584,43 +589,45 @@ fun MainFeatureScreen(
                 return@CompositionLocalProvider
             }
 
-            Scaffold(
-                snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-                topBar = {
-                    MasroufiTopBar(
-                        language = state.profile.language,
-                        isDarkTheme = state.profile.isDarkTheme,
-                        hideAmounts = state.hideAmounts,
-                        isSyncing = state.isSyncing,
-                        hasSyncWarning = !state.errorMessage.isNullOrBlank(),
-                        appTitle = state.customPrefs.customTitle.ifBlank { "Masroufi" },
-                        subTitle = state.customPrefs.customSubtitle.ifBlank { strings.subTitle },
-                        currencySymbol = cur,
-                        accentPalette = state.customPrefs.accentPalette,
-                        cycleLabel = "${state.activeWindow.cycleKey} (${state.activeWindow.startIso.takeLast(5)} → ${state.activeWindow.endIso.takeLast(5)})",
-                        onCycleLanguage = {
-                            val nextLang = when (state.profile.language) {
-                                "fr" -> "darija"
-                                "darija" -> "ar"
-                                "ar" -> "en"
-                                else -> "fr"
-                            }
-                            viewModel.updateLanguage(nextLang)
-                        },
-                        onTogglePrivacy = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            togglePrivacyMask()
-                        },
-                        onToggleTheme = { viewModel.toggleTheme() },
-                        onOpenCustomization = { showCustomizationSheet = true },
-                        onOpenSettings = { showSettingsSheet = true },
-                        onShiftCycle = { delta -> viewModel.shiftCycle(delta) }
-                    )
-                },
-                bottomBar = {
-                    NavigationBar(
-                        modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
-                    ) {
+            ExpressiveAmbientBackground(
+                accentPalette = state.customPrefs.accentPalette,
+                isDarkTheme = state.profile.isDarkTheme
+            ) {
+                Scaffold(
+                    containerColor = Color.Transparent,
+                    snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+                    topBar = {
+                        MasroufiTopBar(
+                            language = state.profile.language,
+                            isDarkTheme = state.profile.isDarkTheme,
+                            hideAmounts = state.hideAmounts,
+                            isSyncing = state.isSyncing,
+                            hasSyncWarning = !state.errorMessage.isNullOrBlank(),
+                            appTitle = state.customPrefs.customTitle.ifBlank { "Masroufi" },
+                            subTitle = state.customPrefs.customSubtitle.ifBlank { strings.subTitle },
+                            currencySymbol = cur,
+                            accentPalette = state.customPrefs.accentPalette,
+                            cycleLabel = "${state.activeWindow.cycleKey} (${state.activeWindow.startIso.takeLast(5)} → ${state.activeWindow.endIso.takeLast(5)})",
+                            onCycleLanguage = {
+                                val nextLang = when (state.profile.language) {
+                                    "fr" -> "darija"
+                                    "darija" -> "ar"
+                                    "ar" -> "en"
+                                    else -> "fr"
+                                }
+                                viewModel.updateLanguage(nextLang)
+                            },
+                            onTogglePrivacy = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                togglePrivacyMask()
+                            },
+                            onToggleTheme = { viewModel.toggleTheme() },
+                            onOpenCustomization = { showCustomizationSheet = true },
+                            onOpenSettings = { showSettingsSheet = true },
+                            onShiftCycle = { delta -> viewModel.shiftCycle(delta) }
+                        )
+                    },
+                    bottomBar = {
                         val tabs = listOf(
                             Triple("vue", strings.navVue, Icons.Default.Home),
                             Triple("semaine", strings.navSemaine, Icons.Default.CalendarMonth),
@@ -628,152 +635,126 @@ fun MainFeatureScreen(
                             Triple("categories", strings.navCat, Icons.Default.PieChart),
                             Triple("historique", strings.navHist, Icons.Default.History)
                         )
-                        tabs.forEachIndexed { pageIdx, (key, label, icon) ->
-                            NavigationBarItem(
-                                selected = activeTab == key,
-                                onClick = {
-                                    isSpeedDialOpen = false
-                                    scope.launch {
-                                        pagerState.animateScrollToPage(pageIdx)
-                                    }
-                                },
-                                icon = {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .combinedClickable(
-                                                onClick = {
-                                                    isSpeedDialOpen = false
-                                                    scope.launch {
-                                                        pagerState.animateScrollToPage(pageIdx)
-                                                    }
-                                                },
-                                                onLongClick = {
-                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                    shortcutSheetTabKey = key
-                                                }
-                                            )
-                                            .padding(4.dp)
-                                            .testTag("nav_icon_$key")
-                                    ) {
-                                        Icon(imageVector = icon, contentDescription = label)
-                                    }
-                                },
-                                label = {
-                                    Text(
-                                        text = label,
-                                        maxLines = 1,
-                                        fontSize = 11.sp,
-                                        modifier = Modifier.combinedClickable(
-                                            onClick = {
-                                                isSpeedDialOpen = false
-                                                scope.launch {
-                                                    pagerState.animateScrollToPage(pageIdx)
-                                                }
-                                            },
-                                            onLongClick = {
-                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                shortcutSheetTabKey = key
-                                            }
-                                        )
+                        ExpressiveGlassBottomDock(
+                            tabs = tabs,
+                            activeTabKey = activeTab,
+                            onSelectTab = { pageIdx, _ ->
+                                isSpeedDialOpen = false
+                                scope.launch {
+                                    pagerState.animateScrollToPage(
+                                        page = pageIdx,
+                                        animationSpec = ExpressiveMotion.snappySpring()
                                     )
-                                },
-                                modifier = Modifier.testTag("nav_tab_$key")
-                            )
-                        }
-                    }
-                },
-                floatingActionButton = {
-                    Column(
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        AnimatedVisibility(
-                            visible = isSpeedDialOpen,
-                            enter = fadeIn() + scaleIn(initialScale = 0.85f),
-                            exit = fadeOut() + scaleOut(targetScale = 0.85f)
-                        ) {
-                            SpeedDialFanItems(
-                                lang = state.profile.language,
-                                onSelectExpense = {
-                                    isSpeedDialOpen = false
-                                    editingTx = null
-                                    initialTxType = "expense"
-                                    showAddTxSheet = true
-                                },
-                                onSelectIncome = {
-                                    isSpeedDialOpen = false
-                                    editingTx = null
-                                    initialTxType = "income"
-                                    showAddTxSheet = true
-                                },
-                                onSelectTransfer = {
-                                    isSpeedDialOpen = false
-                                    editingTx = null
-                                    initialTxType = "transfer"
-                                    showAddTxSheet = true
-                                },
-                                onSelectPreset = {
-                                    isSpeedDialOpen = false
-                                    showQuickPresetPicker = true
                                 }
-                            )
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            },
+                            onLongPressTab = { key ->
+                                shortcutSheetTabKey = key
+                            }
+                        )
+                    },
+                    floatingActionButton = {
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            // Speed-Dial Fan Toggle Pill
-                            Surface(
-                                shape = CircleShape,
-                                color = if (isSpeedDialOpen) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
-                                shadowElevation = 6.dp,
-                                modifier = Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
-                                    .clickable {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        isSpeedDialOpen = !isSpeedDialOpen
-                                    }
-                                    .testTag("fab_speed_dial_toggle")
+                            AnimatedVisibility(
+                                visible = isSpeedDialOpen,
+                                enter = fadeIn(animationSpec = ExpressiveMotion.snappySpring()) +
+                                    scaleIn(initialScale = 0.82f, animationSpec = ExpressiveMotion.bouncySpring()),
+                                exit = fadeOut(animationSpec = ExpressiveMotion.snappySpring()) +
+                                    scaleOut(targetScale = 0.82f, animationSpec = ExpressiveMotion.snappySpring())
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = if (isSpeedDialOpen) Icons.Default.Close else Icons.Default.Bolt,
-                                        contentDescription = "Menu Actions Rapides",
-                                        tint = if (isSpeedDialOpen) MaterialTheme.colorScheme.onErrorContainer else AccentAmber
-                                    )
-                                }
+                                SpeedDialFanItems(
+                                    lang = state.profile.language,
+                                    onSelectExpense = {
+                                        isSpeedDialOpen = false
+                                        editingTx = null
+                                        initialTxType = "expense"
+                                        showAddTxSheet = true
+                                    },
+                                    onSelectIncome = {
+                                        isSpeedDialOpen = false
+                                        editingTx = null
+                                        initialTxType = "income"
+                                        showAddTxSheet = true
+                                    },
+                                    onSelectTransfer = {
+                                        isSpeedDialOpen = false
+                                        editingTx = null
+                                        initialTxType = "transfer"
+                                        showAddTxSheet = true
+                                    },
+                                    onSelectPreset = {
+                                        isSpeedDialOpen = false
+                                        showQuickPresetPicker = true
+                                    }
+                                )
                             }
 
-                            ExtendedFloatingActionButton(
-                                onClick = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    if (isSpeedDialOpen) {
-                                        isSpeedDialOpen = false
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Floating Glass Speed-Dial Toggle Pill
+                                Surface(
+                                    shape = RoundedCornerShape(18.dp),
+                                    color = if (isSpeedDialOpen) {
+                                        MaterialTheme.colorScheme.errorContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.92f)
+                                    },
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isSpeedDialOpen) AccentCoral.copy(alpha = 0.5f)
+                                        else AccentAmber.copy(alpha = 0.45f)
+                                    ),
+                                    shadowElevation = 8.dp,
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            isSpeedDialOpen = !isSpeedDialOpen
+                                        }
+                                        .testTag("fab_speed_dial_toggle")
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = if (isSpeedDialOpen) Icons.Default.Close else Icons.Default.Bolt,
+                                            contentDescription = "Menu Actions Rapides",
+                                            tint = if (isSpeedDialOpen) MaterialTheme.colorScheme.onErrorContainer else AccentAmber
+                                        )
                                     }
-                                    editingTx = null
-                                    initialTxType = "expense"
-                                    showAddTxSheet = true
-                                },
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                                text = { Text(strings.btnAddAction, fontWeight = FontWeight.ExtraBold) },
-                                modifier = Modifier.testTag("fab_add_expense")
-                            )
+                                }
+
+                                ExtendedFloatingActionButton(
+                                    onClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        if (isSpeedDialOpen) {
+                                            isSpeedDialOpen = false
+                                        }
+                                        editingTx = null
+                                        initialTxType = "expense"
+                                        showAddTxSheet = true
+                                    },
+                                    shape = RoundedCornerShape(22.dp),
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                                    text = { Text(strings.btnAddAction, fontWeight = FontWeight.ExtraBold) },
+                                    modifier = Modifier.testTag("fab_add_expense")
+                                )
+                            }
                         }
                     }
-                }
-            ) { innerPadding ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding),
-                    contentAlignment = Alignment.TopCenter
-                ) {
-                    Column(modifier = Modifier.widthIn(max = 600.dp)) {
+                ) { innerPadding ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        Column(modifier = Modifier.widthIn(max = 620.dp)) {
                         val currentError = state.errorMessage
                         if (!currentError.isNullOrBlank()) {
                             Surface(
@@ -1128,15 +1109,16 @@ fun MainFeatureScreen(
                         }
                     }
 
-                    // Dimmed Scrim when Speed-Dial Fan Menu is expanded
-                    if (isSpeedDialOpen) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = 0.38f))
-                                .clickable { isSpeedDialOpen = false }
-                                .testTag("speed_dial_scrim")
-                        )
+                        // Dimmed Scrim when Speed-Dial Fan Menu is expanded
+                        if (isSpeedDialOpen) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.42f))
+                                    .clickable { isSpeedDialOpen = false }
+                                    .testTag("speed_dial_scrim")
+                            )
+                        }
                     }
                 }
             }
@@ -1454,11 +1436,12 @@ private fun SpeedDialFanItems(
     ) {
         items.forEach { item ->
             Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                shadowElevation = 6.dp,
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.94f),
+                border = BorderStroke(1.dp, item.accent.copy(alpha = 0.38f)),
+                shadowElevation = 8.dp,
                 modifier = Modifier
-                    .clip(CircleShape)
+                    .clip(RoundedCornerShape(22.dp))
                     .clickable(onClick = item.onClick)
                     .testTag(item.testTag)
             ) {
@@ -1474,9 +1457,9 @@ private fun SpeedDialFanItems(
                     )
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
-                            .clip(CircleShape)
-                            .background(item.accent.copy(alpha = 0.2f)),
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(item.accent.copy(alpha = 0.22f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -1558,16 +1541,15 @@ private fun NavTabShortcutsSheet(
             }
 
             actions.forEachIndexed { idx, (label, action) ->
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    onClick = {
+                        onDismiss()
+                        action()
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable {
-                            onDismiss()
-                            action()
-                        }
                         .testTag("nav_shortcut_${tabKey}_$idx")
                 ) {
                     Row(
@@ -1615,15 +1597,17 @@ private fun MasroufiTopBar(
     onShiftCycle: (Int) -> Unit
 ) {
     val pal = paletteForKey(accentPalette)
+    val glassSurface = MaterialTheme.colorScheme.surface.copy(alpha = if (isDarkTheme) 0.86f else 0.92f)
     Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 2.dp
+        color = glassSurface,
+        tonalElevation = 4.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1637,8 +1621,8 @@ private fun MasroufiTopBar(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
-                            .clip(RoundedCornerShape(14.dp, 14.dp, 14.dp, 5.dp))
+                            .size(42.dp)
+                            .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 16.dp, bottomStart = 6.dp))
                             .background(
                                 Brush.linearGradient(listOf(pal.primaryDark, pal.heroStart))
                             )
@@ -1652,7 +1636,7 @@ private fun MasroufiTopBar(
                             modifier = Modifier.size(22.dp)
                         )
                     }
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1665,12 +1649,14 @@ private fun MasroufiTopBar(
                             )
                             Surface(
                                 shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primaryContainer
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
                             ) {
                                 Text(
                                     text = currencySymbol,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.ExtraBold,
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                 )
                             }
@@ -1681,21 +1667,25 @@ private fun MasroufiTopBar(
                                     isSyncing || hasSyncWarning -> AccentAmber.copy(alpha = 0.16f)
                                     else -> AccentEmerald.copy(alpha = 0.16f)
                                 },
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = if (isSyncing || hasSyncWarning) AccentAmber.copy(alpha = 0.38f) else AccentEmerald.copy(alpha = 0.38f)
+                                ),
                                 modifier = Modifier.testTag("sync_status_indicator")
                             ) {
                                 Text(
                                     text = when {
                                         isSyncing -> when (language) {
-                                            "ar" -> "محفوظ محلياً، جاري المزامنة…"
-                                            "darija" -> "مسجل فـ التليفون، كيتزامن…"
-                                            "en" -> "Saved on device, syncing…"
-                                            else -> "Enregistré, synchro…"
+                                            "ar" -> "جاري المزامنة…"
+                                            "darija" -> "كيتزامن…"
+                                            "en" -> "Syncing…"
+                                            else -> "Synchro…"
                                         }
                                         hasSyncWarning -> when (language) {
-                                            "ar" -> "محفوظ محلياً"
-                                            "darija" -> "مسجل فـ التليفون"
-                                            "en" -> "Saved on device"
-                                            else -> "Cache local"
+                                            "ar" -> "محلي"
+                                            "darija" -> "فالتليفون"
+                                            "en" -> "On device"
+                                            else -> "Local"
                                         }
                                         else -> when (language) {
                                             "ar" -> "متزامن ✓"
@@ -1708,6 +1698,7 @@ private fun MasroufiTopBar(
                                     fontSize = 10.sp,
                                     color = if (isSyncing || hasSyncWarning) AccentAmber else AccentEmerald,
                                     fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                 )
                             }
@@ -1722,85 +1713,118 @@ private fun MasroufiTopBar(
                     }
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                // Floating Glass Action Capsule (Language, Privacy Eye, Theme, Palette, Settings)
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f),
+                    border = BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f)
+                    )
                 ) {
-                    val langDisplay = when (language) {
-                        "ar" -> "AR 🇸🇦"
-                        "darija" -> "دارجة 🇲🇦"
-                        "en" -> "EN 🇬🇧"
-                        else -> "FR 🇫🇷"
-                    }
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onCycleLanguage() }
-                            .testTag("lang_switcher_pill")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                     ) {
-                        Text(
-                            text = langDisplay,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
-                        )
-                    }
+                        val langDisplay = when (language) {
+                            "ar" -> "AR"
+                            "darija" -> "دارجة"
+                            "en" -> "EN"
+                            else -> "FR"
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onCycleLanguage() }
+                                .testTag("lang_switcher_pill")
+                        ) {
+                            Text(
+                                text = langDisplay,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                            )
+                        }
 
-                    IconButton(
-                        onClick = onTogglePrivacy,
-                        modifier = Modifier.testTag("privacy_eye_button")
-                    ) {
-                        Icon(
-                            imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = if (hideAmounts) "Show Amounts" else "Hide Amounts",
-                            tint = if (hideAmounts) AccentAmber else MaterialTheme.colorScheme.primary
-                        )
-                    }
+                        IconButton(
+                            onClick = onTogglePrivacy,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("privacy_eye_button")
+                        ) {
+                            Icon(
+                                imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (hideAmounts) "Show Amounts" else "Hide Amounts",
+                                tint = if (hideAmounts) AccentAmber else MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
 
-                    IconButton(
-                        onClick = onOpenCustomization,
-                        modifier = Modifier.testTag("customization_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Palette,
-                            contentDescription = "Customize App",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
+                        IconButton(
+                            onClick = onOpenCustomization,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("customization_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Palette,
+                                contentDescription = "Customize App",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
 
-                    IconButton(
-                        onClick = onToggleTheme,
-                        modifier = Modifier.testTag("theme_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "Toggle Theme"
-                        )
-                    }
+                        IconButton(
+                            onClick = onToggleTheme,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("theme_toggle_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                contentDescription = "Toggle Theme",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
 
-                    IconButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.testTag("settings_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Tune,
-                            contentDescription = "Settings"
-                        )
+                        IconButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("settings_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = "Settings",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            // Pay-Cycle Month Navigator Pill (Swipe left/right on the month header to change month)
+            // Floating Glass Pay-Cycle Month Navigator Pill (Swipe left/right on the month header to change month)
             var monthPillDragAccumulator by remember { mutableFloatStateOf(0f) }
             val haptics = LocalHapticFeedback.current
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainer,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.76f),
+                border = BorderStroke(
+                    width = 1.dp,
+                    brush = Brush.horizontalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                        )
+                    )
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp)
                     .pointerInput(cycleLabel) {
                         detectHorizontalDragGestures(
                             onHorizontalDrag = { change, dragAmount ->
@@ -1809,11 +1833,11 @@ private fun MasroufiTopBar(
                             },
                             onDragEnd = {
                                 when {
-                                    monthPillDragAccumulator <= -64f -> {
+                                    monthPillDragAccumulator <= -56f -> {
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         onShiftCycle(1)
                                     }
-                                    monthPillDragAccumulator >= 64f -> {
+                                    monthPillDragAccumulator >= 56f -> {
                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                         onShiftCycle(-1)
                                     }
@@ -1837,27 +1861,31 @@ private fun MasroufiTopBar(
                     IconButton(
                         onClick = { onShiftCycle(-1) },
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(32.dp)
                             .testTag("month_header_prev_btn")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "Previous Cycle"
+                            contentDescription = "Previous Cycle",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                     Text(
                         text = cycleLabel,
-                        style = MaterialTheme.typography.labelLarge
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     IconButton(
                         onClick = { onShiftCycle(1) },
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(32.dp)
                             .testTag("month_header_next_btn")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Next Cycle"
+                            contentDescription = "Next Cycle",
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }

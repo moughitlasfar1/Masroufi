@@ -71,6 +71,8 @@ import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
+import com.example.ui.theme.ExpressiveGlassCard
+import com.example.ui.theme.ExpressiveGlassSurface
 import java.util.Locale
 
 data class RecentCategoryShortcut(
@@ -197,9 +199,10 @@ fun VoiceDarijaEntrySection(
         }
     }
 
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ExpressiveGlassSurface(
+        shape = RoundedCornerShape(22.dp),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        accentBorderColor = AccentEmerald,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("voice_darija_card")
@@ -391,15 +394,15 @@ fun LargeNumericKeypadSection(
         onAmountChange(formatted)
     }
 
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ExpressiveGlassCard(
+        cornerRadius = 26.dp,
+        contentPadding = PaddingValues(14.dp),
+        accentRimColor = MaterialTheme.colorScheme.primary,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("large_numeric_keypad_card")
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Amount Display & 2-Tap Mode Toggle
@@ -476,16 +479,16 @@ fun LargeNumericKeypadSection(
                 ) {
                     recentCategories.forEachIndexed { idx, shortcut ->
                         val isSelected = selectedEnvelopeKey == shortcut.envelopeKey
-                        Surface(
+                        ExpressiveGlassSurface(
                             shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
+                            accentBorderColor = MaterialTheme.colorScheme.primary,
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onSelectCategoryShortcut(shortcut, twoTapInstantSave)
+                            },
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onSelectCategoryShortcut(shortcut, twoTapInstantSave)
-                                }
                                 .testTag("recent_category_shortcut_$idx")
                         ) {
                             Column(
@@ -525,13 +528,13 @@ fun LargeNumericKeypadSection(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(10, 20, 50, 100).forEach { inc ->
-                    Surface(
+                    ExpressiveGlassSurface(
                         shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        accentBorderColor = AccentEmerald,
+                        onClick = { addQuickIncrement(inc) },
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable { addQuickIncrement(inc) }
                             .testTag("keypad_plus_$inc")
                     ) {
                         Text(
@@ -544,13 +547,13 @@ fun LargeNumericKeypadSection(
                         )
                     }
                 }
-                Surface(
+                ExpressiveGlassSurface(
                     shape = RoundedCornerShape(12.dp),
-                    color = AccentCoral.copy(alpha = 0.16f),
+                    containerColor = AccentCoral.copy(alpha = 0.16f),
+                    accentBorderColor = AccentCoral,
+                    onClick = { appendDigitOrDot("C") },
                     modifier = Modifier
                         .weight(0.8f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable { appendDigitOrDot("C") }
                         .testTag("keypad_clear")
                 ) {
                     Text(
@@ -582,14 +585,13 @@ fun LargeNumericKeypadSection(
                             "⌫" -> "keypad_backspace"
                             else -> "keypad_digit_$key"
                         }
-                        Surface(
+                        ExpressiveGlassSurface(
                             shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainer,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            onClick = { appendDigitOrDot(key) },
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { appendDigitOrDot(key) }
                                 .testTag(tag)
                         ) {
                             Box(contentAlignment = Alignment.Center) {

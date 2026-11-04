@@ -5,6 +5,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
 data class AccentPaletteSpec(
     val key: String,
@@ -120,6 +121,14 @@ fun heroGradientColors(accentPalette: String, isOverBudget: Boolean): List<Color
     return listOf(spec.heroStart, spec.heroEnd)
 }
 
+val ExpressiveShapes = androidx.compose.material3.Shapes(
+    extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+    small = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+    large = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
+    extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(36.dp)
+)
+
 @Composable
 fun MasroufiTheme(
     darkTheme: Boolean = true,
@@ -184,6 +193,7 @@ fun MasroufiTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
+        shapes = ExpressiveShapes,
         content = content
     )
 }
