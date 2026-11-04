@@ -173,8 +173,8 @@ private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 
 /**
- * Ensures the default FirebaseApp is initialized even if google-services.json was omitted or
- * mismatched in a CI build, preventing IllegalStateException on startup.
+ * Ensures the default FirebaseApp is initialized even if FirebaseInitProvider did not run or
+ * package/namespace resource lookup differed, without hardcoding any API keys in source code.
  */
 fun ensureFirebaseInitialized(context: Context) {
     runCatching {
@@ -182,14 +182,33 @@ fun ensureFirebaseInitialized(context: Context) {
         if (FirebaseApp.getApps(appContext).isNotEmpty()) return
         val initialized = FirebaseApp.initializeApp(appContext)
         if (initialized != null) return
-        val fallbackOptions = FirebaseOptions.Builder()
-            .setProjectId("gen-lang-client-0849522300")
-            .setApplicationId("1:1046667497606:android:08ac099a9ee6c94eac0107")
-            .setApiKey("AIzaSyCUG_L9kFeXgtdFGN01gh8rILaLWMNYNHM")
-            .setStorageBucket("gen-lang-client-0849522300.firebasestorage.app")
-            .setGcmSenderId("1046667497606")
-            .build()
-        FirebaseApp.initializeApp(appContext, fallbackOptions)
+
+        fun readResString(key: String): String? {
+            val packages = listOf(appContext.packageName, "com.example").distinct()
+            for (pkg in packages) {
+                val id = appContext.resources.getIdentifier(key, "string", pkg)
+                if (id != 0) {
+                    val value = runCatching { appContext.getString(id).trim() }.getOrNull()
+                    if (!value.isNullOrEmpty()) return value
+                }
+            }
+            return null
+        }
+
+        val appId = readResString("google_app_id") ?: "1:000000000000:android:0000000000000000"
+        val apiKey = readResString("google_api_key") ?: "local-offline-placeholder-key"
+        val projectId = readResString("project_id") ?: "masroufi-local"
+        val storageBucket = readResString("google_storage_bucket")
+        val senderId = readResString("gcm_defaultSenderId")
+
+        val builder = FirebaseOptions.Builder()
+            .setApplicationId(appId)
+            .setApiKey(apiKey)
+            .setProjectId(projectId)
+        if (!storageBucket.isNullOrEmpty()) builder.setStorageBucket(storageBucket)
+        if (!senderId.isNullOrEmpty()) builder.setGcmSenderId(senderId)
+
+        FirebaseApp.initializeApp(appContext, builder.build())
     }
 }
 
