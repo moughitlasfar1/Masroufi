@@ -117,7 +117,6 @@ import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.Translations
-import com.example.security.AppCheckProviderInstaller
 import com.example.security.AppSecurityManager
 import com.example.security.MasroufiSecurityLockScreen
 import com.example.ui.AddFinancialItemSheet
@@ -142,6 +141,10 @@ import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.paletteForKey
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.AppCheckProviderFactory
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -155,9 +158,42 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 
 private val MAIN_TAB_KEYS = listOf("vue", "semaine", "mois", "categories", "historique")
+private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
+private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
+private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 
+/**
+ * SEC-04: Installs PlayIntegrityAppCheckProviderFactory in release builds (where firebase-appcheck-debug
+ * is excluded via debugImplementation) and DebugAppCheckProviderFactory in debug builds.
+ */
 fun configureAppCheck(context: Context, intent: Intent?) {
-    AppCheckProviderInstaller.install(context, intent)
+    runCatching {
+        val appCheck = FirebaseAppCheck.getInstance()
+        if (BuildConfig.DEBUG) {
+            val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
+            if (!debugToken.isNullOrEmpty()) {
+                val persistenceKey = FirebaseApp.getInstance().persistenceKey
+                val prefs = context.getSharedPreferences(
+                    "$DEBUG_STORE_PREFIX$persistenceKey",
+                    Context.MODE_PRIVATE
+                )
+                prefs.edit()
+                    .putString(DEBUG_SECRET_KEY, debugToken)
+                    .commit()
+            }
+            val debugFactory = runCatching {
+                val clazz = Class.forName("com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory")
+                clazz.getMethod("getInstance").invoke(null) as AppCheckProviderFactory
+            }.getOrElse {
+                PlayIntegrityAppCheckProviderFactory.getInstance()
+            }
+            appCheck.installAppCheckProviderFactory(debugFactory)
+        } else {
+            appCheck.installAppCheckProviderFactory(
+                PlayIntegrityAppCheckProviderFactory.getInstance()
+            )
+        }
+    }
 }
 
 internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
