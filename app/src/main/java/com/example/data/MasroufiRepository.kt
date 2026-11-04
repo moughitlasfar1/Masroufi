@@ -154,14 +154,26 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     private fun buildTransactionPayload(uid: String, tx: TransactionItem): Map<String, Any> {
         val safeType = if (tx.type in listOf("expense", "income", "transfer")) tx.type else "expense"
         val validatedDate = PayCycleEngine.requireOrNormalizeIsoDate(tx.isoDate)
+        val safeAccountId = tx.accountId.ifBlank { "acc_cash" }.take(80)
+        val safeToAccountId = when (safeType) {
+            "transfer" -> {
+                val candidate = tx.toAccountId.trim().take(80)
+                if (candidate.isNotBlank() && candidate != safeAccountId) {
+                    candidate
+                } else {
+                    if (safeAccountId == "acc_cash") "acc_bank" else "acc_cash"
+                }
+            }
+            else -> ""
+        }
         return mapOf(
             "userId" to uid,
             "type" to safeType,
             "amount" to tx.amount.coerceIn(0.01, 100000000.0),
             "category" to tx.category.ifBlank { "Général" }.take(120),
             "envelopeKey" to tx.envelopeKey.ifBlank { "autre" }.take(60),
-            "accountId" to tx.accountId.ifBlank { "acc_cash" }.take(80),
-            "toAccountId" to tx.toAccountId.take(80),
+            "accountId" to safeAccountId,
+            "toAccountId" to safeToAccountId,
             "desc" to tx.desc.take(250),
             "isoDate" to validatedDate.take(20),
             "createdAt" to (tx.createdAt ?: FieldValue.serverTimestamp()),
@@ -502,6 +514,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             if (snap.exists() && snap.getBoolean("seeded") == true) {
                 return
             }
+            val existingCreatedAt = if (snap.exists()) {
+                snap.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            } else null
+
             val batch = db.batch()
             val newProfile = UserProfile(
                 id = uid,
@@ -511,7 +527,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                 rolloverEnabled = true,
                 language = "fr",
                 isDarkTheme = true,
-                seeded = true
+                seeded = true,
+                createdAt = existingCreatedAt
             )
             batch.set(profileRef, buildProfilePayload(uid, newProfile))
 
@@ -551,16 +568,26 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
      * Optional Demo Mode: loads realistic Moroccan sample accounts, transactions, bills,
      * savings goals, Daret tontine, debts, and seasonal planners in a single atomic batch.
      */
-    suspend fun loadDemoData() {
+    suspend fun loadDemoData(
+        existingAccounts: List<AccountItem> = emptyList(),
+        existingEnvelopes: List<EnvelopeConfig> = emptyList(),
+        existingItems: List<FinancialItem> = emptyList(),
+        existingTransactions: List<TransactionItem> = emptyList()
+    ) {
         val uid = requireUserId()
         val profileRef = db.collection("users").document(uid)
         try {
+            val accCreatedAt = existingAccounts.associate { it.id to it.createdAt }
+            val envCreatedAt = existingEnvelopes.associate { it.id to it.createdAt }
+            val itemCreatedAt = existingItems.associate { it.id to it.createdAt }
+            val txCreatedAt = existingTransactions.associate { it.id to it.createdAt }
+
             val batch = db.batch()
 
             val demoAccounts = listOf(
-                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 1850.0, colorHex = "#10B981"),
-                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 5200.0, colorHex = "#38BDF8"),
-                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 650.0, colorHex = "#FBBF24")
+                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 1850.0, colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
+                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 5200.0, colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
+                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 650.0, colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
             )
             for (acc in demoAccounts) {
                 val ref = profileRef.collection("accounts").document(acc.id)
@@ -569,7 +596,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
 
             for (env in defaultStandardEnvelopes(uid)) {
                 val ref = profileRef.collection("envelopes").document(env.id)
-                batch.set(ref, buildEnvelopePayload(uid, env))
+                batch.set(ref, buildEnvelopePayload(uid, env.copy(createdAt = envCreatedAt[env.id])))
             }
 
             val demoTxs = listOf(
@@ -585,7 +612,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             )
             for (tx in demoTxs) {
                 val ref = profileRef.collection("transactions").document(tx.id)
-                batch.set(ref, buildTransactionPayload(uid, tx))
+                batch.set(ref, buildTransactionPayload(uid, tx.copy(createdAt = txCreatedAt[tx.id])))
             }
 
             val demoItems = defaultQuickPresets() + listOf(
@@ -601,7 +628,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             )
             for (item in demoItems) {
                 val ref = profileRef.collection("items").document(item.id)
-                batch.set(ref, buildFinancialItemPayload(uid, item))
+                batch.set(ref, buildFinancialItemPayload(uid, item.copy(createdAt = itemCreatedAt[item.id])))
             }
 
             batch.commit().await()
@@ -619,11 +646,12 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     suspend fun resetToCleanAccount(
         existingTxIds: List<String>,
         existingItemIdsToClear: List<String>,
-        existingAccountIds: List<String>
+        existingAccounts: List<AccountItem>
     ) {
         val uid = requireUserId()
         val profileRef = db.collection("users").document(uid)
         try {
+            val accCreatedAt = existingAccounts.associate { it.id to it.createdAt }
             val refsToDelete = mutableListOf<DocumentReference>()
             existingTxIds.forEach { id ->
                 if (id.isNotBlank()) refsToDelete.add(profileRef.collection("transactions").document(id))
@@ -631,7 +659,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             existingItemIdsToClear.forEach { id ->
                 if (id.isNotBlank()) refsToDelete.add(profileRef.collection("items").document(id))
             }
-            existingAccountIds.forEach { id ->
+            existingAccounts.forEach { acc ->
+                val id = acc.id
                 if (id !in listOf("acc_cash", "acc_bank", "acc_wallet") && id.isNotBlank()) {
                     refsToDelete.add(profileRef.collection("accounts").document(id))
                 }
@@ -645,9 +674,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
 
             val cleanBatch = db.batch()
             val cleanAccounts = listOf(
-                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981"),
-                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8"),
-                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#FBBF24")
+                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
+                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
+                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
             )
             for (acc in cleanAccounts) {
                 cleanBatch.set(profileRef.collection("accounts").document(acc.id), buildAccountPayload(uid, acc))
@@ -661,11 +690,16 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
+    private sealed interface BatchOp {
+        data class SetOp(val ref: DocumentReference, val payload: Map<String, Any>) : BatchOp
+        data class DeleteOp(val ref: DocumentReference) : BatchOp
+    }
+
     /**
-     * Two-phase backup restore:
+     * Two-phase backup restore (SEC-07):
      * 1. Pre-builds and validates all Firestore payloads in memory before any network write.
-     * 2. Optionally deletes stale local/cloud records absent from the backup (`replaceExisting = true`).
-     * 3. Executes in bounded Firestore batches (max 400 ops/batch) while reporting progress per chunk.
+     * 2. Combines set operations and stale-record delete operations into a single unified list
+     *    of batch operations so that <= 400 total operations execute in a single atomic WriteBatch.
      */
     suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
@@ -683,16 +717,17 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         val uid = requireUserId()
         val userRef = db.collection("users").document(uid)
         try {
-            // Phase 1: Pre-build and validate every payload in memory before touching Firestore
-            val setOperations = mutableListOf<Pair<DocumentReference, Map<String, Any>>>()
-            val deleteRefs = mutableListOf<DocumentReference>()
+            // Phase 1: Pre-build every set & delete operation in memory before touching Firestore
+            val allOperations = mutableListOf<BatchOp>()
 
             if (profile != null) {
-                setOperations.add(userRef to buildProfilePayload(uid, profile))
+                allOperations.add(BatchOp.SetOp(userRef, buildProfilePayload(uid, profile)))
             }
             if (customPrefsItem != null) {
                 val ref = userRef.collection("items").document("custom_prefs")
-                setOperations.add(ref to buildFinancialItemPayload(uid, customPrefsItem.copy(id = "custom_prefs")))
+                allOperations.add(
+                    BatchOp.SetOp(ref, buildFinancialItemPayload(uid, customPrefsItem.copy(id = "custom_prefs")))
+                )
             }
 
             val restoredAccountIds = mutableSetOf<String>()
@@ -700,7 +735,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                 val cleanId = acc.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "acc_restored_$idx" }
                 restoredAccountIds.add(cleanId)
                 val ref = userRef.collection("accounts").document(cleanId)
-                setOperations.add(ref to buildAccountPayload(uid, acc))
+                allOperations.add(BatchOp.SetOp(ref, buildAccountPayload(uid, acc)))
             }
 
             val restoredEnvelopeIds = mutableSetOf<String>()
@@ -708,7 +743,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                 val cleanId = env.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "env_restored_$idx" }
                 restoredEnvelopeIds.add(cleanId)
                 val ref = userRef.collection("envelopes").document(cleanId)
-                setOperations.add(ref to buildEnvelopePayload(uid, env))
+                allOperations.add(BatchOp.SetOp(ref, buildEnvelopePayload(uid, env)))
             }
 
             val restoredItemIds = mutableSetOf<String>()
@@ -717,7 +752,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                 val cleanId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "item_restored_$idx" }
                 restoredItemIds.add(cleanId)
                 val ref = userRef.collection("items").document(cleanId)
-                setOperations.add(ref to buildFinancialItemPayload(uid, item))
+                allOperations.add(BatchOp.SetOp(ref, buildFinancialItemPayload(uid, item)))
             }
 
             val restoredTxIds = mutableSetOf<String>()
@@ -725,55 +760,47 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                 val cleanId = tx.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "tx_restored_$idx" }
                 restoredTxIds.add(cleanId)
                 val ref = userRef.collection("transactions").document(cleanId)
-                setOperations.add(ref to buildTransactionPayload(uid, tx))
+                allOperations.add(BatchOp.SetOp(ref, buildTransactionPayload(uid, tx)))
             }
 
-            // Collect stale documents to remove when replacing existing state
+            // Collect stale documents to remove into the same unified batch list
             staleTxIdsToDelete.forEach { oldId ->
                 val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
                 if (cleanOld.isNotBlank() && cleanOld !in restoredTxIds) {
-                    deleteRefs.add(userRef.collection("transactions").document(cleanOld))
+                    allOperations.add(BatchOp.DeleteOp(userRef.collection("transactions").document(cleanOld)))
                 }
             }
             staleItemIdsToDelete.forEach { oldId ->
                 val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
                 if (cleanOld.isNotBlank() && cleanOld !in restoredItemIds) {
-                    deleteRefs.add(userRef.collection("items").document(cleanOld))
+                    allOperations.add(BatchOp.DeleteOp(userRef.collection("items").document(cleanOld)))
                 }
             }
             staleAccountIdsToDelete.forEach { oldId ->
                 val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
                 if (cleanOld.isNotBlank() && cleanOld !in restoredAccountIds && accounts.isNotEmpty()) {
-                    deleteRefs.add(userRef.collection("accounts").document(cleanOld))
+                    allOperations.add(BatchOp.DeleteOp(userRef.collection("accounts").document(cleanOld)))
                 }
             }
             staleEnvelopeIdsToDelete.forEach { oldId ->
                 val cleanOld = oldId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
                 if (cleanOld.isNotBlank() && cleanOld !in restoredEnvelopeIds && envelopes.isNotEmpty()) {
-                    deleteRefs.add(userRef.collection("envelopes").document(cleanOld))
+                    allOperations.add(BatchOp.DeleteOp(userRef.collection("envelopes").document(cleanOld)))
                 }
             }
 
-            // Phase 2: Execute bounded batches (max 400 ops per batch) with chunk progress
-            val setChunks = setOperations.chunked(400)
-            val delChunks = deleteRefs.chunked(400)
-            val totalChunks = (setChunks.size + delChunks.size).coerceAtLeast(1)
+            // Phase 2: Execute unified bounded batches (max 400 ops per batch)
+            val opChunks = allOperations.chunked(400)
+            val totalChunks = opChunks.size.coerceAtLeast(1)
             var completed = 0
 
-            for (chunk in setChunks) {
+            for (chunk in opChunks) {
                 val batch = db.batch()
-                for ((docRef, payload) in chunk) {
-                    batch.set(docRef, payload)
-                }
-                batch.commit().await()
-                completed++
-                onChunkProgress(completed, totalChunks)
-            }
-
-            for (chunk in delChunks) {
-                val batch = db.batch()
-                for (docRef in chunk) {
-                    batch.delete(docRef)
+                for (op in chunk) {
+                    when (op) {
+                        is BatchOp.SetOp -> batch.set(op.ref, op.payload)
+                        is BatchOp.DeleteOp -> batch.delete(op.ref)
+                    }
                 }
                 batch.commit().await()
                 completed++

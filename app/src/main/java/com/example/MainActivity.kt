@@ -5,7 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -117,6 +117,7 @@ import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.Translations
+import com.example.security.AppCheckProviderInstaller
 import com.example.security.AppSecurityManager
 import com.example.security.MasroufiSecurityLockScreen
 import com.example.ui.AddFinancialItemSheet
@@ -141,11 +142,6 @@ import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.paletteForKey
 import com.google.firebase.Firebase
-import com.google.firebase.FirebaseApp
-import com.google.firebase.appcheck.AppCheckProviderFactory
-import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
-import com.google.firebase.appcheck.recaptcha.RecaptchaAppCheckProviderFactory
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -158,66 +154,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 
-private const val APP_CHECK_TAG = "AppCheckInit"
-private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
-private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
-private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
-private const val RECAPTCHA_SITE_KEY_RES = "recaptcha_site_key"
-
 private val MAIN_TAB_KEYS = listOf("vue", "semaine", "mois", "categories", "historique")
 
 fun configureAppCheck(context: Context, intent: Intent?) {
-    try {
-        if (FirebaseApp.getApps(context).isEmpty()) {
-            FirebaseApp.initializeApp(context)
-        }
-        val appCheck = FirebaseAppCheck.getInstance()
-        if (BuildConfig.DEBUG) {
-            val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
-            if (!debugToken.isNullOrEmpty()) {
-                val persistenceKey = FirebaseApp.getInstance().persistenceKey
-                val prefs = context.getSharedPreferences(
-                    "$DEBUG_STORE_PREFIX$persistenceKey",
-                    Context.MODE_PRIVATE
-                )
-                prefs.edit()
-                    .putString(DEBUG_SECRET_KEY, debugToken)
-                    .commit()
-                Log.d(APP_CHECK_TAG, "App Check debug secret persisted synchronously.")
-            }
-            appCheck.installAppCheckProviderFactory(
-                DebugAppCheckProviderFactory.getInstance()
-            )
-            Log.d(APP_CHECK_TAG, "DebugAppCheckProviderFactory installed for debug build.")
-        } else {
-            val playIntegrityInstalled = runCatching {
-                val clazz = Class.forName("com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory")
-                val factory = clazz.getMethod("getInstance").invoke(null) as? AppCheckProviderFactory
-                if (factory != null) {
-                    appCheck.installAppCheckProviderFactory(factory)
-                    Log.d(APP_CHECK_TAG, "PlayIntegrityAppCheckProviderFactory installed for production release.")
-                    true
-                } else {
-                    false
-                }
-            }.getOrDefault(false)
-
-            if (!playIntegrityInstalled) {
-                val resId = context.resources.getIdentifier(RECAPTCHA_SITE_KEY_RES, "string", context.packageName)
-                if (resId != 0) {
-                    val siteKey = context.getString(resId)
-                    if (siteKey.isNotBlank()) {
-                        appCheck.installAppCheckProviderFactory(
-                            RecaptchaAppCheckProviderFactory.getInstance(siteKey)
-                        )
-                        Log.d(APP_CHECK_TAG, "RecaptchaAppCheckProviderFactory installed for release.")
-                    }
-                }
-            }
-        }
-    } catch (e: Exception) {
-        Log.e(APP_CHECK_TAG, "Failed to initialize Firebase App Check", e)
-    }
+    AppCheckProviderInstaller.install(context, intent)
 }
 
 internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
@@ -228,7 +168,7 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     awaitClose { removeAuthStateListener(listener) }
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureAppCheck(this, intent)
@@ -287,7 +227,19 @@ fun MainFeatureScreen(
                 }
                 val databaseId = app.getString(R.string.firestore_database_id)
                 val db = FirebaseFirestore.getInstance(databaseId)
-                MasroufiViewModel(MasroufiRepository(db), currentUserId)
+                MasroufiViewModel(
+                    repository = MasroufiRepository(db),
+                    currentUserId = currentUserId,
+                    initialHideAmounts = AppSecurityManager.isHideAmountsEnabled(app),
+                    initialRollbackSnapshot = AppSecurityManager.loadEncryptedRollbackSnapshot(app),
+                    onRollbackSnapshotChanged = { snapshot ->
+                        if (snapshot.isNullOrBlank()) {
+                            AppSecurityManager.clearEncryptedRollbackSnapshot(app)
+                        } else {
+                            AppSecurityManager.saveEncryptedRollbackSnapshot(app, snapshot)
+                        }
+                    }
+                )
             }
         }
     )
@@ -369,18 +321,25 @@ fun MainFeatureScreen(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
         if (uri != null) {
-            val payload = runCatching {
+            runCatching {
                 viewModel.exportBackupJson(pendingBackupPassword)
-            }.getOrElse { viewModel.exportBackupJson("") }
-            val isEnc = pendingBackupPassword.trim().length >= 4
-            val ok = AppSecurityManager.writeTextToUri(context, uri, payload)
-            scope.launch {
-                snackbarHostState.showSnackbar(
-                    if (ok) {
-                        if (isEnc) "Sauvegarde JSON chiffrée (AES-256-GCM) enregistrée !"
-                        else "Fichier JSON sauvegardé !"
-                    } else "Erreur lors de l'enregistrement"
-                )
+            }.onSuccess { payload ->
+                val isEnc = AppSecurityManager.isEncryptedBackup(payload)
+                val ok = AppSecurityManager.writeTextToUri(context, uri, payload)
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        if (ok) {
+                            if (isEnc) "Sauvegarde JSON chiffrée (AES-256-GCM) enregistrée !"
+                            else "Fichier JSON sauvegardé (non chiffré) !"
+                        } else "Erreur lors de l'enregistrement"
+                    )
+                }
+            }.onFailure { err ->
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        "Échec du chiffrement : ${err.localizedMessage ?: "aucun fichier écrit par sécurité."}"
+                    )
+                }
             }
         }
     }
@@ -406,6 +365,10 @@ fun MainFeatureScreen(
             if (!raw.isNullOrBlank()) {
                 pendingRestoreRawContent = raw
                 showRestoreSheet = true
+            } else {
+                scope.launch {
+                    snackbarHostState.showSnackbar("Fichier illisible ou dépassant la limite de 10 Mo.")
+                }
             }
         }
     }
@@ -457,8 +420,14 @@ fun MainFeatureScreen(
                     onUnlocked = { isSessionUnlocked = true },
                     onSignOutRecovery = {
                         appLockEnabled = false
-                        isSessionUnlocked = true
-                        signOutUser(context, onSignOutComplete = {}, scope = scope)
+                        isSessionUnlocked = false
+                        signOutUser(
+                            context = context,
+                            onSignOutComplete = {},
+                            scope = scope,
+                            clearLocalCache = true,
+                            isPinRecovery = true
+                        )
                     }
                 )
                 return@CompositionLocalProvider
@@ -842,33 +811,50 @@ fun MainFeatureScreen(
                                     },
                                     onShareJson = { pwd ->
                                         pendingBackupPassword = pwd
-                                        val payload = runCatching { viewModel.exportBackupJson(pwd) }
-                                            .getOrElse { viewModel.exportBackupJson("") }
-                                        shareTextContent(context, payload, "masroufi_backup.json", "application/json")
+                                        runCatching { viewModel.exportBackupJson(pwd) }
+                                            .onSuccess { payload ->
+                                                shareTextContent(context, payload, "masroufi_backup.json", "application/json")
+                                            }
+                                            .onFailure { err ->
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        "Échec du chiffrement : ${err.localizedMessage ?: "partage annulé par sécurité."}"
+                                                    )
+                                                }
+                                            }
                                     },
                                     onCopyJson = { pwd ->
                                         pendingBackupPassword = pwd
-                                        val payload = runCatching { viewModel.exportBackupJson(pwd) }
-                                            .getOrElse { viewModel.exportBackupJson("") }
-                                        copyToClipboard(context, payload)
-                                        scope.launch {
-                                            launch {
-                                                delay(60_000L)
-                                                AppSecurityManager.clearSensitiveClipboard(context)
+                                        runCatching { viewModel.exportBackupJson(pwd) }
+                                            .onSuccess { payload ->
+                                                val isEnc = AppSecurityManager.isEncryptedBackup(payload)
+                                                copyToClipboard(context, payload)
+                                                scope.launch {
+                                                    launch {
+                                                        delay(60_000L)
+                                                        AppSecurityManager.clearSensitiveClipboard(context)
+                                                    }
+                                                    val res = snackbarHostState.showSnackbar(
+                                                        message = if (isEnc) {
+                                                            "JSON chiffré AES-256-GCM copié (auto-effacé dans 60s)"
+                                                        } else {
+                                                            "JSON copié (masqué & auto-effacé dans 60s)"
+                                                        },
+                                                        actionLabel = "Vider",
+                                                        duration = SnackbarDuration.Short
+                                                    )
+                                                    if (res == SnackbarResult.ActionPerformed) {
+                                                        AppSecurityManager.clearSensitiveClipboard(context)
+                                                    }
+                                                }
                                             }
-                                            val res = snackbarHostState.showSnackbar(
-                                                message = if (pwd.trim().length >= 4) {
-                                                    "JSON chiffré AES-256-GCM copié (auto-effacé dans 60s)"
-                                                } else {
-                                                    "JSON copié (masqué & auto-effacé dans 60s)"
-                                                },
-                                                actionLabel = "Vider",
-                                                duration = SnackbarDuration.Short
-                                            )
-                                            if (res == SnackbarResult.ActionPerformed) {
-                                                AppSecurityManager.clearSensitiveClipboard(context)
+                                            .onFailure { err ->
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        "Échec du chiffrement : ${err.localizedMessage ?: "copie annulée par sécurité."}"
+                                                    )
+                                                }
                                             }
-                                        }
                                     },
                                     onShareCsv = {
                                         shareTextContent(context, viewModel.exportCsv(), "masroufi_export.csv", "text/csv")

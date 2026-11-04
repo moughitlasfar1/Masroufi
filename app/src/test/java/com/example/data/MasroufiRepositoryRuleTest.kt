@@ -102,6 +102,48 @@ class MasroufiRepositoryRuleTest : FirestoreEmulatorTestBase() {
         assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, fsEx?.code)
     }
 
+    @Test
+    fun upsertTransferAndUpdatePreservingCreatedAt_authenticatedOwner_succeeds() = runBlocking {
+        val aliceUid = signInTestUser(ALICE_EMAIL)
+        val repository = MasroufiRepository(firestore)
+        val uniqueId = "tx_tr_${UUID.randomUUID().toString().replace("-", "")}"
+
+        val savedId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repository.upsertTransaction(
+                TransactionItem(
+                    id = uniqueId,
+                    userId = aliceUid,
+                    type = "transfer",
+                    amount = 250.0,
+                    category = "Transfert",
+                    envelopeKey = "autre",
+                    accountId = "acc_bank",
+                    toAccountId = "acc_cash",
+                    desc = "Retrait GAB",
+                    isoDate = "2026-10-31"
+                )
+            )
+        }
+        assertEquals(uniqueId, savedId)
+
+        val fetched = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repository.getTransactionById(aliceUid, uniqueId)
+        }
+        assertNotNull(fetched)
+        assertEquals("acc_cash", fetched?.toAccountId)
+
+        // Update preserving createdAt succeeds under SEC-08 rules
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repository.upsertTransaction(
+                fetched!!.copy(amount = 300.0, desc = "Retrait GAB Mis à jour")
+            )
+        }
+        val updated = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repository.getTransactionById(aliceUid, uniqueId)
+        }
+        assertEquals(300.0, updated?.amount ?: 0.0, 0.01)
+    }
+
     private companion object {
         const val ALICE_EMAIL = "alice@masroufi.test"
         const val BOB_EMAIL = "bob@masroufi.test"

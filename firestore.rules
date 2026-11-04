@@ -1,6 +1,9 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Default deny for any path not explicitly matched under /users/{userId}.
+    // Note: Firestore rules grant access if ANY matching rule allows it; this fallback
+    // ensures unmapped top-level collections remain inaccessible by default.
     match /{document=**} {
       allow read, write: if false;
     }
@@ -36,13 +39,13 @@ service cloud.firestore {
              ]) &&
              data.userId is string && data.userId == request.auth.uid &&
              data.baseBudget is number && data.baseBudget >= 0 && data.baseBudget <= 100000000 &&
-             data.payCycleDay is int && data.payCycleDay >= 1 && data.payCycleDay <= 31 &&
+             data.payCycleDay is int && data.payCycleDay >= 1 && data.payCycleDay <= 28 &&
              data.rolloverEnabled is bool &&
              data.language is string && data.language in ['fr', 'ar', 'darija', 'en'] &&
              data.isDarkTheme is bool &&
              data.seeded is bool &&
-             data.createdAt is timestamp &&
-             data.updatedAt is timestamp;
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidTransactionItem(data) {
@@ -61,10 +64,12 @@ service cloud.firestore {
              data.envelopeKey is string && data.envelopeKey.size() >= 1 && data.envelopeKey.size() <= 60 &&
              data.accountId is string && data.accountId.size() >= 1 && data.accountId.size() <= 80 &&
              data.toAccountId is string && data.toAccountId.size() <= 80 &&
+             ((data.type == 'transfer' && data.toAccountId.size() >= 1 && data.toAccountId != data.accountId) ||
+              (data.type in ['expense', 'income'] && data.toAccountId.size() == 0)) &&
              data.desc is string && data.desc.size() <= 250 &&
              data.isoDate is string && data.isoDate.size() >= 1 && data.isoDate.size() <= 20 &&
-             data.createdAt is timestamp &&
-             data.updatedAt is timestamp;
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidAccountItem(data) {
@@ -79,8 +84,8 @@ service cloud.firestore {
              data.kind is string && data.kind in ['cash', 'bank', 'wallet'] &&
              data.initialBalance is number && data.initialBalance >= -100000000 && data.initialBalance <= 100000000 &&
              data.colorHex is string && data.colorHex.size() >= 1 && data.colorHex.size() <= 20 &&
-             data.createdAt is timestamp &&
-             data.updatedAt is timestamp;
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidEnvelopeConfig(data) {
@@ -101,8 +106,8 @@ service cloud.firestore {
              data.percentage is number && data.percentage >= 0 && data.percentage <= 100 &&
              data.hasCap is bool &&
              data.colorHex is string && data.colorHex.size() >= 1 && data.colorHex.size() <= 20 &&
-             data.createdAt is timestamp &&
-             data.updatedAt is timestamp;
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     function isValidFinancialItem(data) {
@@ -125,8 +130,8 @@ service cloud.firestore {
              data.dayOrTurn is int && data.dayOrTurn >= 0 && data.dayOrTurn <= 366 &&
              data.extraInt is int && data.extraInt >= 0 && data.extraInt <= 366 &&
              data.dateOrCycle is string && data.dateOrCycle.size() <= 250 &&
-             data.createdAt is timestamp &&
-             data.updatedAt is timestamp;
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
     match /users/{userId} {
@@ -135,7 +140,8 @@ service cloud.firestore {
       allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
       allow update: if isOwner(userId) && isValidId(userId) &&
                        isValidUserProfile(incoming()) &&
-                       incoming().userId == existing().userId;
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt;
       allow delete: if isOwner(userId) && isValidId(userId);
 
       match /transactions/{txId} {
@@ -145,7 +151,8 @@ service cloud.firestore {
                          isValidTransactionItem(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(txId) &&
                          isValidTransactionItem(incoming()) &&
-                         incoming().userId == existing().userId;
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(txId);
       }
 
@@ -156,7 +163,8 @@ service cloud.firestore {
                          isValidAccountItem(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(accId) &&
                          isValidAccountItem(incoming()) &&
-                         incoming().userId == existing().userId;
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(accId);
       }
 
@@ -167,7 +175,8 @@ service cloud.firestore {
                          isValidEnvelopeConfig(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(envId) &&
                          isValidEnvelopeConfig(incoming()) &&
-                         incoming().userId == existing().userId;
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(envId);
       }
 
@@ -178,7 +187,8 @@ service cloud.firestore {
                          isValidFinancialItem(incoming());
         allow update: if isOwner(userId) && isValidId(userId) && isValidId(itemId) &&
                          isValidFinancialItem(incoming()) &&
-                         incoming().userId == existing().userId;
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
       }
     }

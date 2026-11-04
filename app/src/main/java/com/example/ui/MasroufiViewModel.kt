@@ -214,10 +214,41 @@ object BackupSerializer {
         return root.toString(2)
     }
 
+    private const val MAX_BACKUP_ITEMS = 5_000
+    private val VALID_ID_REGEX = Regex("^[a-zA-Z0-9_\\-]{1,128}$")
+    private val ALLOWED_LANGUAGES = setOf("fr", "ar", "darija", "en")
+    private val ALLOWED_ACCOUNT_KINDS = setOf("cash", "bank", "wallet")
+    private val ALLOWED_ITEM_TYPES = setOf("goal", "bill", "debt", "daret", "seasonal", "preset", "custom_prefs")
+    private val ALLOWED_TX_TYPES = setOf("expense", "income", "transfer")
+
+    private fun requireValidBackupId(id: String, fieldLabel: String): String {
+        val trimmed = id.trim()
+        require(VALID_ID_REGEX.matches(trimmed)) {
+            "Identifiant '$fieldLabel' invalide ('$trimmed'). Caractères autorisés : lettres, chiffres, '-' et '_'."
+        }
+        return trimmed
+    }
+
+    private fun requireFiniteInRange(value: Double, min: Double, max: Double, fieldLabel: String): Double {
+        require(!value.isNaN() && !value.isInfinite() && value in min..max) {
+            "Valeur numérique '$fieldLabel' hors limites ($value)."
+        }
+        return value
+    }
+
     fun decodeBackup(rawJson: String, currentUserId: String, fallbackProfile: UserProfile): ParsedBackupPayload {
+        val rawBytes = rawJson.toByteArray(Charsets.UTF_8).size
+        require(rawBytes <= AppSecurityManager.MAX_BACKUP_FILE_BYTES) {
+            "Sauvegarde trop volumineuse ($rawBytes octets > 10 Mo max)."
+        }
         val trimmed = rawJson.trim()
+        require(trimmed.isNotEmpty()) { "Le contenu de la sauvegarde est vide." }
+
         if (trimmed.startsWith("[")) {
             val txArray = JSONArray(trimmed)
+            require(txArray.length() <= MAX_BACKUP_ITEMS) {
+                "Trop de transactions dans la sauvegarde (${txArray.length()} > $MAX_BACKUP_ITEMS max)."
+            }
             return ParsedBackupPayload(
                 backupVersion = 1,
                 profile = null,
@@ -233,16 +264,43 @@ object BackupSerializer {
         val version = obj.optInt("backupVersion", 1)
 
         val profileObj = obj.optJSONObject("profile")
+        val rawBudget = if (profileObj != null && profileObj.has("baseBudget")) {
+            profileObj.getDouble("baseBudget")
+        } else if (obj.has("baseBudget")) {
+            obj.getDouble("baseBudget")
+        } else {
+            fallbackProfile.baseBudget
+        }
+        val validBudget = requireFiniteInRange(rawBudget, 0.0, 100_000_000.0, "baseBudget").coerceAtLeast(100.0)
+
+        val rawPayDay = if (profileObj != null && profileObj.has("payCycleDay")) {
+            profileObj.getInt("payCycleDay")
+        } else if (obj.has("payCycleDay")) {
+            obj.getInt("payCycleDay")
+        } else {
+            fallbackProfile.payCycleDay
+        }
+        require(rawPayDay in 1..28) {
+            "Jour de cycle salarial invalide ($rawPayDay). Doit être compris entre 1 et 28."
+        }
+
+        val rawLang = if (profileObj != null && profileObj.has("language")) {
+            profileObj.getString("language").trim()
+        } else {
+            fallbackProfile.language
+        }
+        require(rawLang in ALLOWED_LANGUAGES) {
+            "Langue de profil non supportée ('$rawLang')."
+        }
+
         val restoredProfile = UserProfile(
             id = currentUserId,
             userId = currentUserId,
-            baseBudget = (profileObj?.optDouble("baseBudget", obj.optDouble("baseBudget", fallbackProfile.baseBudget))
-                ?: obj.optDouble("baseBudget", fallbackProfile.baseBudget)).coerceAtLeast(100.0),
-            payCycleDay = (profileObj?.optInt("payCycleDay", obj.optInt("payCycleDay", fallbackProfile.payCycleDay))
-                ?: obj.optInt("payCycleDay", fallbackProfile.payCycleDay)).coerceIn(1, 28),
+            baseBudget = validBudget,
+            payCycleDay = rawPayDay,
             rolloverEnabled = profileObj?.optBoolean("rolloverEnabled", obj.optBoolean("rolloverEnabled", true))
                 ?: obj.optBoolean("rolloverEnabled", true),
-            language = profileObj?.optString("language", fallbackProfile.language)?.ifBlank { "fr" } ?: fallbackProfile.language,
+            language = rawLang,
             isDarkTheme = profileObj?.optBoolean("isDarkTheme", fallbackProfile.isDarkTheme) ?: fallbackProfile.isDarkTheme,
             seeded = true
         )
@@ -250,13 +308,14 @@ object BackupSerializer {
         val customObj = obj.optJSONObject("customPrefs")
         val restoredCustomPrefs = if (customObj != null) {
             val mask = customObj.optInt("visibilityMask", 127)
+            require(mask in 0..366) { "visibilityMask invalide ($mask)." }
             val hasInsightsBit = mask >= 64
             val orderStr = customObj.optString("dashboardOrder", "")
             CustomizationPrefs(
-                accentPalette = customObj.optString("accentPalette", "emerald").ifBlank { "emerald" },
-                currencySymbol = customObj.optString("currencySymbol", "DH").ifBlank { "DH" },
-                customTitle = customObj.optString("customTitle", ""),
-                customSubtitle = customObj.optString("customSubtitle", ""),
+                accentPalette = customObj.optString("accentPalette", "emerald").ifBlank { "emerald" }.take(30),
+                currencySymbol = customObj.optString("currencySymbol", "DH").ifBlank { "DH" }.take(10),
+                customTitle = customObj.optString("customTitle", "").take(80),
+                customSubtitle = customObj.optString("customSubtitle", "").take(200),
                 showSafeToSpend = (mask and 1) != 0,
                 showAccountsCard = (mask and 2) != 0,
                 showQuickPresetsCard = (mask and 4) != 0,
@@ -268,70 +327,121 @@ object BackupSerializer {
             )
         } else null
 
-        val accountsList = mutableListOf<AccountItem>()
         val accArr = obj.optJSONArray("accounts")
+        val envArr = obj.optJSONArray("envelopes")
+        val itemsArr = obj.optJSONArray("financialItems")
+        val txArr = obj.optJSONArray("transactions") ?: JSONArray()
+
+        val totalDeclaredItems = (accArr?.length() ?: 0) +
+            (envArr?.length() ?: 0) +
+            (itemsArr?.length() ?: 0) +
+            txArr.length()
+        require(totalDeclaredItems <= MAX_BACKUP_ITEMS) {
+            "Sauvegarde dépassant la limite de sécurité ($totalDeclaredItems éléments > $MAX_BACKUP_ITEMS max)."
+        }
+
+        val accountsList = mutableListOf<AccountItem>()
         if (accArr != null) {
             for (i in 0 until accArr.length()) {
-                val a = accArr.optJSONObject(i) ?: continue
+                val a = accArr.optJSONObject(i) ?: throw IllegalArgumentException("Compte #$i invalide.")
+                val id = requireValidBackupId(a.optString("id", "acc_restored_$i"), "account.id")
+                val name = a.optString("name", "").trim()
+                require(name.length in 1..80) { "Nom du compte '$id' invalide (1..80 caractères requis)." }
+                val kind = a.optString("kind", "cash").trim()
+                require(kind in ALLOWED_ACCOUNT_KINDS) { "Type de compte '$kind' invalide pour '$id'." }
+                val initBal = requireFiniteInRange(
+                    a.optDouble("initialBalance", 0.0),
+                    -100_000_000.0,
+                    100_000_000.0,
+                    "account.initialBalance"
+                )
+                val colorHex = a.optString("colorHex", "#10B981").trim().ifBlank { "#10B981" }
+                require(colorHex.length in 1..20) { "Couleur invalide pour le compte '$id'." }
                 accountsList.add(
                     AccountItem(
-                        id = a.optString("id", "acc_restored_$i"),
+                        id = id,
                         userId = currentUserId,
-                        name = a.optString("name", "Compte"),
-                        kind = a.optString("kind", "cash"),
-                        initialBalance = a.optDouble("initialBalance", 0.0),
-                        colorHex = a.optString("colorHex", "#10B981")
+                        name = name,
+                        kind = kind,
+                        initialBalance = initBal,
+                        colorHex = colorHex
                     )
                 )
             }
         }
 
         val envelopesList = mutableListOf<EnvelopeConfig>()
-        val envArr = obj.optJSONArray("envelopes")
         if (envArr != null) {
             for (i in 0 until envArr.length()) {
-                val e = envArr.optJSONObject(i) ?: continue
-                val nFr = e.optString("nameFr", "Catégorie")
+                val e = envArr.optJSONObject(i) ?: throw IllegalArgumentException("Enveloppe #$i invalide.")
+                val id = requireValidBackupId(e.optString("id", "env_restored_$i"), "envelope.id")
+                val key = e.optString("key", "custom_$i").trim()
+                require(key.length in 1..60) { "Clé d'enveloppe invalide pour '$id'." }
+                val nFr = e.optString("nameFr", "").trim()
+                require(nFr.length in 1..100) { "Nom d'enveloppe (FR) invalide pour '$id'." }
+                val pct = requireFiniteInRange(e.optDouble("percentage", 0.0), 0.0, 100.0, "envelope.percentage")
+                val colorHex = e.optString("colorHex", "#10B981").trim().ifBlank { "#10B981" }
+                require(colorHex.length in 1..20) { "Couleur d'enveloppe invalide pour '$id'." }
                 envelopesList.add(
                     EnvelopeConfig(
-                        id = e.optString("id", "env_restored_$i"),
+                        id = id,
                         userId = currentUserId,
-                        key = e.optString("key", "custom_$i"),
+                        key = key,
                         nameFr = nFr,
-                        nameAr = e.optString("nameAr", nFr),
-                        nameDarija = e.optString("nameDarija", nFr),
-                        nameEn = e.optString("nameEn", nFr),
-                        percentage = e.optDouble("percentage", 0.0),
+                        nameAr = e.optString("nameAr", nFr).trim().ifBlank { nFr }.take(100),
+                        nameDarija = e.optString("nameDarija", nFr).trim().ifBlank { nFr }.take(100),
+                        nameEn = e.optString("nameEn", nFr).trim().ifBlank { nFr }.take(100),
+                        percentage = pct,
                         hasCap = e.optBoolean("hasCap", true),
-                        colorHex = e.optString("colorHex", "#10B981")
+                        colorHex = colorHex
                     )
                 )
             }
         }
 
         val itemsList = mutableListOf<FinancialItem>()
-        val itemsArr = obj.optJSONArray("financialItems")
         if (itemsArr != null) {
             for (i in 0 until itemsArr.length()) {
-                val itObj = itemsArr.optJSONObject(i) ?: continue
+                val itObj = itemsArr.optJSONObject(i) ?: throw IllegalArgumentException("Élément financier #$i invalide.")
+                val id = requireValidBackupId(itObj.optString("id", "item_restored_$i"), "financialItem.id")
+                val itemType = itObj.optString("itemType", "").trim()
+                require(itemType in ALLOWED_ITEM_TYPES) {
+                    "Type d'élément financier non autorisé ('$itemType') pour '$id'."
+                }
+                val name = itObj.optString("name", "").trim()
+                require(name.length in 1..120) { "Nom d'élément financier invalide pour '$id'." }
+                val subtitle = itObj.optString("subtitle", "")
+                require(subtitle.length <= 250) { "Sous-titre trop long pour '$id'." }
+                val amount = requireFiniteInRange(itObj.optDouble("amount", 0.0), 0.0, 100_000_000.0, "financialItem.amount")
+                val secAmount = requireFiniteInRange(
+                    itObj.optDouble("secondaryAmount", 0.0),
+                    0.0,
+                    100_000_000.0,
+                    "financialItem.secondaryAmount"
+                )
+                val dayOrTurn = itObj.optInt("dayOrTurn", 1)
+                require(dayOrTurn in 0..366) { "dayOrTurn hors limites ($dayOrTurn) pour '$id'." }
+                val extraInt = itObj.optInt("extraInt", 0)
+                require(extraInt in 0..366) { "extraInt hors limites ($extraInt) pour '$id'." }
+                val dateOrCycle = itObj.optString("dateOrCycle", "")
+                require(dateOrCycle.length <= 250) { "dateOrCycle trop long pour '$id'." }
                 itemsList.add(
                     FinancialItem(
-                        id = itObj.optString("id", "item_restored_$i"),
+                        id = id,
                         userId = currentUserId,
-                        itemType = itObj.optString("itemType", "goal"),
-                        name = itObj.optString("name", "Élément"),
-                        subtitle = itObj.optString("subtitle", ""),
-                        amount = itObj.optDouble("amount", 0.0),
-                        secondaryAmount = itObj.optDouble("secondaryAmount", 0.0),
-                        dayOrTurn = itObj.optInt("dayOrTurn", 1),
-                        extraInt = itObj.optInt("extraInt", 0),
-                        dateOrCycle = itObj.optString("dateOrCycle", "")
+                        itemType = itemType,
+                        name = name,
+                        subtitle = subtitle,
+                        amount = amount,
+                        secondaryAmount = secAmount,
+                        dayOrTurn = dayOrTurn,
+                        extraInt = extraInt,
+                        dateOrCycle = dateOrCycle
                     )
                 )
             }
         }
 
-        val txArr = obj.optJSONArray("transactions") ?: JSONArray()
         val txsList = parseTransactionsArray(txArr, currentUserId)
 
         return ParsedBackupPayload(
@@ -356,6 +466,10 @@ object BackupSerializer {
         currentUserId: String,
         fallbackProfile: UserProfile
     ): BackupImportPreview {
+        val rawBytes = rawContent.toByteArray(Charsets.UTF_8).size
+        require(rawBytes <= AppSecurityManager.MAX_BACKUP_FILE_BYTES) {
+            "Sauvegarde trop volumineuse ($rawBytes octets > 10 Mo max)."
+        }
         val isEnc = AppSecurityManager.isEncryptedBackup(rawContent)
         val plainJson = if (isEnc) {
             AppSecurityManager.decryptBackupJson(rawContent, password)
@@ -385,33 +499,63 @@ object BackupSerializer {
     }
 
     private fun parseTransactionsArray(txArray: JSONArray, currentUserId: String): List<TransactionItem> {
+        require(txArray.length() <= MAX_BACKUP_ITEMS) {
+            "Trop de transactions dans la sauvegarde (${txArray.length()} > $MAX_BACKUP_ITEMS max)."
+        }
         val list = mutableListOf<TransactionItem>()
         for (i in 0 until txArray.length()) {
-            val item = txArray.optJSONObject(i) ?: continue
-            val amt = item.optDouble("amount", item.optDouble("montant", 0.0))
-            if (amt > 0.0) {
-                val cat = item.optString("category", "Autre / Imprévus")
-                val desc = item.optString("desc", "Transaction")
-                val rawIso = item.optString("iso", item.optString("isoDate", ""))
-                val validatedIso = PayCycleEngine.requireOrNormalizeIsoDate(rawIso)
-                list.add(
-                    TransactionItem(
-                        id = item.optString("id", "tx_${System.currentTimeMillis()}_$i"),
-                        userId = currentUserId,
-                        type = item.optString("type", "expense"),
-                        amount = amt,
-                        category = cat,
-                        envelopeKey = item.optString(
-                            "envelopeKey",
-                            PayCycleEngine.resolveEnvelopeKey(cat, desc, emptyList())
-                        ),
-                        accountId = item.optString("accountId", "acc_cash"),
-                        toAccountId = item.optString("toAccountId", ""),
-                        desc = desc,
-                        isoDate = validatedIso
-                    )
-                )
+            val item = txArray.optJSONObject(i) ?: throw IllegalArgumentException("Transaction #$i invalide.")
+            val id = requireValidBackupId(
+                item.optString("id", "tx_${System.currentTimeMillis()}_$i"),
+                "transaction.id"
+            )
+            val txType = item.optString("type", "expense").trim()
+            require(txType in ALLOWED_TX_TYPES) {
+                "Type de transaction non autorisé ('$txType') pour '$id'."
             }
+            val amt = if (item.has("amount")) item.getDouble("amount") else item.optDouble("montant", 0.0)
+            requireFiniteInRange(amt, 0.01, 100_000_000.0, "transaction.amount")
+
+            val cat = item.optString("category", "Autre / Imprévus").trim().ifBlank { "Autre / Imprévus" }
+            require(cat.length in 1..120) { "Catégorie de transaction invalide pour '$id'." }
+            val desc = item.optString("desc", "Transaction")
+            require(desc.length <= 250) { "Description trop longue pour la transaction '$id'." }
+            val accountId = item.optString("accountId", "acc_cash").trim().ifBlank { "acc_cash" }
+            require(accountId.length in 1..80) { "accountId invalide pour la transaction '$id'." }
+            val rawToAccountId = item.optString("toAccountId", "").trim()
+            val toAccountId = if (txType == "transfer") {
+                require(rawToAccountId.isNotBlank() && rawToAccountId != accountId && rawToAccountId.length <= 80) {
+                    "Un transfert doit spécifier un compte destinataire distinct du compte source ('$id')."
+                }
+                rawToAccountId
+            } else {
+                require(rawToAccountId.isEmpty()) {
+                    "Une opération '$txType' ne doit pas définir toAccountId ('$id')."
+                }
+                ""
+            }
+            val rawIso = item.optString("iso", item.optString("isoDate", ""))
+            val validatedIso = PayCycleEngine.requireOrNormalizeIsoDate(rawIso)
+            val envKey = item.optString(
+                "envelopeKey",
+                PayCycleEngine.resolveEnvelopeKey(cat, desc, emptyList())
+            ).trim().ifBlank { "autre" }
+            require(envKey.length in 1..60) { "envelopeKey invalide pour '$id'." }
+
+            list.add(
+                TransactionItem(
+                    id = id,
+                    userId = currentUserId,
+                    type = txType,
+                    amount = amt,
+                    category = cat,
+                    envelopeKey = envKey,
+                    accountId = accountId,
+                    toAccountId = toAccountId,
+                    desc = desc,
+                    isoDate = validatedIso
+                )
+            )
         }
         return list
     }
@@ -465,13 +609,16 @@ data class DashboardState(
 
 class MasroufiViewModel(
     private val repository: MasroufiRepository,
-    private val currentUserId: String
+    private val currentUserId: String,
+    initialHideAmounts: Boolean = false,
+    initialRollbackSnapshot: String? = null,
+    private val onRollbackSnapshotChanged: (String?) -> Unit = {}
 ) : ViewModel() {
 
     private val _selectedCycleKey = MutableStateFlow<String?>(null)
     private val _filterState = MutableStateFlow(FilterState())
     private val _whatIfState = MutableStateFlow(WhatIfSimulatorState())
-    private val _hideAmounts = MutableStateFlow(false)
+    private val _hideAmounts = MutableStateFlow(initialHideAmounts)
     private val _lastDeletedTx = MutableStateFlow<TransactionItem?>(null)
     val lastDeletedTx: StateFlow<TransactionItem?> = _lastDeletedTx.asStateFlow()
 
@@ -479,6 +626,7 @@ class MasroufiViewModel(
     private val _optimisticProfile = MutableStateFlow<UserProfile?>(null)
     private val _optimisticCustomPrefs = MutableStateFlow<CustomizationPrefs?>(null)
     private val _errorMessage = MutableStateFlow<String?>(null)
+    private val _customPrefsItemCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
 
     init {
         safeLaunch("ensureSeeded") {
@@ -562,6 +710,9 @@ class MasroufiViewModel(
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find { it.itemType == "custom_prefs" || it.id == "custom_prefs" }
+        if (storedPrefsItem?.createdAt != null) {
+            _customPrefsItemCreatedAt.value = storedPrefsItem.createdAt
+        }
         val customPrefs = optCustomPrefs ?: CustomizationPrefs.fromFinancialItem(storedPrefsItem)
         val curSymbol = customPrefs.currencySymbol.ifBlank { "DH" }
 
@@ -710,7 +861,7 @@ class MasroufiViewModel(
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000L),
-        initialValue = DashboardState()
+        initialValue = DashboardState(hideAmounts = initialHideAmounts)
     )
 
     private fun computeWeeklyBreakdown(
@@ -782,7 +933,7 @@ class MasroufiViewModel(
 
     fun saveCustomizationPrefs(prefs: CustomizationPrefs) {
         _optimisticCustomPrefs.value = prefs
-        val item = buildCustomPrefsFinancialItem(prefs)
+        val item = buildCustomPrefsFinancialItem(prefs, _customPrefsItemCreatedAt.value)
         safeLaunch("saveCustomizationPrefs") {
             repository.upsertFinancialItem(item)
         }
@@ -805,7 +956,10 @@ class MasroufiViewModel(
         saveCustomizationPrefs(curPrefs.withSectionVisibility(sectionKey, visible))
     }
 
-    private fun buildCustomPrefsFinancialItem(prefs: CustomizationPrefs): FinancialItem {
+    private fun buildCustomPrefsFinancialItem(
+        prefs: CustomizationPrefs,
+        existingCreatedAt: com.google.firebase.Timestamp? = null
+    ): FinancialItem {
         val orderCsv = prefs.normalizedOrder().joinToString(",")
         return FinancialItem(
             id = "custom_prefs",
@@ -817,13 +971,24 @@ class MasroufiViewModel(
             secondaryAmount = 0.0,
             dayOrTurn = prefs.toVisibilityMask(),
             extraInt = 0,
-            dateOrCycle = prefs.customSubtitle.take(200)
+            dateOrCycle = prefs.customSubtitle.take(200),
+            createdAt = existingCreatedAt
         )
     }
 
     fun loadDemoData(onDone: () -> Unit = {}) {
+        val s = uiState.value
+        val existingAccs = s.accounts.map { it.account }
+        val existingEnvs = s.envelopes.map { it.config }
+        val existingItems = s.presets + s.goals + s.bills + s.debts + s.darets + s.seasonals
+        val existingTxs = s.allTransactions
         safeLaunch("loadDemoData") {
-            repository.loadDemoData()
+            repository.loadDemoData(
+                existingAccounts = existingAccs,
+                existingEnvelopes = existingEnvs,
+                existingItems = existingItems,
+                existingTransactions = existingTxs
+            )
             onDone()
         }
     }
@@ -832,12 +997,12 @@ class MasroufiViewModel(
         val s = uiState.value
         val txIds = s.allTransactions.map { it.id }
         val itemIds = (s.goals + s.bills + s.debts + s.darets + s.seasonals).map { it.id }
-        val accIds = s.accounts.map { it.account.id }
+        val accs = s.accounts.map { it.account }
         safeLaunch("resetToCleanAccount") {
             repository.resetToCleanAccount(
                 existingTxIds = txIds,
                 existingItemIdsToClear = itemIds,
-                existingAccountIds = accIds
+                existingAccounts = accs
             )
             onDone()
         }
@@ -946,8 +1111,14 @@ class MasroufiViewModel(
     }
 
     fun saveEnvelopeConfig(config: EnvelopeConfig) {
+        val existing = uiState.value.envelopes.find { it.config.id == config.id }?.config
         safeLaunch("saveEnvelopeConfig") {
-            repository.upsertEnvelope(config.copy(userId = currentUserId))
+            repository.upsertEnvelope(
+                config.copy(
+                    userId = currentUserId,
+                    createdAt = config.createdAt ?: existing?.createdAt
+                )
+            )
         }
     }
 
@@ -984,8 +1155,15 @@ class MasroufiViewModel(
     }
 
     fun saveFinancialItem(item: FinancialItem) {
+        val s = uiState.value
+        val existing = (s.presets + s.goals + s.bills + s.debts + s.darets + s.seasonals).find { it.id == item.id }
         safeLaunch("saveFinancialItem") {
-            repository.upsertFinancialItem(item.copy(userId = currentUserId))
+            repository.upsertFinancialItem(
+                item.copy(
+                    userId = currentUserId,
+                    createdAt = item.createdAt ?: existing?.createdAt
+                )
+            )
         }
     }
 
@@ -1001,8 +1179,10 @@ class MasroufiViewModel(
         if (PayCycleEngine.isBillPaidInCycle(bill, cycleKey)) return
         val updatedCycles = (bill.dateOrCycle.split(",").filter { it.isNotBlank() } + cycleKey).distinct().joinToString(",")
         val updatedBill = bill.copy(dateOrCycle = updatedCycles)
+        val txId = "tx_bill_${bill.id}_$cycleKey"
+        val existingTx = uiState.value.allTransactions.find { it.id == txId }
         val tx = TransactionItem(
-            id = "tx_bill_${bill.id}_$cycleKey",
+            id = txId,
             userId = currentUserId,
             type = "expense",
             amount = bill.amount.coerceAtLeast(1.0),
@@ -1010,7 +1190,8 @@ class MasroufiViewModel(
             envelopeKey = "charges",
             accountId = "acc_bank",
             desc = bill.name,
-            isoDate = PayCycleEngine.todayIso()
+            isoDate = PayCycleEngine.todayIso(),
+            createdAt = existingTx?.createdAt
         )
         safeLaunch("payRecurringBill") {
             repository.upsertItemAndTransactionAtomically(updatedBill, tx)
@@ -1040,8 +1221,10 @@ class MasroufiViewModel(
         val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
         val nextPaid = (daret.extraInt + 1).coerceAtMost(totalMembers)
         val updatedDaret = daret.copy(extraInt = nextPaid)
+        val txId = "tx_daret_${daret.id}_round_$nextPaid"
+        val existingTx = uiState.value.allTransactions.find { it.id == txId }
         val tx = TransactionItem(
-            id = "tx_daret_${daret.id}_round_$nextPaid",
+            id = txId,
             userId = currentUserId,
             type = "expense",
             amount = daret.amount.coerceAtLeast(1.0),
@@ -1049,7 +1232,8 @@ class MasroufiViewModel(
             envelopeKey = "epargne",
             accountId = "acc_bank",
             desc = "Cotisation ${daret.name} ($nextPaid/$totalMembers)",
-            isoDate = PayCycleEngine.todayIso()
+            isoDate = PayCycleEngine.todayIso(),
+            createdAt = existingTx?.createdAt
         )
         safeLaunch("payDaretRound") {
             repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
@@ -1085,7 +1269,7 @@ class MasroufiViewModel(
         _whatIfState.value = WhatIfSimulatorState(envelopeKey, cutPct.coerceIn(5, 80))
     }
 
-    private val _preRestoreRollbackJson = MutableStateFlow<String?>(null)
+    private val _preRestoreRollbackJson = MutableStateFlow<String?>(initialRollbackSnapshot)
     val preRestoreRollbackJson: StateFlow<String?> = _preRestoreRollbackJson.asStateFlow()
 
     /**
@@ -1130,66 +1314,106 @@ class MasroufiViewModel(
     }
 
     /**
-     * Two-phase backup restore:
-     * Phase 1: Decrypts (if AES-256-GCM encrypted) and validates the entire backup payload in memory,
-     *          and saves a pre-restore rollback snapshot of the current state.
-     * Phase 2: Executes Firestore batch writes (and deletes stale records if [replaceExisting] is true),
-     *          automatically rolling back if a mid-stream failure occurs.
+     * Two-phase backup restore (SEC-07):
+     * Phase 1: Decrypts (if AES-256-GCM encrypted) and validates the entire backup payload in memory
+     *          against size/item limits and Firestore rules constraints, and persists an encrypted
+     *          pre-restore rollback snapshot of the current state.
+     * Phase 2: Executes unified Firestore batch writes (sets + stale deletes in 400-op chunks),
+     *          and automatically replays the rollback snapshot if a mid-stream failure occurs.
      */
     fun restoreFromJson(
         rawJson: String,
         password: String = "",
         replaceExisting: Boolean = true,
+        isRollbackReplay: Boolean = false,
         onResult: (Boolean, String) -> Unit
     ) {
         safeLaunch("restoreFromJson") {
             val currentState = uiState.value
-            val rollbackSnapshot = BackupSerializer.encodeV2Backup(currentState)
-            try {
-                // Phase 1: Decrypt (if encrypted) & validate entire backup before any Firestore write
+            val rollbackSnapshot = if (!isRollbackReplay) {
+                BackupSerializer.encodeV2Backup(currentState)
+            } else null
+
+            // Phase 1: Decrypt (if encrypted) & validate entire backup in memory before any Firestore write
+            val parsed = try {
+                val rawBytes = rawJson.toByteArray(Charsets.UTF_8).size
+                require(rawBytes <= AppSecurityManager.MAX_BACKUP_FILE_BYTES) {
+                    "Sauvegarde trop volumineuse ($rawBytes octets > 10 Mo max)."
+                }
                 val plainJson = if (AppSecurityManager.isEncryptedBackup(rawJson)) {
                     AppSecurityManager.decryptBackupJson(rawJson, password)
                 } else {
                     rawJson
                 }
-                val parsed = BackupSerializer.decodeBackup(
+                BackupSerializer.decodeBackup(
                     rawJson = plainJson,
                     currentUserId = currentUserId,
                     fallbackProfile = currentState.profile
                 )
+            } catch (e: Exception) {
+                Log.w("MasroufiVM", "Phase 1 backup validation failed: ${e.message}")
+                val msg = e.localizedMessage ?: "Format invalide ou mot de passe erroné."
+                _errorMessage.value = "Erreur lors de la validation : $msg"
+                onResult(false, msg)
+                return@safeLaunch
+            }
 
-                // Save rollback snapshot before mutating state
+            // Persist encrypted rollback snapshot before mutating state
+            if (rollbackSnapshot != null) {
                 _preRestoreRollbackJson.value = rollbackSnapshot
+                onRollbackSnapshotChanged(rollbackSnapshot)
+            }
 
-                if (parsed.profile != null) {
-                    _optimisticProfile.value = parsed.profile
-                }
-                val customPrefsItem = if (parsed.customPrefs != null) {
-                    _optimisticCustomPrefs.value = parsed.customPrefs
-                    buildCustomPrefsFinancialItem(parsed.customPrefs)
-                } else null
+            val existingAccMap = currentState.accounts.associate { it.account.id to it.account.createdAt }
+            val existingEnvMap = currentState.envelopes.associate { it.config.id to it.config.createdAt }
+            val allExistingItems = currentState.presets + currentState.goals + currentState.bills +
+                currentState.debts + currentState.darets + currentState.seasonals
+            val existingItemMap = allExistingItems.associate { it.id to it.createdAt }
+            val existingTxMap = currentState.allTransactions.associate { it.id to it.createdAt }
 
-                val staleTxIds = if (replaceExisting) currentState.allTransactions.map { it.id } else emptyList()
-                val staleItemIds = if (replaceExisting && parsed.backupVersion >= 2) {
-                    (currentState.presets + currentState.goals + currentState.bills +
-                        currentState.debts + currentState.darets + currentState.seasonals).map { it.id }
-                } else emptyList()
-                val staleAccIds = if (replaceExisting && parsed.accounts.isNotEmpty()) {
-                    currentState.accounts.map { it.account.id }
-                } else emptyList()
-                val staleEnvIds = if (replaceExisting && parsed.envelopes.isNotEmpty()) {
-                    currentState.envelopes.map { it.config.id }
-                } else emptyList()
+            val profileWithCreatedAt = parsed.profile?.copy(createdAt = currentState.profile.createdAt)
+            if (profileWithCreatedAt != null) {
+                _optimisticProfile.value = profileWithCreatedAt
+            }
+            val customPrefsItem = if (parsed.customPrefs != null) {
+                _optimisticCustomPrefs.value = parsed.customPrefs
+                buildCustomPrefsFinancialItem(parsed.customPrefs, _customPrefsItemCreatedAt.value)
+            } else null
 
+            val accountsWithCreatedAt = parsed.accounts.map { acc ->
+                acc.copy(createdAt = existingAccMap[acc.id])
+            }
+            val envelopesWithCreatedAt = parsed.envelopes.map { env ->
+                env.copy(createdAt = existingEnvMap[env.id])
+            }
+            val itemsWithCreatedAt = parsed.financialItems.map { item ->
+                item.copy(createdAt = existingItemMap[item.id])
+            }
+            val txsWithCreatedAt = parsed.transactions.map { tx ->
+                tx.copy(createdAt = existingTxMap[tx.id])
+            }
+
+            val staleTxIds = if (replaceExisting) currentState.allTransactions.map { it.id } else emptyList()
+            val staleItemIds = if (replaceExisting && parsed.backupVersion >= 2) {
+                allExistingItems.map { it.id }
+            } else emptyList()
+            val staleAccIds = if (replaceExisting && parsed.accounts.isNotEmpty()) {
+                currentState.accounts.map { it.account.id }
+            } else emptyList()
+            val staleEnvIds = if (replaceExisting && parsed.envelopes.isNotEmpty()) {
+                currentState.envelopes.map { it.config.id }
+            } else emptyList()
+
+            try {
                 var finalChunks = 1
-                // Phase 2: Execute bounded batches with stale record cleanup
+                // Phase 2: Execute unified bounded batches
                 repository.restoreFullBackupAtomically(
-                    profile = parsed.profile,
+                    profile = profileWithCreatedAt,
                     customPrefsItem = customPrefsItem,
-                    accounts = parsed.accounts,
-                    envelopes = parsed.envelopes,
-                    financialItems = parsed.financialItems,
-                    transactions = parsed.transactions,
+                    accounts = accountsWithCreatedAt,
+                    envelopes = envelopesWithCreatedAt,
+                    financialItems = itemsWithCreatedAt,
+                    transactions = txsWithCreatedAt,
                     staleTxIdsToDelete = staleTxIds,
                     staleItemIdsToDelete = staleItemIds,
                     staleAccountIdsToDelete = staleAccIds,
@@ -1201,8 +1425,32 @@ class MasroufiViewModel(
                     "Restauration réussie (${parsed.transactions.size} op., $finalChunks lot(s) synchronisé(s)) !"
                 )
             } catch (e: Exception) {
-                Log.e("MasroufiVM", "Restore JSON failed", e)
-                val msg = e.localizedMessage ?: "Format invalide ou mot de passe erroné."
+                Log.e("MasroufiVM", "Phase 2 restore failed; attempting automatic rollback", e)
+                // Automatic rollback replay if a multi-chunk restore failed mid-stream (SEC-07)
+                if (!isRollbackReplay && !rollbackSnapshot.isNullOrBlank()) {
+                    runCatching {
+                        val rbParsed = BackupSerializer.decodeBackup(
+                            rawJson = rollbackSnapshot,
+                            currentUserId = currentUserId,
+                            fallbackProfile = currentState.profile
+                        )
+                        repository.restoreFullBackupAtomically(
+                            profile = rbParsed.profile?.copy(createdAt = currentState.profile.createdAt),
+                            customPrefsItem = rbParsed.customPrefs?.let {
+                                buildCustomPrefsFinancialItem(it, _customPrefsItemCreatedAt.value)
+                            },
+                            accounts = rbParsed.accounts.map { it.copy(createdAt = existingAccMap[it.id]) },
+                            envelopes = rbParsed.envelopes.map { it.copy(createdAt = existingEnvMap[it.id]) },
+                            financialItems = rbParsed.financialItems.map { it.copy(createdAt = existingItemMap[it.id]) },
+                            transactions = rbParsed.transactions.map { it.copy(createdAt = existingTxMap[it.id]) },
+                            staleTxIdsToDelete = parsed.transactions.map { it.id },
+                            staleItemIdsToDelete = parsed.financialItems.map { it.id },
+                            staleAccountIdsToDelete = parsed.accounts.map { it.id },
+                            staleEnvelopeIdsToDelete = parsed.envelopes.map { it.id }
+                        )
+                    }
+                }
+                val msg = e.localizedMessage ?: "Erreur réseau lors de la restauration (Rollback appliqué)."
                 _errorMessage.value = "Erreur lors de la restauration : $msg"
                 onResult(false, msg)
             }
@@ -1219,8 +1467,12 @@ class MasroufiViewModel(
             rawJson = snapshot,
             password = "",
             replaceExisting = true,
+            isRollbackReplay = true,
             onResult = { ok, _ ->
-                if (ok) _preRestoreRollbackJson.value = null
+                if (ok) {
+                    _preRestoreRollbackJson.value = null
+                    onRollbackSnapshotChanged(null)
+                }
                 onResult(ok)
             }
         )

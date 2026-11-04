@@ -263,34 +263,51 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `security manager hashes PIN with PBKDF2 salt and enforces progressive lockout`() {
+    fun `security manager enforces 6-8 digit PIN with 600k PBKDF2, monotonic lockout up to 1h, and secure defaults`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        AppSecurityManager.clearPin(context)
+        context.getSharedPreferences("masroufi_security_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+
+        // SEC-05: Secure defaults on fresh install (FLAG_SECURE = true, clearCacheOnSignOut = true)
+        assertTrue(AppSecurityManager.isFlagSecureEnabled(context))
+        assertTrue(AppSecurityManager.isClearCacheOnSignOutEnabled(context))
         assertFalse(AppSecurityManager.hasPinConfigured(context))
         assertFalse(AppSecurityManager.isAppLockEnabled(context))
 
-        // Reject invalid non-digit or out-of-range PIN (supports 4..8 digits, 6 recommended)
+        // SEC-06: Reject PINs shorter than 6 digits or longer than 8 digits
         assertNull(AppSecurityManager.createSaltedPinHash("12"))
+        assertNull(AppSecurityManager.createSaltedPinHash("1234"))
+        assertNull(AppSecurityManager.createSaltedPinHash("12345"))
         assertNull(AppSecurityManager.createSaltedPinHash("123456789"))
-        assertNull(AppSecurityManager.createSaltedPinHash("abcd"))
-        assertFalse(AppSecurityManager.setPin(context, "12"))
-        assertFalse(AppSecurityManager.setPin(context, "abcd"))
+        assertNull(AppSecurityManager.createSaltedPinHash("abcdef"))
+        assertFalse(AppSecurityManager.setPin(context, "1234"))
+        assertFalse(AppSecurityManager.setPin(context, "12345"))
+        assertFalse(AppSecurityManager.setPin(context, "abcdef"))
 
-        // Two PBKDF2-HMAC-SHA256 hashes of the same 6-digit PIN must have distinct salts and distinct hashes
-        val first = AppSecurityManager.createSaltedPinHash("258046")
-        val second = AppSecurityManager.createSaltedPinHash("258046")
+        // Verify progressive lockout escalation tiers up to 1 hour (SEC-06)
+        assertEquals(600_000, AppSecurityManager.PBKDF2_ITERATIONS)
+        assertEquals(0L, AppSecurityManager.computeLockoutDurationMs(2))
+        assertEquals(30_000L, AppSecurityManager.computeLockoutDurationMs(3))
+        assertEquals(60_000L, AppSecurityManager.computeLockoutDurationMs(4))
+        assertEquals(300_000L, AppSecurityManager.computeLockoutDurationMs(5))
+        assertEquals(900_000L, AppSecurityManager.computeLockoutDurationMs(6))
+        assertEquals(1_800_000L, AppSecurityManager.computeLockoutDurationMs(7))
+        assertEquals(3_600_000L, AppSecurityManager.computeLockoutDurationMs(8))
+
+        // Two PBKDF2-HMAC-SHA256 hashes of the same 6-digit PIN have distinct salts & hashes
+        val first = AppSecurityManager.createSaltedPinHash("258046", iterations = 10_000)
+        val second = AppSecurityManager.createSaltedPinHash("258046", iterations = 10_000)
         assertNotNull(first)
         assertNotNull(second)
         assertNotEquals(first!!.first, second!!.first)
         assertNotEquals(first.second, second.second)
 
         // Store and verify 6-digit PIN via Context SharedPreferences
-        assertTrue(AppSecurityManager.setPin(context, "258046"))
+        assertTrue(AppSecurityManager.setPin(context, "258046", iterations = 600_000))
         assertEquals(6, AppSecurityManager.getConfiguredPinLength(context))
         assertTrue(AppSecurityManager.hasPinConfigured(context))
         assertTrue(AppSecurityManager.verifyPin(context, "258046"))
 
-        // Test progressive rate limiting & lockout after 3 failed attempts (F-01)
+        // Test monotonic progressive rate limiting & lockout after 3 failed attempts
         assertFalse(AppSecurityManager.verifyPin(context, "000000"))
         assertFalse(AppSecurityManager.verifyPin(context, "111111"))
         assertEquals(0, AppSecurityManager.getRemainingLockoutSeconds(context))
@@ -305,18 +322,25 @@ class ExampleRobolectricTest {
         assertEquals(0, AppSecurityManager.getRemainingLockoutSeconds(context))
         assertTrue(AppSecurityManager.verifyPin(context, "258046"))
 
-        // Toggle FLAG_SECURE and Clear Cache on Sign-Out preferences
-        AppSecurityManager.setFlagSecureEnabled(context, true)
-        assertTrue(AppSecurityManager.isFlagSecureEnabled(context))
-        AppSecurityManager.setFlagSecureEnabled(context, false)
-        assertFalse(AppSecurityManager.isFlagSecureEnabled(context))
+        // SEC-02: Verify PIN recovery pending & force interactive sign-in flags
+        assertFalse(AppSecurityManager.isPendingPinRecovery(context))
+        assertFalse(AppSecurityManager.isForceInteractiveSignInRequired(context))
+        AppSecurityManager.beginPinRecoverySignOut(context)
+        assertTrue(AppSecurityManager.isPendingPinRecovery(context))
+        assertTrue(AppSecurityManager.isForceInteractiveSignInRequired(context))
+        // PIN must STILL be configured until interactive sign-in completes
+        assertTrue(AppSecurityManager.hasPinConfigured(context))
+        AppSecurityManager.completePinRecoveryAfterInteractiveSignIn(context)
+        assertFalse(AppSecurityManager.isPendingPinRecovery(context))
+        assertFalse(AppSecurityManager.isForceInteractiveSignInRequired(context))
+        assertFalse(AppSecurityManager.hasPinConfigured(context))
 
-        AppSecurityManager.setClearCacheOnSignOutEnabled(context, true)
-        assertTrue(AppSecurityManager.isClearCacheOnSignOutEnabled(context))
-
-        // Sensitive clipboard copy & clear
-        AppSecurityManager.copySensitiveToClipboard(context, "Test", "{\"secret\":1}")
-        AppSecurityManager.clearSensitiveClipboard(context)
+        // SEC-07: Persistent encrypted rollback snapshot round-trip
+        val sampleRollback = """{"backupVersion":2,"baseBudget":6400.0}"""
+        assertTrue(AppSecurityManager.saveEncryptedRollbackSnapshot(context, sampleRollback))
+        assertEquals(sampleRollback, AppSecurityManager.loadEncryptedRollbackSnapshot(context))
+        AppSecurityManager.clearEncryptedRollbackSnapshot(context)
+        assertNull(AppSecurityManager.loadEncryptedRollbackSnapshot(context))
     }
 
     @Test
@@ -362,23 +386,35 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `AES-256-GCM backup encryption and 2-phase backup preview work accurately`() {
+    fun `AES-256-GCM backup encryption enforces 10+ char password, binds AAD header, and validates Phase 1 schema`() {
         val sampleJson = """{"backupVersion":2,"transactions":[{"id":"tx1","type":"expense","amount":50.0,"category":"Café","isoDate":"2026-11-03"}]}"""
         assertFalse(AppSecurityManager.isEncryptedBackup(sampleJson))
+
+        // SEC-03: Passwords shorter than 10 chars must be rejected
+        assertTrue(runCatching { AppSecurityManager.encryptBackupJson(sampleJson, "Short123") }.isFailure)
 
         val encrypted = AppSecurityManager.encryptBackupJson(sampleJson, "StrongPass#2026")
         assertTrue(AppSecurityManager.isEncryptedBackup(encrypted))
 
         // Preview rejects encrypted payload when password is missing or wrong
-        val missingPassResult = runCatching {
-            BackupSerializer.previewBackup(encrypted, "", "u_test", UserProfile(userId = "u_test"))
-        }
-        assertTrue(missingPassResult.isFailure)
+        assertTrue(
+            runCatching {
+                BackupSerializer.previewBackup(encrypted, "", "u_test", UserProfile(userId = "u_test"))
+            }.isFailure
+        )
+        assertTrue(
+            runCatching {
+                BackupSerializer.previewBackup(encrypted, "WrongPass#2026", "u_test", UserProfile(userId = "u_test"))
+            }.isFailure
+        )
 
-        val wrongPassResult = runCatching {
-            BackupSerializer.previewBackup(encrypted, "WrongPass", "u_test", UserProfile(userId = "u_test"))
-        }
-        assertTrue(wrongPassResult.isFailure)
+        // SEC-03: Tampering with envelope header fields (bound as GCM AAD) must fail authentication
+        val tamperedHeader = encrypted.replace("\"iterations\": 600000", "\"iterations\": 600001")
+        assertTrue(
+            runCatching {
+                AppSecurityManager.decryptBackupJson(tamperedHeader, "StrongPass#2026")
+            }.isFailure
+        )
 
         // Correct password decrypts and produces valid 2-phase preview
         val validPreview = BackupSerializer.previewBackup(encrypted, "StrongPass#2026", "u_test", UserProfile(userId = "u_test"))
@@ -386,6 +422,21 @@ class ExampleRobolectricTest {
         assertEquals(2, validPreview.backupVersion)
         assertEquals(1, validPreview.transactionsCount)
         assertTrue(validPreview.isSingleAtomicBatch)
+
+        // SEC-07 & SEC-08: Phase 1 schema validation rejects invalid payCycleDay, invalid itemType, or invalid transfer
+        val badPayDayJson = """{"backupVersion":2,"profile":{"baseBudget":6000,"payCycleDay":31,"language":"fr"}}"""
+        assertTrue(
+            runCatching {
+                BackupSerializer.decodeBackup(badPayDayJson, "u_test", UserProfile(userId = "u_test"))
+            }.isFailure
+        )
+
+        val badTransferJson = """{"backupVersion":2,"transactions":[{"id":"tx_t1","type":"transfer","amount":100.0,"category":"Transfert","accountId":"acc_cash","toAccountId":"acc_cash","isoDate":"2026-11-03"}]}"""
+        assertTrue(
+            runCatching {
+                BackupSerializer.decodeBackup(badTransferJson, "u_test", UserProfile(userId = "u_test"))
+            }.isFailure
+        )
     }
 
     @Test

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -46,6 +47,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -120,6 +122,99 @@ fun HistoryScreen(
     val hide = state.hideAmounts
     val lang = state.profile.language
     var backupPassword by remember { mutableStateOf("") }
+    var passwordValidationError by remember { mutableStateOf<String?>(null) }
+    var pendingUnencryptedExportAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    fun handleJsonExportRequest(action: (String) -> Unit) {
+        val trimmedPwd = backupPassword.trim()
+        when {
+            trimmedPwd.length >= AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH -> {
+                passwordValidationError = null
+                action(trimmedPwd)
+            }
+            trimmedPwd.isNotEmpty() -> {
+                passwordValidationError = when (lang) {
+                    "ar" -> "يجب أن تتكون كلمة مرور التشفير من ${AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH} أحرف على الأقل."
+                    "darija" -> "خاص كلمة السر ديال التشفير تكون فيها ${AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH} حروف على الأقل."
+                    "en" -> "Encryption password must be at least ${AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH} characters."
+                    else -> "Le mot de passe de chiffrement doit contenir au moins ${AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH} caractères."
+                }
+            }
+            else -> {
+                passwordValidationError = null
+                pendingUnencryptedExportAction = { action("") }
+            }
+        }
+    }
+
+    val confirmAction = pendingUnencryptedExportAction
+    if (confirmAction != null) {
+        AlertDialog(
+            onDismissRequest = { pendingUnencryptedExportAction = null },
+            modifier = Modifier.testTag("unencrypted_export_warning_dialog"),
+            title = {
+                Text(
+                    text = when (lang) {
+                        "ar" -> "تصدير غير مشفر (نص واضح)"
+                        "darija" -> "تصدير بلا تشفير (نص واضح)"
+                        "en" -> "Unencrypted Plaintext Export"
+                        else -> "Export non chiffré (texte clair)"
+                    },
+                    fontWeight = FontWeight.ExtraBold
+                )
+            },
+            text = {
+                Text(
+                    text = when (lang) {
+                        "ar" -> "تحذير أمني: هذا الملف غير مشفر ويحتوي على سجل معاملاتك المالية بنص واضح. لحماية بياناتك بـ AES-256-GCM، ألغِ العملية وأدخل كلمة مرور من 10 أحرف أو أكثر."
+                        "darija" -> "رد بالك: هاد الملف ما مشفرش وكيبين المعاملات المالية ديالك بنص واضح. إلا بغيتي تشفرو بـ AES-256-GCM، دير كلمة سر فيها 10 حروف أو كثر."
+                        "en" -> "Security warning: This export is unencrypted plaintext containing your financial history. To encrypt with AES-256-GCM, cancel and set a 10+ character password."
+                        else -> "Avertissement : Cet export est en texte clair non chiffré et contient votre historique financier. Pour chiffrer en AES-256-GCM, annulez et définissez un mot de passe de 10+ caractères."
+                    }
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val toRun = confirmAction
+                        pendingUnencryptedExportAction = null
+                        toRun()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = AccentCoral,
+                        contentColor = Color.White
+                    ),
+                    modifier = Modifier.testTag("confirm_unencrypted_export_btn")
+                ) {
+                    Text(
+                        text = when (lang) {
+                            "ar" -> "متابعة بدون تشفير"
+                            "darija" -> "كمل بلا تشفير"
+                            "en" -> "Export Unencrypted"
+                            else -> "Exporter en clair"
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { pendingUnencryptedExportAction = null },
+                    modifier = Modifier.testTag("cancel_unencrypted_export_btn")
+                ) {
+                    Text(
+                        text = when (lang) {
+                            "ar" -> "إلغاء"
+                            "darija" -> "إلغاء"
+                            "en" -> "Cancel"
+                            else -> "Annuler"
+                        }
+                    )
+                }
+            }
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -356,7 +451,11 @@ fun HistoryScreen(
                             color = AccentEmerald.copy(alpha = 0.16f)
                         ) {
                             Text(
-                                text = if (backupPassword.trim().length >= 4) "AES-256-GCM Actif" else "Format Complet v2.0",
+                                text = if (backupPassword.trim().length >= AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH) {
+                                    "AES-256-GCM Actif (600k PBKDF2)"
+                                } else {
+                                    "Format Complet v2.0"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = AccentEmerald,
                                 fontWeight = FontWeight.Bold,
@@ -374,14 +473,17 @@ fun HistoryScreen(
 
                     OutlinedTextField(
                         value = backupPassword,
-                        onValueChange = { backupPassword = it },
+                        onValueChange = {
+                            backupPassword = it
+                            passwordValidationError = null
+                        },
                         label = {
                             Text(
                                 when (state.profile.language) {
-                                    "ar" -> "كلمة مرور تشفير النسخة الاحتياطية AES-256-GCM (اختياري، 4 أحرف+)"
-                                    "darija" -> "كلمة السر لتشفير النسخة بـ AES-256-GCM (اختياري، 4 حروف+)"
-                                    "en" -> "AES-256-GCM Backup Password (optional, 4+ chars)"
-                                    else -> "Mot de passe chiffrement AES-256-GCM (optionnel, 4+ car.)"
+                                    "ar" -> "كلمة مرور تشفير النسخة الاحتياطية AES-256-GCM (10 أحرف+)"
+                                    "darija" -> "كلمة السر لتشفير النسخة بـ AES-256-GCM (10 حروف+)"
+                                    "en" -> "AES-256-GCM Backup Password (10+ chars)"
+                                    else -> "Mot de passe chiffrement AES-256-GCM (10+ car.)"
                                 },
                                 fontSize = 11.5.sp
                             )
@@ -394,13 +496,24 @@ fun HistoryScreen(
                             .testTag("backup_encryption_password_input")
                     )
 
+                    if (!passwordValidationError.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = passwordValidationError!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentCoral,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("backup_password_error_text")
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = when (state.profile.language) {
-                            "ar" -> "ملاحظة: ملف CSV غير مشفر (مخصص لـ Excel ومحمّي ضد حقن الصيغ). استخدم JSON مع كلمة مرور للتشفير بـ AES-256-GCM + PBKDF2."
-                            "darija" -> "ملاحظة: ملف CSV ما مشفرش (خاص بـ Excel ومحمّي من الصيغ). استعمل JSON مع كلمة السر باش يتشفر بـ AES-256-GCM."
-                            "en" -> "Security note: CSV is unencrypted plaintext for spreadsheets (formula-injection safe). Set a password above to encrypt JSON with AES-256-GCM."
-                            else -> "Note : Le CSV est en texte clair pour Excel/Sheets (formules neutralisées). Entrez un mot de passe ci-dessus pour chiffrer le JSON en AES-256-GCM."
+                            "ar" -> "ملاحظة: ملف CSV غير مشفر (مخصص لـ Excel ومحمّي ضد حقن الصيغ). استخدم JSON مع كلمة مرور (10 أحرف+) للتشفير بـ AES-256-GCM + PBKDF2 (600,000 تكرار)."
+                            "darija" -> "ملاحظة: ملف CSV ما مشفرش (خاص بـ Excel ومحمّي من الصيغ). استعمل JSON مع كلمة السر (10 حروف+) باش يتشفر بـ AES-256-GCM."
+                            "en" -> "Security note: CSV is unencrypted plaintext for spreadsheets (formula-injection safe). Set a 10+ char password above to encrypt JSON with AES-256-GCM (600k PBKDF2)."
+                            else -> "Note : Le CSV est en texte clair pour Excel/Sheets (formules neutralisées). Entrez un mot de passe (10+ car.) ci-dessus pour chiffrer le JSON en AES-256-GCM (600k PBKDF2)."
                         },
                         style = MaterialTheme.typography.bodySmall,
                         fontSize = 11.sp,
@@ -413,13 +526,13 @@ fun HistoryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilledTonalButton(
-                            onClick = { onShareJson(backupPassword) },
+                            onClick = { handleJsonExportRequest(onShareJson) },
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(strings.btnShareJson, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         FilledTonalButton(
-                            onClick = { onCopyJson(backupPassword) },
+                            onClick = { handleJsonExportRequest(onCopyJson) },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("copy_sensitive_json_btn")
@@ -433,7 +546,7 @@ fun HistoryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilledTonalButton(
-                            onClick = onShareCsv,
+                            onClick = { pendingUnencryptedExportAction = onShareCsv },
                             modifier = Modifier.weight(1f)
                         ) {
                             Text(strings.btnShareCsv, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -453,7 +566,7 @@ fun HistoryScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilledTonalButton(
-                            onClick = { onExportJsonFile(backupPassword) },
+                            onClick = { handleJsonExportRequest(onExportJsonFile) },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("save_json_file_btn")
@@ -470,7 +583,7 @@ fun HistoryScreen(
                             )
                         }
                         FilledTonalButton(
-                            onClick = onExportCsvFile,
+                            onClick = { pendingUnencryptedExportAction = onExportCsvFile },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("save_csv_file_btn")
@@ -776,6 +889,10 @@ fun TransactionEditorSheet(
                             dateError = "Date invalide ('$normalizedDate'). Format requis : YYYY-MM-DD réel (ex: ${PayCycleEngine.todayIso()})."
                             return@Button
                         }
+                        if (txType == "transfer" && (toAccountId.isBlank() || toAccountId == selectedAccountId)) {
+                            dateError = "Veuillez sélectionner un compte destinataire différent du compte source."
+                            return@Button
+                        }
                         if (amt > 0.0) {
                             dateError = null
                             onSave(
@@ -785,7 +902,7 @@ fun TransactionEditorSheet(
                                 if (txType == "transfer") "Transfert" else customCategory,
                                 if (txType == "transfer") "autre" else selectedEnvelopeKey,
                                 selectedAccountId,
-                                toAccountId,
+                                if (txType == "transfer") toAccountId else "",
                                 desc.ifBlank { if (txType == "transfer") "Transfert entre comptes" else customCategory },
                                 normalizedDate
                             )
@@ -979,17 +1096,17 @@ fun SettingsBottomSheet(
                             Text(
                                 text = if (hasPinConfigured) {
                                     when (lang) {
-                                        "ar" -> "محمي باشتقاق PBKDF2-HMAC-SHA256 (65,536 تكرار + Salt + Android Keystore)"
-                                        "darija" -> "محمي بـ PBKDF2-HMAC-SHA256 (65,536 تكرار + Salt + Android Keystore)"
-                                        "en" -> "Protected via PBKDF2-HMAC-SHA256 key derivation (65,536 iter + salt + Keystore)"
-                                        else -> "Protégé par dérivation PBKDF2-HMAC-SHA256 (65 536 itér. + sel + Keystore)"
+                                        "ar" -> "محمي باشتقاق PBKDF2-HMAC-SHA256 (600,000 تكرار + Salt + Android Keystore)"
+                                        "darija" -> "محمي بـ PBKDF2-HMAC-SHA256 (600,000 تكرار + Salt + Android Keystore)"
+                                        "en" -> "Protected via PBKDF2-HMAC-SHA256 key derivation (600,000 iter + salt + Keystore)"
+                                        else -> "Protégé par dérivation PBKDF2-HMAC-SHA256 (600 000 itér. + sel + Keystore)"
                                     }
                                 } else {
                                     when (lang) {
-                                        "ar" -> "قم بتعيين رمز PIN (يُنصح بـ 6 أرقام، ويقبل 4–8 أرقام) مع قفل تدريجي"
-                                        "darija" -> "دير كود PIN (يُنصح بـ 6 أرقام، وكيقبل 4–8 أرقام) لتفعيل القفل"
-                                        "en" -> "Set a PIN below (6 digits recommended, 4–8 supported) with rate-limiting"
-                                        else -> "Définissez un PIN ci-dessous (6 chiffres recommandés, 4–8 acceptés)"
+                                        "ar" -> "قم بتعيين رمز PIN من 6 إلى 8 أرقام مع قفل تدريجي"
+                                        "darija" -> "دير كود PIN من 6 حتى 8 أرقام لتفعيل القفل"
+                                        "en" -> "Set a 6 to 8 digit PIN below with progressive rate-limiting"
+                                        else -> "Définissez un PIN de 6 à 8 chiffres ci-dessous avec anti-brute-force"
                                     }
                                 },
                                 style = MaterialTheme.typography.bodySmall,
@@ -1002,10 +1119,10 @@ fun SettingsBottomSheet(
                             onCheckedChange = { enabled ->
                                 if (enabled && !hasPinConfigured && !AppSecurityManager.isDeviceSecure(context)) {
                                     pinFeedback = when (lang) {
-                                        "ar" -> "يرجى إدخال وحفظ رمز PIN (يُنصح بـ 6 أرقام) أولاً"
-                                        "darija" -> "دخل بعدا كود PIN (6 أرقام منصوح بها) لتحت"
-                                        "en" -> "Please set a PIN (6 digits recommended) first"
-                                        else -> "Veuillez d'abord définir un code PIN (6 chiffres recommandés)"
+                                        "ar" -> "يرجى إدخال وحفظ رمز PIN (6 إلى 8 أرقام) أولاً"
+                                        "darija" -> "دخل بعدا كود PIN (6 حتى 8 أرقام) لتحت"
+                                        "en" -> "Please set a 6 to 8 digit PIN first"
+                                        else -> "Veuillez d'abord définir un code PIN (6 à 8 chiffres)"
                                     }
                                 } else {
                                     appLockEnabled = enabled
@@ -1033,10 +1150,10 @@ fun SettingsBottomSheet(
                             label = {
                                 Text(
                                     when (lang) {
-                                        "ar" -> "رمز PIN جديد (6 أرقام موصى بها)"
-                                        "darija" -> "كود PIN جديد (6 أرقام منصوح بها)"
-                                        "en" -> "New PIN (6 digits recommended)"
-                                        else -> "Nouveau PIN (6 chiffres recomm.)"
+                                        "ar" -> "رمز PIN جديد (6 إلى 8 أرقام)"
+                                        "darija" -> "كود PIN جديد (6 حتى 8 أرقام)"
+                                        "en" -> "New PIN (6 to 8 digits)"
+                                        else -> "Nouveau PIN (6 à 8 chiffres)"
                                     },
                                     fontSize = 12.sp
                                 )
@@ -1059,17 +1176,17 @@ fun SettingsBottomSheet(
                                     val len = newPinInput.trim().length
                                     newPinInput = ""
                                     pinFeedback = when (lang) {
-                                        "ar" -> "تم اشتقاق وحفظ رمز PIN ($len أرقام) عبر PBKDF2-HMAC-SHA256!"
-                                        "darija" -> "تم تسجيل كود PIN ($len أرقام) بـ PBKDF2-HMAC-SHA256!"
-                                        "en" -> "$len-digit PIN hashed via PBKDF2-HMAC-SHA256 & App Lock enabled!"
-                                        else -> "PIN ($len chiffres) haché via PBKDF2-HMAC-SHA256 et activé !"
+                                        "ar" -> "تم اشتقاق وحفظ رمز PIN ($len أرقام) عبر PBKDF2-HMAC-SHA256 (600k)!"
+                                        "darija" -> "تم تسجيل كود PIN ($len أرقام) بـ PBKDF2-HMAC-SHA256 (600k)!"
+                                        "en" -> "$len-digit PIN hashed via PBKDF2-HMAC-SHA256 (600k) & App Lock enabled!"
+                                        else -> "PIN ($len chiffres) haché via PBKDF2-HMAC-SHA256 (600k) et activé !"
                                     }
                                 } else {
                                     pinFeedback = when (lang) {
-                                        "ar" -> "يجب أن يتكون الرمز من 4 إلى 8 أرقام (يُنصح بـ 6 أرقام)"
-                                        "darija" -> "خاص الكود يكون ما بين 4 و 8 أرقام (منصوح بـ 6 أرقام)"
-                                        "en" -> "PIN must be 4 to 8 digits (6 digits recommended)"
-                                        else -> "Le PIN doit contenir 4 à 8 chiffres (6 recommandés)"
+                                        "ar" -> "يجب أن يتكون الرمز من 6 إلى 8 أرقام"
+                                        "darija" -> "خاص الكود يكون ما بين 6 و 8 أرقام"
+                                        "en" -> "PIN must be 6 to 8 digits"
+                                        else -> "Le PIN doit contenir 6 à 8 chiffres"
                                     }
                                 }
                             },

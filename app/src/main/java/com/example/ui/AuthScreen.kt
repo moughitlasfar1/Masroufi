@@ -77,6 +77,12 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
+    // SEC-02: Never auto-sign-in silently after a Forgot-PIN recovery sign-out;
+    // require deliberate interactive Google account selection.
+    if (AppSecurityManager.isForceInteractiveSignInRequired(context)) {
+        onUnauthenticated()
+        return
+    }
     if (Firebase.auth.currentUser != null) {
         onAuthSuccess()
         return
@@ -140,6 +146,8 @@ fun onGoogleSignInClicked(
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 Firebase.auth.signInWithCredential(authCredential).await()
+                // SEC-02: Complete PIN recovery only after interactive Google re-authentication succeeds
+                AppSecurityManager.completePinRecoveryAfterInteractiveSignIn(context)
                 onAuthSuccess()
             } else {
                 onAuthError("Unexpected credential type")
@@ -158,13 +166,17 @@ fun signOutUser(
     context: Context,
     onSignOutComplete: () -> Unit,
     scope: CoroutineScope,
-    clearLocalCache: Boolean = AppSecurityManager.isClearCacheOnSignOutEnabled(context)
+    clearLocalCache: Boolean = AppSecurityManager.isClearCacheOnSignOutEnabled(context),
+    isPinRecovery: Boolean = false
 ) {
     val credentialManager = CredentialManager.create(context)
     AppSecurityManager.clearSensitiveClipboard(context)
+    if (isPinRecovery) {
+        AppSecurityManager.beginPinRecoverySignOut(context)
+    }
     Firebase.auth.signOut()
     scope.launch {
-        if (clearLocalCache) {
+        if (clearLocalCache || isPinRecovery) {
             runCatching {
                 val dbId = context.applicationContext.getString(R.string.firestore_database_id)
                 val db = FirebaseFirestore.getInstance(dbId)
