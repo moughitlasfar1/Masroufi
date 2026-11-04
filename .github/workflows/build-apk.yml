@@ -80,8 +80,15 @@ jobs:
           GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
           SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          if [ -n "$SDK_DIR" ] && [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
-            yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          if [ -n "$SDK_DIR" ]; then
+            mkdir -p "$SDK_DIR/licenses"
+            printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" >> "$SDK_DIR/licenses/android-sdk-license"
+            if [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
+              yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+            fi
+          fi
+          if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+            cp .env.example .env
           fi
           if [ -n "$GOOGLE_SERVICES_JSON_SECRET" ]; then
             FIRST_CHAR=$(printf '%s' "$GOOGLE_SERVICES_JSON_SECRET" | tr -d '\r\n\t ' | cut -c1)
