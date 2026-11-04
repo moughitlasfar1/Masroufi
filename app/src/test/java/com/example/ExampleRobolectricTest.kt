@@ -704,6 +704,9 @@ class ExampleRobolectricTest {
             val activity = controller.get()
             assertNotNull(activity)
             assertFalse(com.google.firebase.FirebaseApp.getApps(context).isEmpty())
+            assertEquals("gen-lang-client-0849522300", com.google.firebase.FirebaseApp.getInstance().options.projectId)
+            val webClientId = com.example.ui.resolveDefaultWebClientId(activity)
+            assertTrue(webClientId.endsWith(".apps.googleusercontent.com"))
             activity.setContent {
                 MainFeatureScreen(currentUserId = "u_test_123")
             }

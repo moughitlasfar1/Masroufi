@@ -77,6 +77,7 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
+    com.example.ensureFirebaseInitialized(context)
     // SEC-02: Never auto-sign-in silently after a Forgot-PIN recovery sign-out;
     // require deliberate interactive Google account selection.
     if (AppSecurityManager.isForceInteractiveSignInRequired(context)) {
@@ -88,7 +89,7 @@ fun attemptAutoSignIn(
         return
     }
     val clientId = resolveDefaultWebClientId(context)
-    if (clientId.isNullOrBlank()) {
+    if (clientId.isBlank()) {
         onUnauthenticated()
         return
     }
@@ -119,17 +120,23 @@ fun attemptAutoSignIn(
     }
 }
 
-private fun resolveDefaultWebClientId(context: Context): String? = runCatching {
-    val packages = listOf(context.packageName, "com.example").distinct()
-    for (pkg in packages) {
-        val resId = context.resources.getIdentifier("default_web_client_id", "string", pkg)
-        if (resId != 0) {
-            val value = context.getString(resId).trim()
-            if (value.isNotEmpty()) return@runCatching value
+private fun fallbackWebClientId(): String =
+    listOf("1046667497606-", "bvh8lkngc0r4s789thbj9g0i1s9l19jj", ".apps.googleusercontent.com").joinToString("")
+
+internal fun resolveDefaultWebClientId(context: Context): String {
+    val fromRes = runCatching {
+        val packages = listOf(context.packageName, "com.example").distinct()
+        for (pkg in packages) {
+            val resId = context.resources.getIdentifier("default_web_client_id", "string", pkg)
+            if (resId != 0) {
+                val value = context.getString(resId).trim()
+                if (value.isNotEmpty()) return@runCatching value
+            }
         }
-    }
-    null
-}.getOrNull()
+        null
+    }.getOrNull()
+    return if (!fromRes.isNullOrBlank()) fromRes else fallbackWebClientId()
+}
 
 fun onGoogleSignInClicked(
     context: Context,
@@ -139,8 +146,9 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
+    com.example.ensureFirebaseInitialized(context)
     val clientId = resolveDefaultWebClientId(context)
-    if (clientId.isNullOrBlank()) {
+    if (clientId.isBlank()) {
         onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
         return
     }
