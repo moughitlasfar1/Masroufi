@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import androidx.activity.compose.setContent
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AccountItem
 import com.example.data.CustomizationPrefs
@@ -692,7 +693,26 @@ class ExampleRobolectricTest {
         )
         assertTrue(whatIfMsg.contains("sooner"))
     }
+
+    @Test
+    fun `MainActivity launches without crashing`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        com.google.firebase.FirebaseApp.clearInstancesForTest()
+        assertTrue(com.google.firebase.FirebaseApp.getApps(context).isEmpty())
+        org.robolectric.Robolectric.buildActivity(MainActivity::class.java).use { controller ->
+            controller.setup()
+            val activity = controller.get()
+            assertNotNull(activity)
+            assertFalse(com.google.firebase.FirebaseApp.getApps(context).isEmpty())
+            activity.setContent {
+                MainFeatureScreen(currentUserId = "u_test_123")
+            }
+            org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+        }
+    }
 }
+
+
 
 
 

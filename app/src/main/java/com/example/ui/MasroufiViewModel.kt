@@ -638,12 +638,6 @@ class MasroufiViewModel(
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _customPrefsItemCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
 
-    init {
-        safeLaunch("ensureSeeded") {
-            repository.ensureSeeded()
-        }
-    }
-
     private fun safeLaunch(tag: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             _pendingWritesCount.value = _pendingWritesCount.value + 1
@@ -909,6 +903,12 @@ class MasroufiViewModel(
         started = SharingStarted.WhileSubscribed(5000L),
         initialValue = DashboardState(hideAmounts = initialHideAmounts)
     )
+
+    init {
+        safeLaunch("ensureSeeded") {
+            repository.ensureSeeded()
+        }
+    }
 
     private fun computeWeeklyBreakdown(
         anchorIso: String,

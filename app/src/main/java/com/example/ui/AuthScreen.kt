@@ -121,8 +121,12 @@ fun attemptAutoSignIn(
 
 private fun resolveDefaultWebClientId(context: Context): String? = runCatching {
     val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-    if (resId != 0) context.getString(resId).trim().takeIf { it.isNotEmpty() } else null
-}.getOrNull()
+    if (resId != 0) {
+        context.getString(resId).trim().takeIf { it.isNotEmpty() }
+    } else {
+        "1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj.apps.googleusercontent.com"
+    }
+}.getOrDefault("1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj.apps.googleusercontent.com")
 
 fun onGoogleSignInClicked(
     context: Context,

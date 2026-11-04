@@ -101,12 +101,12 @@ jobs:
             else
               printf '%s' "$GOOGLE_SERVICES_JSON_SECRET" | tr -d '\r\n ' | base64 -d > app/google-services.json.tmp 2>/dev/null || true
             fi
-            if grep -q '"project_info"' app/google-services.json.tmp 2>/dev/null; then
+            if grep -q '"project_info"' app/google-services.json.tmp 2>/dev/null && grep -q '"com.aistudio.masroufi.kxmpzq"' app/google-services.json.tmp 2>/dev/null; then
               mv app/google-services.json.tmp app/google-services.json
               echo "Loaded valid app/google-services.json from GitHub Secret GOOGLE_SERVICES_JSON."
             else
               rm -f app/google-services.json.tmp
-              echo "NOTICE: GOOGLE_SERVICES_JSON secret was not valid JSON; keeping existing configuration."
+              echo "NOTICE: GOOGLE_SERVICES_JSON secret did not match package com.aistudio.masroufi.kxmpzq; keeping repository app/google-services.json."
             fi
           fi
           if [ -f "app/google-services.json" ] && ! grep -q '"project_info"' app/google-services.json 2>/dev/null; then

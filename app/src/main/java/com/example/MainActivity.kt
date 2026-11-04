@@ -151,6 +151,7 @@ import com.example.widget.MasroufiAppWidget
 import com.example.widget.MasroufiWidgetStore
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
 import com.google.firebase.appcheck.AppCheckProviderFactory
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
@@ -172,11 +173,33 @@ private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 
 /**
+ * Ensures the default FirebaseApp is initialized even if google-services.json was omitted or
+ * mismatched in a CI build, preventing IllegalStateException on startup.
+ */
+fun ensureFirebaseInitialized(context: Context) {
+    runCatching {
+        val appContext = context.applicationContext ?: context
+        if (FirebaseApp.getApps(appContext).isNotEmpty()) return
+        val initialized = FirebaseApp.initializeApp(appContext)
+        if (initialized != null) return
+        val fallbackOptions = FirebaseOptions.Builder()
+            .setProjectId("gen-lang-client-0849522300")
+            .setApplicationId("1:1046667497606:android:08ac099a9ee6c94eac0107")
+            .setApiKey("AIzaSyCUG_L9kFeXgtdFGN01gh8rILaLWMNYNHM")
+            .setStorageBucket("gen-lang-client-0849522300.firebasestorage.app")
+            .setGcmSenderId("1046667497606")
+            .build()
+        FirebaseApp.initializeApp(appContext, fallbackOptions)
+    }
+}
+
+/**
  * SEC-04: Installs PlayIntegrityAppCheckProviderFactory in release builds (where firebase-appcheck-debug
  * is excluded via debugImplementation) and DebugAppCheckProviderFactory in debug builds.
  */
 fun configureAppCheck(context: Context, intent: Intent?) {
     runCatching {
+        ensureFirebaseInitialized(context)
         val appCheck = FirebaseAppCheck.getInstance()
         if (BuildConfig.DEBUG) {
             val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
@@ -216,9 +239,12 @@ internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ensureFirebaseInitialized(this)
         configureAppCheck(this, intent)
-        enableEdgeToEdge()
-        AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
+        runCatching { enableEdgeToEdge() }
+        runCatching {
+            AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
+        }
         initFirestoreOfflineCache()
         val launchedFromQuickAdd = intent?.action == MasroufiAppWidget.ACTION_QUICK_ADD
         val launchedFromQuickVoice = intent?.action == MasroufiAppWidget.ACTION_QUICK_VOICE
@@ -232,6 +258,7 @@ class MainActivity : FragmentActivity() {
 
     private fun initFirestoreOfflineCache() {
         runCatching {
+            ensureFirebaseInitialized(this)
             val databaseId = getString(R.string.firestore_database_id)
             val db = FirebaseFirestore.getInstance(databaseId)
             val settings = FirebaseFirestoreSettings.Builder()
@@ -244,11 +271,16 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 fun AppNavigation(
-    auth: FirebaseAuth = Firebase.auth,
+    auth: FirebaseAuth? = null,
     openQuickAddOnLaunch: Boolean = false,
     openQuickVoiceOnLaunch: Boolean = false
 ) {
-    val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
+    val context = LocalContext.current
+    val resolvedAuth = remember(auth, context) {
+        ensureFirebaseInitialized(context)
+        auth ?: Firebase.auth
+    }
+    val currentUser by resolvedAuth.authStateFlow().collectAsStateWithLifecycle(initialValue = resolvedAuth.currentUser)
     val user = currentUser
     if (user == null) {
         MasroufiTheme(darkTheme = true) {

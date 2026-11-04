@@ -975,6 +975,7 @@ fun MasroufiSecurityLockScreen(
         if (!hasPin && !canUseDeviceCredential) {
             onUnlocked()
         } else if (canUseDeviceCredential && fragmentActivity != null && lockoutSeconds == 0) {
+            delay(250L)
             launchBiometricUnlock()
         }
     }
