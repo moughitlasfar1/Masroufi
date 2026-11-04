@@ -59,7 +59,60 @@ data class SmartReminder(
     val item: FinancialItem
 )
 
+data class DetectedSubscription(
+    val merchant: String,
+    val amount: Double,
+    val suggestedDueDay: Int,
+    val occurrences: Int,
+    val envelopeKey: String = "charges"
+) {
+    val name: String get() = merchant
+    val monthlyAmount: Double get() = amount
+    val typicalDayOfMonth: Int get() = suggestedDueDay
+}
+
+data class MoroccanBillTemplate(
+    val id: String,
+    val name: String,
+    val providerSubtitle: String,
+    val defaultAmount: Double,
+    val dueDay: Int,
+    val emoji: String = "🧾"
+) {
+    val key: String get() = id
+    val defaultDueDay: Int get() = dueDay
+}
+
+data class MoroccanSeasonalTemplate(
+    val id: String,
+    val name: String,
+    val subtitle: String,
+    val defaultTargetAmount: Double,
+    val defaultTargetIso: String,
+    val emoji: String = "🌙"
+) {
+    val key: String get() = id
+    val targetAmount: Double get() = defaultTargetAmount
+    val targetIsoDate: String get() = defaultTargetIso
+}
+
+data class SeasonalCountdownInfo(
+    val daysRemaining: Int,
+    val monthsRemaining: Int,
+    val remainingAmount: Double,
+    val suggestedMonthlySaving: Double
+)
+
+data class SmartDefaultGuess(
+    val envelopeKey: String,
+    val categoryName: String,
+    val accountId: String
+)
+
 object PayCycleEngine {
+
+    const val DEFAULT_EUR_TO_MAD = 10.85
+    const val DEFAULT_USD_TO_MAD = 9.95
 
     private val UTC_TZ: TimeZone = TimeZone.getTimeZone("UTC")
     private val ISO_DATE_REGEX = Regex("^\\d{4}-\\d{2}-\\d{2}$")
@@ -445,6 +498,483 @@ object PayCycleEngine {
         return insights
     }
 
+    /**
+     * Anomaly nudge: compares category / coffee / transport / groceries spending in the last 7 days
+     * (or active cycle pace) against the trailing 4-week weekly average.
+     * Example: "Coffee is up 40% vs the last 4 weeks."
+     */
+    fun computeAnomalyNudges(
+        allTransactions: List<TransactionItem>,
+        envelopes: List<EnvelopeConfig>,
+        nowIso: String = todayIso(),
+        lang: String = "fr",
+        currency: String = "DH"
+    ): List<SmartInsight> {
+        val nudges = mutableListOf<SmartInsight>()
+        val nowEpoch = parseEpochDays(nowIso)
+        val expenses = allTransactions.filter { it.type == "expense" }
+        if (expenses.isEmpty()) return nudges
+
+        // Last 7 days: [nowEpoch - 6 .. nowEpoch]
+        // Prior 28 days (4 weeks): [nowEpoch - 34 .. nowEpoch - 7]
+        val last7Txs = expenses.filter {
+            val d = parseEpochDays(it.isoDate)
+            d in (nowEpoch - 6)..nowEpoch
+        }
+        val prior28Txs = expenses.filter {
+            val d = parseEpochDays(it.isoDate)
+            d in (nowEpoch - 34)..(nowEpoch - 7)
+        }
+
+        for (env in envelopes) {
+            val recentWeekSum = last7Txs.filter {
+                (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == env.key
+            }.sumOf { it.amount }
+            val prior4WeeksSum = prior28Txs.filter {
+                (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == env.key
+            }.sumOf { it.amount }
+            val priorWeeklyAvg = prior4WeeksSum / 4.0
+
+            if (priorWeeklyAvg >= 20.0 && recentWeekSum > priorWeeklyAvg * 1.20) {
+                val upPct = (((recentWeekSum - priorWeeklyAvg) / priorWeeklyAvg) * 100.0).roundToInt()
+                val label = env.localizedName(lang)
+                nudges.add(
+                    SmartInsight(
+                        id = "anomaly_${env.key}",
+                        title = when (lang) {
+                            "darija" -> "📈 تنبيه: $label طلع بـ +$upPct% مقارنة بـ 4 سيمانات اللخرين"
+                            "ar" -> "📈 تنبيه: $label ارتفع بنسبة +$upPct% مقارنة بآخر 4 أسابيع"
+                            "en" -> "📈 $label is up $upPct% vs the last 4 weeks"
+                            else -> "📈 $label est en hausse de +$upPct% vs les 4 dernières semaines"
+                        },
+                        body = when (lang) {
+                            "darija" -> "صرفتي ${formatDh(recentWeekSum)} $currency هاد السيمانة مقابل معدل ${formatDh(priorWeeklyAvg)} $currency/سيمانة."
+                            "ar" -> "أنفقت ${formatDh(recentWeekSum)} $currency هذا الأسبوع مقابل متوسط ${formatDh(priorWeeklyAvg)} $currency/أسبوع."
+                            "en" -> "Spent ${formatDh(recentWeekSum)} $currency in the last 7d vs ${formatDh(priorWeeklyAvg)} $currency weekly avg."
+                            else -> "${formatDh(recentWeekSum)} $currency sur 7 jours contre ${formatDh(priorWeeklyAvg)} $currency/semaine en moyenne."
+                        },
+                        severity = "warn"
+                    )
+                )
+            }
+        }
+        return nudges
+    }
+
+    /**
+     * Subscription detector: automatically detects recurring charges from transaction history
+     * that are not yet tracked in [existingBills].
+     */
+    fun detectRecurringSubscriptions(
+        allTransactions: List<TransactionItem>,
+        existingBills: List<FinancialItem>
+    ): List<DetectedSubscription> {
+        val existingNamesLower = existingBills.map { it.name.trim().lowercase(Locale.ROOT) }
+        val subscriptionKeywords = listOf(
+            "netflix", "spotify", "icloud", "youtube", "chatgpt", "shahid", "bein",
+            "maroc telecom", "iam", "inwi", "orange", "lydec", "redal", "amendis", "onee",
+            "fibre", "abonnement", "forfait", "gym", "salle de sport", "city club", "loyer", "كراء"
+        )
+
+        val expenses = allTransactions.filter { it.type == "expense" && it.desc.isNotBlank() }
+        val grouped = expenses.groupBy { tx ->
+            tx.desc.trim().lowercase(Locale.ROOT)
+                .replace(Regex("""\s+\d{4}-\d{2}$"""), "")
+                .trim()
+        }
+
+        val detected = mutableListOf<DetectedSubscription>()
+        for ((normKey, txList) in grouped) {
+            if (normKey.length < 3) continue
+            if (existingNamesLower.any { it.contains(normKey) || normKey.contains(it) }) continue
+
+            val isKnownSubKeyword = subscriptionKeywords.any { kw -> normKey.contains(kw) }
+            val distinctMonths = txList.map { it.isoDate.take(7) }.distinct().size
+            if (txList.size >= 2 && (distinctMonths >= 2 || isKnownSubKeyword || txList.map { it.amount }.distinct().size == 1)) {
+                val latest = txList.maxByOrNull { it.isoDate } ?: txList.first()
+                val dayPart = latest.isoDate.split("-").getOrNull(2)?.toIntOrNull()?.coerceIn(1, 28) ?: 5
+                detected.add(
+                    DetectedSubscription(
+                        merchant = latest.desc.trim().replaceFirstChar {
+                            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+                        },
+                        amount = latest.amount,
+                        suggestedDueDay = dayPart,
+                        occurrences = txList.size,
+                        envelopeKey = latest.envelopeKey.ifBlank { "charges" }
+                    )
+                )
+            } else if (isKnownSubKeyword && txList.isNotEmpty()) {
+                val latest = txList.first()
+                val dayPart = latest.isoDate.split("-").getOrNull(2)?.toIntOrNull()?.coerceIn(1, 28) ?: 5
+                detected.add(
+                    DetectedSubscription(
+                        merchant = latest.desc.trim().replaceFirstChar {
+                            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+                        },
+                        amount = latest.amount,
+                        suggestedDueDay = dayPart,
+                        occurrences = txList.size,
+                        envelopeKey = "charges"
+                    )
+                )
+            }
+        }
+        return detected.sortedByDescending { it.occurrences }.take(5)
+    }
+
+    /**
+     * No-spend streak: counts consecutive days (up to [nowIso] within [window]) with 0 expense transactions.
+     */
+    fun computeNoSpendStreakDays(
+        cycleTransactions: List<TransactionItem>,
+        window: PayCycleWindow,
+        nowIso: String = todayIso()
+    ): Int {
+        val anchorIso = if (nowIso in window.startIso..window.endIso) nowIso else window.endIso
+        val startEpoch = parseEpochDays(window.startIso)
+        val anchorEpoch = parseEpochDays(anchorIso)
+        if (anchorEpoch < startEpoch) return 0
+
+        val expenseEpochDays = cycleTransactions
+            .filter { it.type == "expense" && it.amount > 0.0 }
+            .map { parseEpochDays(it.isoDate) }
+            .toSet()
+
+        var streak = 0
+        var d = anchorEpoch
+        while (d >= startEpoch) {
+            if (d in expenseEpochDays) {
+                break
+            }
+            streak++
+            d--
+        }
+        return streak
+    }
+
+    fun computeNoSpendStreakDays(
+        allTransactions: List<TransactionItem>,
+        nowIso: String = todayIso()
+    ): Int {
+        val window = computeCycleWindow(1, 0, nowIso)
+        return computeNoSpendStreakDays(allTransactions, window, nowIso)
+    }
+
+    /**
+     * Biggest spending day in the active cycle for the Monthly Recap Card.
+     */
+    fun computeBiggestSpendingDayInCycle(
+        cycleTransactions: List<TransactionItem>
+    ): Pair<String, Double> {
+        val byDay = cycleTransactions
+            .filter { it.type == "expense" && it.isoDate.isNotBlank() }
+            .groupBy { it.isoDate }
+            .mapValues { (_, list) -> list.sumOf { it.amount } }
+        return byDay.maxByOrNull { it.value }?.toPair() ?: ("" to 0.0)
+    }
+
+    /**
+     * Month-end forecast message:
+     * "At this pace you'll finish the month with 1,240 MAD."
+     */
+    fun formatMonthEndForecast(
+        totalAvailableBudget: Double,
+        projectedCycleSpend: Double,
+        currency: String,
+        lang: String,
+        hideAmounts: Boolean = false
+    ): String {
+        val forecastEnd = totalAvailableBudget - projectedCycleSpend
+        return formatMonthEndForecast(forecastEnd, currency, lang, hideAmounts)
+    }
+
+    fun formatMonthEndForecast(
+        forecastEnd: Double,
+        currency: String,
+        lang: String,
+        hideAmounts: Boolean = false
+    ): String {
+        val absFormatted = if (hideAmounts) "••••" else formatDh(abs(forecastEnd))
+        return if (forecastEnd >= 0) {
+            when (lang) {
+                "darija" -> "بهاد الوتيرة غادي تكمل الشهر بـ +$absFormatted $currency"
+                "ar" -> "بهذه الوتيرة ستنهي الشهر بـ +$absFormatted $currency"
+                "en" -> "At this pace you'll finish the month with $absFormatted $currency."
+                else -> "À ce rythme, vous finirez le mois avec +$absFormatted $currency."
+            }
+        } else {
+            when (lang) {
+                "darija" -> "رد بالك: بهاد الوتيرة غادي تكمل الشهر بـ ناقص -$absFormatted $currency"
+                "ar" -> "تنبيه: بهذه الوتيرة ستنهي الشهر بعجز -$absFormatted $currency"
+                "en" -> "At this pace you'll finish the month -$absFormatted $currency over budget."
+                else -> "Attention : à ce rythme, fin de mois à -$absFormatted $currency."
+            }
+        }
+    }
+
+    /**
+     * Smart defaults: guesses the category/envelope and account from the description or the last-used one.
+     */
+    fun inferSmartDefaults(
+        description: String,
+        allTransactions: List<TransactionItem>,
+        envelopes: List<EnvelopeConfig>,
+        accounts: List<AccountItem>,
+        lang: String = "fr"
+    ): SmartDefaultGuess {
+        val sortedRecent = allTransactions.sortedWith(
+            compareByDescending<TransactionItem> { it.isoDate }.thenByDescending { it.id }
+        )
+        val lastUsedAccount = sortedRecent.firstOrNull { it.accountId.isNotBlank() }?.accountId
+            ?: accounts.firstOrNull()?.id
+            ?: "acc_cash"
+
+        val cleanDesc = description.trim().lowercase(Locale.ROOT)
+        if (cleanDesc.length >= 2) {
+            // 1. Check historical transactions with matching description
+            val histMatch = sortedRecent.firstOrNull {
+                val d = it.desc.trim().lowercase(Locale.ROOT)
+                it.type != "transfer" && d.isNotBlank() && (d.contains(cleanDesc) || cleanDesc.contains(d))
+            }
+            if (histMatch != null) {
+                val envConfig = envelopes.find { it.key == histMatch.envelopeKey }
+                return SmartDefaultGuess(
+                    envelopeKey = envConfig?.key ?: histMatch.envelopeKey.ifBlank { "cafe" },
+                    categoryName = envConfig?.localizedName(lang) ?: histMatch.category.ifBlank { "Général" },
+                    accountId = histMatch.accountId.ifBlank { lastUsedAccount }
+                )
+            }
+
+            // 2. Check Darija/Arabic/FR/EN keyword parser
+            val parsed = VoiceDarijaParser.parse("$description 10", envelopes, lang)
+            if (parsed != null && parsed.envelopeKey != "autre") {
+                val accountForEnv = sortedRecent.firstOrNull { it.envelopeKey == parsed.envelopeKey }?.accountId
+                    ?: lastUsedAccount
+                return SmartDefaultGuess(
+                    envelopeKey = parsed.envelopeKey,
+                    categoryName = parsed.categoryName,
+                    accountId = accountForEnv
+                )
+            }
+        }
+
+        // 3. Fallback to most recently used category and account
+        val lastExpense = sortedRecent.firstOrNull { it.type == "expense" }
+        val fallbackEnv = envelopes.find { it.key == lastExpense?.envelopeKey } ?: envelopes.firstOrNull()
+        return SmartDefaultGuess(
+            envelopeKey = fallbackEnv?.key ?: "cafe",
+            categoryName = fallbackEnv?.localizedName(lang) ?: lastExpense?.category ?: "Café & Sorties",
+            accountId = lastUsedAccount
+        )
+    }
+
+    fun inferSmartDefaults(
+        description: String,
+        allTransactions: List<TransactionItem>,
+        envelopeStatuses: List<EnvelopeStatus>,
+        defaultAccountId: String,
+        lang: String = "fr"
+    ): SmartDefaultGuess? {
+        return inferSmartDefaults(
+            description = description,
+            allTransactions = allTransactions,
+            envelopes = envelopeStatuses.map { it.config },
+            accounts = listOf(AccountItem(id = defaultAccountId, name = "Default")),
+            lang = lang
+        )
+    }
+
+    /**
+     * Duplicate warning: flags the same amount and category added twice within a few minutes (or same day).
+     */
+    fun findRecentDuplicateTransaction(
+        type: String,
+        amount: Double,
+        envelopeKey: String,
+        category: String,
+        allTransactions: List<TransactionItem>,
+        nowIso: String = todayIso(),
+        nowEpochMs: Long = System.currentTimeMillis()
+    ): TransactionItem? {
+        if (amount <= 0.0) return null
+        return allTransactions.firstOrNull { tx ->
+            val sameType = tx.type == type
+            val sameAmount = abs(tx.amount - amount) < 0.01
+            val sameCategory = (tx.envelopeKey.isNotBlank() && tx.envelopeKey == envelopeKey) ||
+                tx.category.equals(category, ignoreCase = true)
+            val createdMs = tx.createdAt?.toDate()?.time ?: 0L
+            val isWithinMinutes = if (createdMs > 0L) {
+                abs(nowEpochMs - createdMs) <= 15 * 60 * 1000L
+            } else {
+                tx.isoDate == nowIso || allTransactions.size <= 10
+            }
+            sameType && sameAmount && sameCategory && isWithinMinutes
+        }
+    }
+
+    fun findRecentDuplicateTransaction(
+        amount: Double,
+        envelopeKey: String,
+        category: String,
+        allTransactions: List<TransactionItem>,
+        nowMs: Long = System.currentTimeMillis()
+    ): TransactionItem? {
+        return findRecentDuplicateTransaction(
+            type = "expense",
+            amount = amount,
+            envelopeKey = envelopeKey,
+            category = category,
+            allTransactions = allTransactions,
+            nowEpochMs = nowMs
+        )
+    }
+
+    /**
+     * Seasonal countdown and suggested monthly saving for Ramadan, Aïd al-Adha, Back-to-School, etc.
+     */
+    fun computeSeasonalCountdown(
+        targetIso: String,
+        targetAmount: Double,
+        savedAmount: Double,
+        nowIso: String = todayIso()
+    ): SeasonalCountdownInfo {
+        val validTarget = if (isValidIsoDate(targetIso)) targetIso else "2027-03-01"
+        val nowEpoch = parseEpochDays(nowIso)
+        val targetEpoch = parseEpochDays(validTarget)
+        val daysLeft = max(0, (targetEpoch - nowEpoch).toInt())
+        val monthsLeft = max(1, kotlin.math.ceil(daysLeft / 30.0).toInt())
+        val remAmount = max(0.0, targetAmount - savedAmount)
+        val monthlySave = if (remAmount > 0.0) remAmount / monthsLeft else 0.0
+        return SeasonalCountdownInfo(
+            daysRemaining = daysLeft,
+            monthsRemaining = monthsLeft,
+            remainingAmount = remAmount,
+            suggestedMonthlySaving = monthlySave
+        )
+    }
+
+    fun computeSeasonalCountdown(
+        seasonalItem: FinancialItem,
+        nowIso: String = todayIso()
+    ): SeasonalCountdownInfo {
+        return computeSeasonalCountdown(
+            targetIso = seasonalItem.dateOrCycle,
+            targetAmount = seasonalItem.amount,
+            savedAmount = seasonalItem.secondaryAmount,
+            nowIso = nowIso
+        )
+    }
+
+    /**
+     * What-if simulator goal impact: "Cut takeout by 20% and you reach your goal 2 months sooner."
+     */
+    fun computeWhatIfGoalImpact(
+        monthlySaved: Double,
+        goals: List<FinancialItem>,
+        seasonals: List<FinancialItem>,
+        lang: String,
+        currency: String
+    ): String {
+        val targetItem = (goals + seasonals).firstOrNull { (it.amount - it.secondaryAmount) > 0.0 }
+        val remGoal = if (targetItem != null) max(0.0, targetItem.amount - targetItem.secondaryAmount) else 5000.0
+        val goalName = targetItem?.name ?: when (lang) {
+            "darija" -> "صندوق الطوارئ"
+            "ar" -> "هدف الادخار"
+            "en" -> "Emergency Fund"
+            else -> "Objectif d'épargne"
+        }
+        val baselineMonthlySave = max(200.0, remGoal / 10.0)
+        val baseMonths = kotlin.math.ceil(remGoal / baselineMonthlySave).toInt().coerceAtLeast(2)
+        val newMonths = kotlin.math.ceil(remGoal / (baselineMonthlySave + max(1.0, monthlySaved))).toInt().coerceAtLeast(1)
+        val monthsSooner = max(1, baseMonths - newMonths)
+
+        return when (lang) {
+            "darija" -> "🎯 غادي توصل لهدف « $goalName » قبل بـ $monthsSooner أشهر (+${formatDh(monthlySaved)} $currency/شهر)!"
+            "ar" -> "🎯 ستصل إلى هدف « $goalName » أبكر بـ $monthsSooner أشهر (+${formatDh(monthlySaved)} $currency/شهر)!"
+            "en" -> "🎯 You reach your goal \"$goalName\" $monthsSooner months sooner (+${formatDh(monthlySaved)} $currency/mo)!"
+            else -> "🎯 Vous atteignez votre objectif « $goalName » $monthsSooner mois plus tôt (+${formatDh(monthlySaved)} $currency/mois) !"
+        }
+    }
+
+    fun computeWhatIfGoalImpact(
+        envelopeName: String,
+        envelopeMonthlySpend: Double,
+        cutPercent: Double,
+        currentMonthlySavingCapacity: Double,
+        goals: List<FinancialItem>,
+        currencySymbol: String,
+        language: String,
+        hideAmounts: Boolean = false
+    ): String {
+        val monthlySaved = envelopeMonthlySpend * (cutPercent / 100.0)
+        return computeWhatIfGoalImpact(
+            monthlySaved = monthlySaved,
+            goals = goals,
+            seasonals = emptyList(),
+            lang = language,
+            currency = currencySymbol
+        )
+    }
+
+    /**
+     * Multi-currency conversion for MRE users & trips (MAD, EUR, USD).
+     */
+    fun convertCurrencyAmount(
+        amount: Double,
+        fromCurrency: String,
+        toCurrency: String,
+        eurToMadRate: Double = DEFAULT_EUR_TO_MAD,
+        usdToMadRate: Double = DEFAULT_USD_TO_MAD
+    ): Double {
+        if (amount <= 0.0) return 0.0
+        val normFrom = normalizeCurrencyCode(fromCurrency)
+        val normTo = normalizeCurrencyCode(toCurrency)
+        if (normFrom == normTo) return amount
+
+        val safeEur = if (eurToMadRate > 0.1) eurToMadRate else DEFAULT_EUR_TO_MAD
+        val safeUsd = if (usdToMadRate > 0.1) usdToMadRate else DEFAULT_USD_TO_MAD
+
+        // Convert to MAD first
+        val inMad = when (normFrom) {
+            "EUR" -> amount * safeEur
+            "USD" -> amount * safeUsd
+            else -> amount
+        }
+        return when (normTo) {
+            "EUR" -> inMad / safeEur
+            "USD" -> inMad / safeUsd
+            else -> inMad
+        }
+    }
+
+    fun normalizeCurrencyCode(symbolOrCode: String): String {
+        val u = symbolOrCode.trim().uppercase(Locale.ROOT)
+        return when {
+            u.contains("EUR") || u.contains("€") -> "EUR"
+            u.contains("USD") || u.contains("$") -> "USD"
+            else -> "MAD"
+        }
+    }
+
+    fun moroccanBillTemplates(): List<MoroccanBillTemplate> = listOf(
+        MoroccanBillTemplate("tpl_lydec", "Lydec / SRM (Eau & Élec)", "Eau & Électricité Casablanca", 380.0, 15, "💧"),
+        MoroccanBillTemplate("tpl_redal", "Redal (Eau & Élec)", "Eau & Électricité Rabat-Salé", 340.0, 15, "💧"),
+        MoroccanBillTemplate("tpl_amendis", "Amendis (Eau & Élec)", "Eau & Électricité Tanger/Tétouan", 350.0, 15, "💧"),
+        MoroccanBillTemplate("tpl_onee", "ONEE (Électricité & Eau)", "Office National Électricité & Eau", 320.0, 18, "⚡"),
+        MoroccanBillTemplate("tpl_iam", "Maroc Telecom (IAM Fibre/ADSL)", "Internet & Fixe IAM", 400.0, 5, "🌐"),
+        MoroccanBillTemplate("tpl_inwi", "Inwi (Forfait / Fibre)", "Mobile & Internet Inwi", 249.0, 10, "📱"),
+        MoroccanBillTemplate("tpl_orange", "Orange Maroc (Forfait / Fibre)", "Mobile & Fibre Orange", 249.0, 10, "🍊"),
+        MoroccanBillTemplate("tpl_rent", "Loyer / الكراء", "Loyer mensuel appartement", 2500.0, 1, "🏠")
+    )
+
+    fun moroccanSeasonalTemplates(): List<MoroccanSeasonalTemplate> = listOf(
+        MoroccanSeasonalTemplate("sea_ramadan", "Ramadan (قفة ومصاريف رمضان)", "Provisions & Table du Ftour", 3000.0, "2027-02-08", "🌙"),
+        MoroccanSeasonalTemplate("sea_aid_adha", "Aïd al-Adha (صندوق الحولي)", "Mouton & Fête de l'Aïd", 4500.0, "2027-05-16", "🐏"),
+        MoroccanSeasonalTemplate("sea_rentree", "Rentrée Scolaire (الدخول المدرسي)", "Fournitures, manuels & inscription", 2500.0, "2027-09-01", "🎒"),
+        MoroccanSeasonalTemplate("sea_vacances", "Vacances d'été (عطلة الصيف)", "Voyage & Détente en famille", 5000.0, "2027-07-15", "🏖️")
+    )
+
     fun computeSmartReminders(
         cycleKey: String,
         currency: String,
@@ -474,12 +1004,13 @@ object PayCycleEngine {
         darets.forEach { daret ->
             val totalMembers = daret.secondaryAmount.roundToInt().coerceAtLeast(1)
             if (daret.extraInt < totalMembers) {
+                val whoseTurn = daret.subtitle.ifBlank { "Tour #${daret.dayOrTurn}" }
                 list.add(
                     SmartReminder(
                         id = "rem_daret_${daret.id}",
                         kind = "daret",
                         title = "Cotisation Daret : ${daret.name}",
-                        subtitle = "Tour payé ${daret.extraInt}/$totalMembers · ${formatDh(daret.amount)} $currency/mois",
+                        subtitle = "$whoseTurn · Payé ${daret.extraInt}/$totalMembers · ${formatDh(daret.amount)} $currency/mois",
                         amount = daret.amount,
                         actionLabel = "Cotiser",
                         item = daret
@@ -497,7 +1028,7 @@ object PayCycleEngine {
                     SmartReminder(
                         id = "rem_debt_${debt.id}",
                         kind = "debt",
-                        title = if (isLent) "Crédit à encaisser : ${debt.name}" else "Dette à rembourser : ${debt.name}",
+                        title = if (isLent) "Sellef à encaisser : ${debt.name}" else "Sellef à rembourser : ${debt.name}",
                         subtitle = "Reste ${formatDh(rem)} $currency sur ${formatDh(debt.amount)} $currency",
                         amount = rem,
                         actionLabel = "+ 100 $currency",

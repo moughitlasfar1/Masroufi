@@ -117,6 +117,11 @@ import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.Translations
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.input.pointer.pointerInput
+import com.example.domain.PayCycleEngine
+import com.example.notifications.MasroufiNotificationManager
 import com.example.security.AppSecurityManager
 import com.example.security.MasroufiSecurityLockScreen
 import com.example.ui.AddFinancialItemSheet
@@ -128,9 +133,11 @@ import com.example.ui.HistoryScreen
 import com.example.ui.MasroufiViewModel
 import com.example.ui.MonthScreen
 import com.example.ui.OverviewScreen
+import com.example.ui.QuickOnboarding30sSheet
 import com.example.ui.QuickPresetPickerSheet
 import com.example.ui.RestoreJsonSheet
 import com.example.ui.SettingsBottomSheet
+import com.example.ui.SplitBillToSellefSheet
 import com.example.ui.TransactionEditorSheet
 import com.example.ui.WeekScreen
 import com.example.ui.signOutUser
@@ -140,6 +147,8 @@ import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.paletteForKey
+import com.example.widget.MasroufiAppWidget
+import com.example.widget.MasroufiWidgetStore
 import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.AppCheckProviderFactory
@@ -211,9 +220,13 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
         initFirestoreOfflineCache()
-        val launchedFromQuickAdd = intent?.action == "com.aistudio.masroufi.ACTION_QUICK_ADD"
+        val launchedFromQuickAdd = intent?.action == MasroufiAppWidget.ACTION_QUICK_ADD
+        val launchedFromQuickVoice = intent?.action == MasroufiAppWidget.ACTION_QUICK_VOICE
         setContent {
-            AppNavigation(openQuickAddOnLaunch = launchedFromQuickAdd)
+            AppNavigation(
+                openQuickAddOnLaunch = launchedFromQuickAdd || launchedFromQuickVoice,
+                openQuickVoiceOnLaunch = launchedFromQuickVoice
+            )
         }
     }
 
@@ -232,7 +245,8 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun AppNavigation(
     auth: FirebaseAuth = Firebase.auth,
-    openQuickAddOnLaunch: Boolean = false
+    openQuickAddOnLaunch: Boolean = false,
+    openQuickVoiceOnLaunch: Boolean = false
 ) {
     val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
     val user = currentUser
@@ -243,7 +257,8 @@ fun AppNavigation(
     } else {
         MainFeatureScreen(
             currentUserId = user.uid,
-            openQuickAddOnLaunch = openQuickAddOnLaunch
+            openQuickAddOnLaunch = openQuickAddOnLaunch,
+            openQuickVoiceOnLaunch = openQuickVoiceOnLaunch
         )
     }
 }
@@ -252,7 +267,8 @@ fun AppNavigation(
 @Composable
 fun MainFeatureScreen(
     currentUserId: String,
-    openQuickAddOnLaunch: Boolean = false
+    openQuickAddOnLaunch: Boolean = false,
+    openQuickVoiceOnLaunch: Boolean = false
 ) {
     val viewModel: MasroufiViewModel = viewModel(
         key = currentUserId,
@@ -293,6 +309,31 @@ fun MainFeatureScreen(
         viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
     }
 
+    // Sync Home-Screen Widget, Quick Settings Tile & WorkManager Smart Notifications whenever DashboardState updates
+    LaunchedEffect(
+        state.cycleTransactions,
+        state.safeToSpendToday,
+        state.customPrefs.currencySymbol,
+        state.hideAmounts,
+        state.profile.language,
+        state.smartReminders,
+        state.envelopes
+    ) {
+        val todayIso = PayCycleEngine.todayIso()
+        val todaySpend = state.cycleTransactions
+            .filter { it.type == "expense" && it.isoDate == todayIso }
+            .sumOf { it.amount }
+        MasroufiWidgetStore.saveSnapshot(
+            context = context,
+            todaySpend = todaySpend,
+            safeToSpendToday = state.safeToSpendToday,
+            currencySymbol = state.customPrefs.currencySymbol.ifBlank { "DH" },
+            hideAmounts = state.hideAmounts,
+            language = state.profile.language
+        )
+        MasroufiNotificationManager.syncStateAndScheduleWork(context, state)
+    }
+
     val initialTabKey = remember { AppSecurityManager.getLastActiveTab(context) }
     val initialPageIndex = remember { MAIN_TAB_KEYS.indexOf(initialTabKey).coerceAtLeast(0) }
     val pagerState = rememberPagerState(
@@ -317,15 +358,18 @@ fun MainFeatureScreen(
     var shortcutSheetTabKey by remember { mutableStateOf<String?>(null) }
 
     var showAddTxSheet by remember { mutableStateOf(openQuickAddOnLaunch) }
+    var autoLaunchVoiceInSheet by remember { mutableStateOf(openQuickVoiceOnLaunch) }
     var initialTxType by remember { mutableStateOf("expense") }
     var editingTx by remember { mutableStateOf<TransactionItem?>(null) }
     var showSettingsSheet by remember { mutableStateOf(false) }
+    var showQuickOnboardingSheet by remember { mutableStateOf(false) }
     var showCustomizationSheet by remember { mutableStateOf(false) }
     var showEnvelopesSheet by remember { mutableStateOf(false) }
     var activeItemSheetType by remember { mutableStateOf<String?>(null) }
     var editingFinancialItem by remember { mutableStateOf<FinancialItem?>(null) }
     var editingAccountItem by remember { mutableStateOf<AccountItem?>(null) }
     var showRestoreSheet by remember { mutableStateOf(false) }
+    var showSplitBillSheet by remember { mutableStateOf(false) }
 
     var flagSecureEnabled by remember { mutableStateOf(AppSecurityManager.isFlagSecureEnabled(context)) }
     var appLockEnabled by remember { mutableStateOf(AppSecurityManager.isAppLockEnabled(context)) }
@@ -429,6 +473,20 @@ fun MainFeatureScreen(
         AppSecurityManager.setHideAmountsEnabled(context, next)
     }
 
+    fun deleteFinancialItemWithUndoSnackbar(id: String) {
+        viewModel.deleteFinancialItem(id)
+        scope.launch {
+            val res = snackbarHostState.showSnackbar(
+                message = strings.deletedToast,
+                actionLabel = strings.undoLabel,
+                duration = SnackbarDuration.Short
+            )
+            if (res == SnackbarResult.ActionPerformed) {
+                viewModel.undoDeleteFinancialItem()
+            }
+        }
+    }
+
     fun triggerQuickPreset(preset: FinancialItem) {
         viewModel.quickAddPreset(preset) { added ->
             scope.launch {
@@ -476,6 +534,8 @@ fun MainFeatureScreen(
                         language = state.profile.language,
                         isDarkTheme = state.profile.isDarkTheme,
                         hideAmounts = state.hideAmounts,
+                        isSyncing = state.isSyncing,
+                        hasSyncWarning = !state.errorMessage.isNullOrBlank(),
                         appTitle = state.customPrefs.customTitle.ifBlank { "Masroufi" },
                         subTitle = state.customPrefs.customSubtitle.ifBlank { strings.subTitle },
                         currencySymbol = cur,
@@ -748,8 +808,9 @@ fun MainFeatureScreen(
                                         editingAccountItem = null
                                         activeItemSheetType = "preset"
                                     },
-                                    onDeletePreset = { id -> viewModel.deleteFinancialItem(id) },
+                                    onDeletePreset = { id -> deleteFinancialItemWithUndoSnackbar(id) },
                                     onOpenCustomizationModal = { showCustomizationSheet = true },
+                                    onOpenQuickOnboarding = { showQuickOnboardingSheet = true },
                                     onLoadDemoData = {
                                         viewModel.loadDemoData {
                                             scope.launch {
@@ -771,6 +832,16 @@ fun MainFeatureScreen(
                                     },
                                     onSetDashboardSectionVisibility = { sectionKey, visible ->
                                         viewModel.setDashboardSectionVisibility(sectionKey, visible)
+                                    },
+                                    onConvertSubscriptionToBill = { sub ->
+                                        viewModel.convertSubscriptionToBill(sub) { bill ->
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar("Facture récurrente '${bill.name}' ajoutée (le ${bill.dayOrTurn}) !")
+                                            }
+                                        }
+                                    },
+                                    onShareText = { textPayload ->
+                                        shareTextContent(context, textPayload, "Bilan Masroufi", "text/plain")
                                     }
                                 )
 
@@ -789,7 +860,26 @@ fun MainFeatureScreen(
                                         editingAccountItem = null
                                         activeItemSheetType = "seasonal"
                                     },
-                                    onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
+                                    onDeleteItem = { id -> deleteFinancialItemWithUndoSnackbar(id) },
+                                    onShiftCycle = { delta -> viewModel.shiftCycle(delta) },
+                                    onQuickCreateSeasonalTemplate = { tplName, tplAmount, tplIso ->
+                                        viewModel.saveFinancialItem(
+                                            FinancialItem(
+                                                id = "seasonal_${System.currentTimeMillis()}",
+                                                itemType = "seasonal",
+                                                name = tplName,
+                                                subtitle = tplName,
+                                                amount = tplAmount,
+                                                secondaryAmount = 0.0,
+                                                dayOrTurn = 1,
+                                                extraInt = 0,
+                                                dateOrCycle = tplIso
+                                            )
+                                        )
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Enveloppe '$tplName' créée !")
+                                        }
+                                    }
                                 )
 
                                 "categories" -> BudgetAndDaretScreen(
@@ -802,7 +892,10 @@ fun MainFeatureScreen(
                                         editingAccountItem = null
                                         activeItemSheetType = "daret"
                                     },
-                                    onSettleDebt = { debt -> viewModel.settleDebt(debt, 100.0) },
+                                    onSettleDebt = { debt ->
+                                        val rem = (debt.amount - debt.secondaryAmount).coerceAtLeast(0.0)
+                                        if (rem > 0.0) viewModel.settleDebt(debt, rem)
+                                    },
                                     onOpenNewDebt = { item ->
                                         editingFinancialItem = item
                                         editingAccountItem = null
@@ -820,7 +913,35 @@ fun MainFeatureScreen(
                                         activeItemSheetType = "bill"
                                     },
                                     onPayBill = { bill -> viewModel.payRecurringBill(bill) },
-                                    onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
+                                    onDeleteItem = { id -> deleteFinancialItemWithUndoSnackbar(id) },
+                                    onPartialRepayDebt = { debt, partAmt ->
+                                        viewModel.settleDebt(debt, partAmt)
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Remboursement partiel +${partAmt.toInt()} $cur enregistré pour ${debt.name}")
+                                        }
+                                    },
+                                    onSendWhatsAppReminder = { msg ->
+                                        sendWhatsAppOrShareReminder(context, msg)
+                                    },
+                                    onOpenSplitBillModal = { showSplitBillSheet = true },
+                                    onQuickCreateBillTemplate = { tplName, tplAmt, tplDueDay ->
+                                        viewModel.saveFinancialItem(
+                                            FinancialItem(
+                                                id = "bill_${System.currentTimeMillis()}",
+                                                itemType = "bill",
+                                                name = tplName,
+                                                subtitle = tplName,
+                                                amount = tplAmt,
+                                                secondaryAmount = 0.0,
+                                                dayOrTurn = tplDueDay.coerceIn(1, 31),
+                                                extraInt = 0,
+                                                dateOrCycle = ""
+                                            )
+                                        )
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar("Facture '$tplName' ajoutée (échéance le $tplDueDay) !")
+                                        }
+                                    }
                                 )
 
                                 "historique" -> HistoryScreen(
@@ -830,6 +951,7 @@ fun MainFeatureScreen(
                                     onEditTransaction = { tx ->
                                         editingTx = tx
                                         initialTxType = tx.type
+                                        autoLaunchVoiceInSheet = false
                                         showAddTxSheet = true
                                     },
                                     onDeleteTransaction = { tx ->
@@ -842,6 +964,20 @@ fun MainFeatureScreen(
                                             )
                                             if (res == SnackbarResult.ActionPerformed) {
                                                 viewModel.undoDeleteTransaction()
+                                            }
+                                        }
+                                    },
+                                    onDuplicateTransaction = { tx ->
+                                        viewModel.duplicateTransaction(tx) { duplicated ->
+                                            scope.launch {
+                                                val res = snackbarHostState.showSnackbar(
+                                                    message = "Dupliqué : ${duplicated.desc} (${if (state.hideAmounts) "••••" else duplicated.amount.toInt().toString()} $cur)",
+                                                    actionLabel = strings.undoLabel,
+                                                    duration = SnackbarDuration.Short
+                                                )
+                                                if (res == SnackbarResult.ActionPerformed) {
+                                                    viewModel.deleteTransactionWithUndo(duplicated)
+                                                }
                                             }
                                         }
                                     },
@@ -962,6 +1098,28 @@ fun MainFeatureScreen(
                 )
             }
 
+            if (showSplitBillSheet) {
+                SplitBillToSellefSheet(
+                    state = state,
+                    onDismiss = { showSplitBillSheet = false },
+                    onSplitBill = { billTitle, totalAmt, friendsCsv, includeSelf, recordFullNow ->
+                        viewModel.splitBillIntoSellef(
+                            billTitle = billTitle,
+                            totalAmount = totalAmt,
+                            friendsNamesCsv = friendsCsv,
+                            includeSelf = includeSelf,
+                            recordFullExpenseNow = recordFullNow
+                        ) { count, share ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    "Partagé : $count Sellef créés (${share.toInt()} $cur/pers.) !"
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+
             val shortcutTab = shortcutSheetTabKey
             if (shortcutTab != null) {
                 NavTabShortcutsSheet(
@@ -1008,7 +1166,11 @@ fun MainFeatureScreen(
                     initialType = initialTxType,
                     state = state,
                     strings = strings,
-                    onDismiss = { showAddTxSheet = false },
+                    autoLaunchVoice = autoLaunchVoiceInSheet,
+                    onDismiss = {
+                        showAddTxSheet = false
+                        autoLaunchVoiceInSheet = false
+                    },
                     onSave = { id, type, amt, cat, envKey, accId, toAccId, desc, iso ->
                         viewModel.saveTransaction(id, type, amt, cat, envKey, accId, toAccId, desc, iso)
                     },
@@ -1028,6 +1190,27 @@ fun MainFeatureScreen(
                 )
             }
 
+            if (showQuickOnboardingSheet) {
+                QuickOnboarding30sSheet(
+                    state = state,
+                    onDismiss = { showQuickOnboardingSheet = false },
+                    onCompleteOnboarding = { salary, payDay, envelopes ->
+                        viewModel.completeQuickOnboarding(salary, payDay, envelopes) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    when (state.profile.language) {
+                                        "ar" -> "تم حفظ الإعداد السريع (30 ثانية) بنجاح!"
+                                        "darija" -> "تقيدات المانضة و 3 أظرفة بنجاح!"
+                                        "en" -> "30-Second Quick Setup saved!"
+                                        else -> "Configuration Express 30s enregistrée !"
+                                    }
+                                )
+                            }
+                        }
+                    }
+                )
+            }
+
             if (showSettingsSheet) {
                 SettingsBottomSheet(
                     state = state,
@@ -1037,6 +1220,7 @@ fun MainFeatureScreen(
                         viewModel.saveBudgetSettings(b, day, roll)
                     },
                     onOpenCustomizationStudio = { showCustomizationSheet = true },
+                    onOpenQuickOnboarding = { showQuickOnboardingSheet = true },
                     onLoadDemoData = {
                         viewModel.loadDemoData {
                             scope.launch {
@@ -1116,7 +1300,7 @@ fun MainFeatureScreen(
                         )
                     },
                     onDeleteAccount = { id -> viewModel.deleteAccount(id) },
-                    onDeleteItem = { id -> viewModel.deleteFinancialItem(id) }
+                    onDeleteItem = { id -> deleteFinancialItemWithUndoSnackbar(id) }
                 )
             }
 
@@ -1359,6 +1543,8 @@ private fun MasroufiTopBar(
     language: String,
     isDarkTheme: Boolean,
     hideAmounts: Boolean,
+    isSyncing: Boolean = false,
+    hasSyncWarning: Boolean = false,
     appTitle: String,
     subTitle: String,
     currencySymbol: String,
@@ -1428,6 +1614,43 @@ private fun MasroufiTopBar(
                                     text = currencySymbol,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                )
+                            }
+                            // Sync Status Indicator Pill ("Saved on device, syncing…" / "Synchronisé ✓")
+                            Surface(
+                                shape = CircleShape,
+                                color = when {
+                                    isSyncing || hasSyncWarning -> AccentAmber.copy(alpha = 0.16f)
+                                    else -> AccentEmerald.copy(alpha = 0.16f)
+                                },
+                                modifier = Modifier.testTag("sync_status_indicator")
+                            ) {
+                                Text(
+                                    text = when {
+                                        isSyncing -> when (language) {
+                                            "ar" -> "محفوظ محلياً، جاري المزامنة…"
+                                            "darija" -> "مسجل فـ التليفون، كيتزامن…"
+                                            "en" -> "Saved on device, syncing…"
+                                            else -> "Enregistré, synchro…"
+                                        }
+                                        hasSyncWarning -> when (language) {
+                                            "ar" -> "محفوظ محلياً"
+                                            "darija" -> "مسجل فـ التليفون"
+                                            "en" -> "Saved on device"
+                                            else -> "Cache local"
+                                        }
+                                        else -> when (language) {
+                                            "ar" -> "متزامن ✓"
+                                            "darija" -> "متزامن ✓"
+                                            "en" -> "Synced ✓"
+                                            else -> "Synchro ✓"
+                                        }
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    color = if (isSyncing || hasSyncWarning) AccentAmber else AccentEmerald,
+                                    fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                 )
                             }
@@ -1512,13 +1735,40 @@ private fun MasroufiTopBar(
                 }
             }
 
-            // Pay-Cycle Month Navigator Pill
+            // Pay-Cycle Month Navigator Pill (Swipe left/right on the month header to change month)
+            var monthPillDragAccumulator by remember { mutableFloatStateOf(0f) }
+            val haptics = LocalHapticFeedback.current
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp)
+                    .pointerInput(cycleLabel) {
+                        detectHorizontalDragGestures(
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                monthPillDragAccumulator += dragAmount
+                            },
+                            onDragEnd = {
+                                when {
+                                    monthPillDragAccumulator <= -64f -> {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onShiftCycle(1)
+                                    }
+                                    monthPillDragAccumulator >= 64f -> {
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        onShiftCycle(-1)
+                                    }
+                                }
+                                monthPillDragAccumulator = 0f
+                            },
+                            onDragCancel = {
+                                monthPillDragAccumulator = 0f
+                            }
+                        )
+                    }
+                    .testTag("top_bar_month_header_pill")
             ) {
                 Row(
                     modifier = Modifier
@@ -1529,7 +1779,9 @@ private fun MasroufiTopBar(
                 ) {
                     IconButton(
                         onClick = { onShiftCycle(-1) },
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("month_header_prev_btn")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
@@ -1542,7 +1794,9 @@ private fun MasroufiTopBar(
                     )
                     IconButton(
                         onClick = { onShiftCycle(1) },
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier
+                            .size(34.dp)
+                            .testTag("month_header_next_btn")
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -1552,6 +1806,20 @@ private fun MasroufiTopBar(
                 }
             }
         }
+    }
+}
+
+private fun sendWhatsAppOrShareReminder(context: Context, message: String) {
+    runCatching {
+        val waUri = android.net.Uri.parse(
+            "https://wa.me/?text=${android.net.Uri.encode(message)}"
+        )
+        val waIntent = Intent(Intent.ACTION_VIEW, waUri).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(waIntent)
+    }.onFailure {
+        shareTextContent(context, message, "Rappel Masroufi", "text/plain")
     }
 }
 

@@ -2,4 +2,6 @@
     <string name="app_name">Masroufi</string>
     <string name="shortcut_quick_add_short">Zid Dépense</string>
     <string name="shortcut_quick_add_long">Ajouter une dépense rapide</string>
+    <string name="widget_description">Affiche vos dépenses du jour et permet d\'ajouter une dépense en 1 geste ou en Darija.</string>
+    <string name="quick_tile_label">Zid Dépense</string>
 </resources>

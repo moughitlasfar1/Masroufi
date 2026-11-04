@@ -120,6 +120,7 @@ dependencies {
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
   implementation(libs.androidx.biometric)
+  implementation(libs.androidx.work.runtime.ktx)
   implementation(libs.firebase.appcheck.playintegrity)
   // implementation(libs.firebase.appcheck.recaptcha)
   debugImplementation(libs.firebase.appcheck.debug)

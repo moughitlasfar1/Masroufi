@@ -11,6 +11,7 @@ import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.domain.AccountWithBalance
+import com.example.domain.DetectedSubscription
 import com.example.domain.EnvelopeStatus
 import com.example.domain.PayCycleEngine
 import com.example.domain.PayCycleWindow
@@ -600,6 +601,12 @@ data class DashboardState(
     val seasonals: List<FinancialItem> = emptyList(),
     val smartInsights: List<SmartInsight> = emptyList(),
     val smartReminders: List<SmartReminder> = emptyList(),
+    val noSpendStreakDays: Int = 0,
+    val monthEndForecastMessage: String = "",
+    val biggestSpendingDayIso: String = "",
+    val biggestSpendingDayAmount: Double = 0.0,
+    val detectedSubscriptions: List<DetectedSubscription> = emptyList(),
+    val isSyncing: Boolean = false,
     val isCleanFreshAccount: Boolean = false,
     val hideAmounts: Boolean = false,
     val filterState: FilterState = FilterState(),
@@ -621,6 +628,9 @@ class MasroufiViewModel(
     private val _hideAmounts = MutableStateFlow(initialHideAmounts)
     private val _lastDeletedTx = MutableStateFlow<TransactionItem?>(null)
     val lastDeletedTx: StateFlow<TransactionItem?> = _lastDeletedTx.asStateFlow()
+    private val _lastDeletedItem = MutableStateFlow<FinancialItem?>(null)
+    val lastDeletedItem: StateFlow<FinancialItem?> = _lastDeletedItem.asStateFlow()
+    private val _pendingWritesCount = MutableStateFlow(0)
 
     // Instant optimistic local overrides so UI never lags or reverts on rapid clicks
     private val _optimisticProfile = MutableStateFlow<UserProfile?>(null)
@@ -636,6 +646,7 @@ class MasroufiViewModel(
 
     private fun safeLaunch(tag: String, block: suspend () -> Unit) {
         viewModelScope.launch {
+            _pendingWritesCount.value = _pendingWritesCount.value + 1
             try {
                 block()
                 _errorMessage.value = null
@@ -644,6 +655,8 @@ class MasroufiViewModel(
             } catch (e: Exception) {
                 Log.w("MasroufiVM", "Non-fatal error in $tag: ${e.message}", e)
                 _errorMessage.value = "Synchronisation hors-ligne ou erreur réseau (${e.localizedMessage?.take(60) ?: tag}). Vos modifications seront resynchronisées."
+            } finally {
+                _pendingWritesCount.value = (_pendingWritesCount.value - 1).coerceAtLeast(0)
             }
         }
     }
@@ -696,9 +709,10 @@ class MasroufiViewModel(
         combine(accountsFlow, envelopesFlow, itemsFlow) { a, e, i -> Triple(a, e, i) },
         combine(
             combine(_selectedCycleKey, _filterState, _whatIfState) { c, f, w -> Triple(c, f, w) },
-            combine(_optimisticCustomPrefs, _errorMessage, _hideAmounts) { cp, err, hide -> Triple(cp, err, hide) }
-        ) { (c, f, w), (cp, err, hide) ->
-            listOf(c, f, w, cp, err, hide)
+            combine(_optimisticCustomPrefs, _errorMessage, _hideAmounts) { cp, err, hide -> Triple(cp, err, hide) },
+            _pendingWritesCount
+        ) { (c, f, w), (cp, err, hide), pendingCount ->
+            listOf(c, f, w, cp, err, hide, pendingCount > 0)
         }
     ) { (profileOpt, txs, _), (accs, envs, finItems), extraList ->
         val selCycle = extraList[0] as? String
@@ -707,6 +721,7 @@ class MasroufiViewModel(
         val optCustomPrefs = extraList[3] as? CustomizationPrefs
         val errMsg = extraList[4] as? String
         val hideAmounts = extraList[5] as? Boolean ?: false
+        val isSyncingNow = extraList[6] as? Boolean ?: false
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find { it.itemType == "custom_prefs" || it.id == "custom_prefs" }
@@ -775,7 +790,7 @@ class MasroufiViewModel(
         val worstEnv = cappedEnvs.maxByOrNull { it.usagePercent }
         val topEnv = envelopeStatuses.filter { it.spent > 0 }.maxByOrNull { it.spent }
 
-        val smartInsights = PayCycleEngine.computeSmartInsights(
+        val baseInsights = PayCycleEngine.computeSmartInsights(
             lang = profile.language,
             currency = curSymbol,
             window = window,
@@ -785,6 +800,31 @@ class MasroufiViewModel(
             safeToSpendToday = safeToday,
             dailyAverageSpend = dailyAvg,
             envelopes = envelopeStatuses
+        )
+        val anomalyInsights = PayCycleEngine.computeAnomalyNudges(
+            allTransactions = txs,
+            envelopes = sortedEnvelopes,
+            lang = profile.language,
+            nowIso = anchorIso
+        )
+        val smartInsights = (anomalyInsights + baseInsights).take(4)
+
+        val noSpendStreak = PayCycleEngine.computeNoSpendStreakDays(
+            cycleTransactions = cycleTxs,
+            window = window,
+            nowIso = anchorIso
+        )
+        val (biggestDayIso, biggestDayAmt) = PayCycleEngine.computeBiggestSpendingDayInCycle(cycleTxs)
+        val forecastMsg = PayCycleEngine.formatMonthEndForecast(
+            totalAvailableBudget = totalAvailable,
+            projectedCycleSpend = projectedSpend,
+            currency = curSymbol,
+            lang = profile.language,
+            hideAmounts = hideAmounts
+        )
+        val detectedSubs = PayCycleEngine.detectRecurringSubscriptions(
+            allTransactions = txs,
+            existingBills = bills
         )
 
         val smartReminders = PayCycleEngine.computeSmartReminders(
@@ -852,6 +892,12 @@ class MasroufiViewModel(
             seasonals = seasonals,
             smartInsights = smartInsights,
             smartReminders = smartReminders,
+            noSpendStreakDays = noSpendStreak,
+            monthEndForecastMessage = forecastMsg,
+            biggestSpendingDayIso = biggestDayIso,
+            biggestSpendingDayAmount = biggestDayAmt,
+            detectedSubscriptions = detectedSubs,
+            isSyncing = isSyncingNow,
             isCleanFreshAccount = txs.isEmpty() && netWorth == 0.0,
             hideAmounts = hideAmounts,
             filterState = filter,
@@ -1071,6 +1117,64 @@ class MasroufiViewModel(
         }
     }
 
+    fun duplicateTransaction(tx: TransactionItem, onDuplicated: (TransactionItem) -> Unit = {}) {
+        val duplicated = tx.copy(
+            id = "tx_dup_${System.currentTimeMillis()}",
+            isoDate = PayCycleEngine.todayIso(),
+            createdAt = null,
+            updatedAt = null
+        )
+        onDuplicated(duplicated)
+        safeLaunch("duplicateTransaction") {
+            repository.upsertTransaction(duplicated)
+        }
+    }
+
+    fun completeQuickOnboarding(
+        salary: Double,
+        payDay: Int,
+        threeEnvelopes: List<Triple<String, Double, String>>,
+        onDone: () -> Unit = {}
+    ) {
+        val curProfile = uiState.value.profile
+        val updatedProfile = curProfile.copy(
+            baseBudget = salary.coerceAtLeast(100.0),
+            payCycleDay = payDay.coerceIn(1, 28),
+            rolloverEnabled = true
+        )
+        _optimisticProfile.value = updatedProfile
+        _selectedCycleKey.value = null
+
+        val existingEnvs = uiState.value.envelopes.map { it.config }
+        val paletteHexes = listOf("#10B981", "#38BDF8", "#F59E0B")
+        val updatedEnvelopes = threeEnvelopes.mapIndexed { idx, (label, pct, envKey) ->
+            val cleanKey = envKey.ifBlank { "env_${idx + 1}" }
+            val existing = existingEnvs.find { it.key == cleanKey } ?: existingEnvs.getOrNull(idx)
+            val cleanName = label.trim().ifBlank { existing?.nameFr ?: "Enveloppe ${idx + 1}" }
+            EnvelopeConfig(
+                id = existing?.id?.ifBlank { null } ?: "env_onb_${idx + 1}",
+                userId = currentUserId,
+                key = existing?.key?.ifBlank { null } ?: cleanKey,
+                nameFr = cleanName,
+                nameAr = cleanName,
+                nameDarija = cleanName,
+                nameEn = cleanName,
+                percentage = pct.coerceIn(1.0, 100.0),
+                hasCap = true,
+                colorHex = existing?.colorHex?.ifBlank { null } ?: paletteHexes.getOrElse(idx) { "#10B981" },
+                createdAt = existing?.createdAt
+            )
+        }
+
+        safeLaunch("completeQuickOnboarding") {
+            repository.saveProfile(updatedProfile)
+            if (updatedEnvelopes.isNotEmpty()) {
+                repository.upsertEnvelopesAtomically(updatedEnvelopes)
+            }
+            onDone()
+        }
+    }
+
     fun deleteTransactionWithUndo(tx: TransactionItem) {
         _lastDeletedTx.value = tx
         safeLaunch("deleteTransactionWithUndo") {
@@ -1169,8 +1273,100 @@ class MasroufiViewModel(
 
     fun deleteFinancialItem(id: String) {
         if (id.isBlank()) return
+        val s = uiState.value
+        val existing = (s.presets + s.goals + s.bills + s.debts + s.darets + s.seasonals).find { it.id == id }
+        if (existing != null) {
+            _lastDeletedItem.value = existing
+        }
         safeLaunch("deleteFinancialItem") {
             repository.deleteFinancialItem(id)
+        }
+    }
+
+    fun undoDeleteFinancialItem() {
+        val item = _lastDeletedItem.value ?: return
+        _lastDeletedItem.value = null
+        safeLaunch("undoDeleteFinancialItem") {
+            repository.upsertFinancialItem(item.copy(createdAt = null, updatedAt = null))
+        }
+    }
+
+    fun convertSubscriptionToBill(sub: DetectedSubscription, onConverted: (FinancialItem) -> Unit = {}) {
+        val bill = FinancialItem(
+            id = "bill_sub_${System.currentTimeMillis()}",
+            userId = currentUserId,
+            itemType = "bill",
+            name = sub.name.take(100),
+            subtitle = "Abonnement détecté",
+            amount = sub.amount.coerceAtLeast(1.0),
+            secondaryAmount = 0.0,
+            dayOrTurn = sub.typicalDayOfMonth.coerceIn(1, 28),
+            extraInt = 0,
+            dateOrCycle = ""
+        )
+        onConverted(bill)
+        safeLaunch("convertSubscriptionToBill") {
+            repository.upsertFinancialItem(bill)
+        }
+    }
+
+    fun splitBillIntoSellef(
+        billTitle: String,
+        totalAmount: Double,
+        friendsNamesCsv: String,
+        includeSelf: Boolean = true,
+        recordFullExpenseNow: Boolean = true,
+        accountId: String = "acc_cash",
+        envelopeKey: String = "cafe",
+        onDone: (Int, Double) -> Unit = { _, _ -> }
+    ) {
+        if (totalAmount <= 0.0 || totalAmount.isNaN()) return
+        val friends = friendsNamesCsv
+            .split(",", ";", "\n")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (friends.isEmpty()) return
+        val divisor = if (includeSelf) friends.size + 1 else friends.size
+        val sharePerPerson = ((totalAmount / divisor) * 100.0).roundToInt() / 100.0
+        if (sharePerPerson <= 0.0) return
+
+        val cleanTitle = billTitle.trim().ifBlank { "Sortie / Restaurant" }
+        val nowMs = System.currentTimeMillis()
+        safeLaunch("splitBillIntoSellef") {
+            if (recordFullExpenseNow) {
+                val envName = uiState.value.envelopes.find { it.config.key == envelopeKey }
+                    ?.config?.localizedName(uiState.value.profile.language) ?: "Café, Resto & Sorties"
+                repository.upsertTransaction(
+                    TransactionItem(
+                        id = "tx_split_$nowMs",
+                        userId = currentUserId,
+                        type = "expense",
+                        amount = totalAmount,
+                        category = envName,
+                        envelopeKey = envelopeKey,
+                        accountId = accountId.ifBlank { "acc_cash" },
+                        desc = "$cleanTitle (Partagé ×$divisor)",
+                        isoDate = PayCycleEngine.todayIso()
+                    )
+                )
+            }
+            friends.forEachIndexed { idx, friendName ->
+                val debtItem = FinancialItem(
+                    id = "debt_split_${nowMs}_$idx",
+                    userId = currentUserId,
+                    itemType = "debt",
+                    name = friendName.take(80),
+                    subtitle = cleanTitle.take(120),
+                    amount = sharePerPerson,
+                    secondaryAmount = 0.0,
+                    dayOrTurn = 1,
+                    extraInt = 0,
+                    dateOrCycle = "lent"
+                )
+                repository.upsertFinancialItem(debtItem)
+            }
+            onDone(friends.size, sharePerPerson)
         }
     }
 

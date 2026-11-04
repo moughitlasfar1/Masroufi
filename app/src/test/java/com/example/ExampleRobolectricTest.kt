@@ -485,5 +485,214 @@ class ExampleRobolectricTest {
         assertEquals(customOrder, decoded.normalizedOrder())
         assertFalse(decoded.showBillsCard)
     }
+
+    @Test
+    fun `Darija voice parser, top 3 recent categories, widget store, and notification prefs work accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Voice entry in Darija / Arabic / French / English
+        val parsedCoffee = com.example.domain.VoiceDarijaParser.parse("قهوة 15")
+        assertNotNull(parsedCoffee)
+        assertEquals(15.0, parsedCoffee!!.amount, 0.01)
+        assertEquals("قهوة", parsedCoffee.description)
+        assertEquals("cafe", parsedCoffee.envelopeKey)
+
+        val parsedLatinDarija = com.example.domain.VoiceDarijaParser.parse("qahwa 15 dh")
+        assertNotNull(parsedLatinDarija)
+        assertEquals(15.0, parsedLatinDarija!!.amount, 0.01)
+        assertEquals("Qahwa", parsedLatinDarija.description)
+        assertEquals("cafe", parsedLatinDarija.envelopeKey)
+
+        val parsedArabiziDarija = com.example.domain.VoiceDarijaParser.parse("9ahwa 15")
+        assertNotNull(parsedArabiziDarija)
+        assertEquals(15.0, parsedArabiziDarija!!.amount, 0.01)
+        assertEquals("Qahwa", parsedArabiziDarija.description)
+        assertEquals("cafe", parsedArabiziDarija.envelopeKey)
+
+        val parsedSpokenNumber = com.example.domain.VoiceDarijaParser.parse("طاكسي عشرين درهم")
+        assertNotNull(parsedSpokenNumber)
+        assertEquals(20.0, parsedSpokenNumber!!.amount, 0.01)
+        assertEquals("طاكسي", parsedSpokenNumber.description)
+        assertEquals("transport", parsedSpokenNumber.envelopeKey)
+
+        val parsedEnglish = com.example.domain.VoiceDarijaParser.parse("coffee 15")
+        assertNotNull(parsedEnglish)
+        assertEquals(15.0, parsedEnglish!!.amount, 0.01)
+        assertEquals("Coffee", parsedEnglish.description)
+        assertEquals("cafe", parsedEnglish.envelopeKey)
+
+        // 2. Top 3 most recent categories for 2-tap numeric keypad
+        val envelopes = listOf(
+            EnvelopeConfig(id = "e1", key = "fixes", nameFr = "Fixes", percentage = 35.0),
+            EnvelopeConfig(id = "e2", key = "marche", nameFr = "Marché", percentage = 25.0),
+            EnvelopeConfig(id = "e3", key = "transport", nameFr = "Transport", percentage = 15.0),
+            EnvelopeConfig(id = "e4", key = "sorties", nameFr = "Sorties", percentage = 15.0)
+        )
+        val envStatuses = PayCycleEngine.computeEnvelopes(
+            envelopes = envelopes,
+            baseBudget = 6000.0,
+            rolloverEnabled = true,
+            currentWindow = PayCycleEngine.computeWindow("2026-04", 1, "2026-04-15"),
+            previousWindow = PayCycleEngine.computeWindow("2026-03", 1, "2026-04-15"),
+            allTransactions = emptyList()
+        )
+        val recentTxs = listOf(
+            TransactionItem(id = "1", type = "expense", amount = 15.0, envelopeKey = "sorties", isoDate = "2026-04-15"),
+            TransactionItem(id = "2", type = "expense", amount = 40.0, envelopeKey = "transport", isoDate = "2026-04-14"),
+            TransactionItem(id = "3", type = "expense", amount = 120.0, envelopeKey = "marche", isoDate = "2026-04-12")
+        )
+        val top3 = com.example.ui.computeTopThreeRecentCategories(
+            DashboardState(envelopes = envStatuses, allTransactions = recentTxs)
+        )
+        assertEquals(listOf("sorties", "transport", "marche"), top3.map { it.envelopeKey })
+
+        // 3. Home-screen widget & Quick Settings tile store
+        com.example.widget.MasroufiWidgetStore.saveSnapshot(
+            context = context,
+            todaySpend = 85.0,
+            safeToSpendToday = 140.0,
+            currencySymbol = "DH",
+            hideAmounts = false,
+            language = "darija"
+        )
+        assertTrue(com.example.widget.MasroufiWidgetStore.getTodaySpendFormatted(context).contains("85"))
+        assertTrue(com.example.widget.MasroufiWidgetStore.getSafeTodayFormatted(context).contains("140"))
+
+        // 4. WorkManager notification preferences
+        com.example.notifications.MasroufiNotificationManager.setNotifyBillsEnabled(context, false)
+        assertFalse(com.example.notifications.MasroufiNotificationManager.isNotifyBillsEnabled(context))
+        com.example.notifications.MasroufiNotificationManager.setNotifyBillsEnabled(context, true)
+        assertTrue(com.example.notifications.MasroufiNotificationManager.isNotifyBillsEnabled(context))
+    }
+
+    @Test
+    fun `quick wins, Morocco-specific features, and insights work accurately`() {
+        val nowMs = System.currentTimeMillis()
+        val txs = listOf(
+            TransactionItem(
+                id = "tx_1",
+                type = "expense",
+                amount = 45.0,
+                category = "Café",
+                envelopeKey = "sorties",
+                accountId = "acc_cash",
+                desc = "Café Paul",
+                isoDate = "2026-05-01",
+                createdAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 60_000L))
+            ),
+            TransactionItem(
+                id = "tx_2",
+                type = "expense",
+                amount = 250.0,
+                category = "Marché",
+                envelopeKey = "marche",
+                accountId = "acc_bank",
+                desc = "Marjane",
+                isoDate = "2026-05-03",
+                createdAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 120_000L))
+            ),
+            TransactionItem(
+                id = "tx_sub_1",
+                type = "expense",
+                amount = 95.0,
+                category = "Fixes",
+                envelopeKey = "fixes",
+                accountId = "acc_bank",
+                desc = "Netflix",
+                isoDate = "2026-04-05"
+            ),
+            TransactionItem(
+                id = "tx_sub_2",
+                type = "expense",
+                amount = 95.0,
+                category = "Fixes",
+                envelopeKey = "fixes",
+                accountId = "acc_bank",
+                desc = "Netflix",
+                isoDate = "2026-05-05"
+            )
+        )
+
+        // 1. No-spend streak (last expense on 2026-05-05, today is 2026-05-08 -> 3 days: May 6, 7, 8)
+        assertEquals(3, PayCycleEngine.computeNoSpendStreakDays(txs, "2026-05-08"))
+
+        // 2. Duplicate warning within a few minutes
+        val duplicate = PayCycleEngine.findRecentDuplicateTransaction(
+            amount = 45.0,
+            envelopeKey = "sorties",
+            category = "Café",
+            allTransactions = txs,
+            nowMs = nowMs
+        )
+        assertNotNull(duplicate)
+        assertEquals("tx_1", duplicate!!.id)
+
+        // 3. Smart defaults from description and history
+        val envelopes = listOf(
+            EnvelopeConfig(id = "e1", key = "fixes", nameFr = "Fixes", percentage = 35.0),
+            EnvelopeConfig(id = "e2", key = "marche", nameFr = "Marché", percentage = 25.0),
+            EnvelopeConfig(id = "e3", key = "sorties", nameFr = "Sorties", percentage = 15.0)
+        )
+        val envStatuses = PayCycleEngine.computeEnvelopes(
+            envelopes = envelopes,
+            baseBudget = 6000.0,
+            rolloverEnabled = true,
+            currentWindow = PayCycleEngine.computeWindow("2026-05", 1, "2026-05-08"),
+            previousWindow = PayCycleEngine.computeWindow("2026-04", 1, "2026-05-08"),
+            allTransactions = txs
+        )
+        val guess = PayCycleEngine.inferSmartDefaults("Marjane Hay Riad", txs, envStatuses, "acc_cash")
+        assertNotNull(guess)
+        assertEquals("marche", guess!!.envelopeKey)
+        assertEquals("acc_bank", guess.accountId)
+
+        // 4. Multi-currency conversion (MAD, EUR, USD)
+        assertEquals(1085.0, PayCycleEngine.convertCurrencyAmount(100.0, "EUR", "MAD"), 0.01)
+        assertEquals(995.0, PayCycleEngine.convertCurrencyAmount(100.0, "USD", "MAD"), 0.01)
+
+        // 5. Seasonal countdown & suggested monthly saving
+        val seasonal = FinancialItem(
+            id = "s_aid",
+            itemType = "seasonal",
+            name = "Aïd al-Adha (Houli)",
+            amount = 4500.0,
+            secondaryAmount = 1500.0,
+            dateOrCycle = "2026-08-08"
+        )
+        val countdown = PayCycleEngine.computeSeasonalCountdown(seasonal, "2026-05-08")
+        assertEquals(3000.0, countdown.remainingAmount, 0.01)
+        assertTrue(countdown.daysRemaining in 90..95)
+        assertEquals(750.0, countdown.suggestedMonthlySaving, 0.01)
+
+        // 6. Subscription detector
+        val subs = PayCycleEngine.detectRecurringSubscriptions(txs, emptyList())
+        assertEquals(1, subs.size)
+        assertEquals("Netflix", subs.first().name)
+        assertEquals(95.0, subs.first().monthlyAmount, 0.01)
+
+        // 7. Month-end forecast & What-if goal impact
+        val forecastEn = PayCycleEngine.formatMonthEndForecast(1240.0, "MAD", "en", false)
+        assertTrue(forecastEn.contains(PayCycleEngine.formatDh(1240.0)) && forecastEn.contains("MAD"))
+        val goal = FinancialItem(
+            id = "g1",
+            itemType = "goal",
+            name = "Voiture",
+            amount = 6000.0,
+            secondaryAmount = 3000.0
+        )
+        val whatIfMsg = PayCycleEngine.computeWhatIfGoalImpact(
+            envelopeName = "Sorties",
+            envelopeMonthlySpend = 1500.0,
+            cutPercent = 20.0,
+            currentMonthlySavingCapacity = 500.0,
+            goals = listOf(goal),
+            currencySymbol = "MAD",
+            language = "en",
+            hideAmounts = false
+        )
+        assertTrue(whatIfMsg.contains("sooner"))
+    }
 }
+
+
 

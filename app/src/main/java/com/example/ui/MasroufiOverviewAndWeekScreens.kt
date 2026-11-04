@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
@@ -80,6 +81,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.AccountItem
 import com.example.data.FinancialItem
 import com.example.domain.AppStrings
+import com.example.domain.DetectedSubscription
 import com.example.domain.PayCycleEngine
 import com.example.domain.SmartReminder
 import com.example.ui.theme.AccentAmber
@@ -158,12 +160,15 @@ fun OverviewScreen(
     onAddPresetModal: (FinancialItem?) -> Unit,
     onDeletePreset: (String) -> Unit,
     onOpenCustomizationModal: () -> Unit,
+    onOpenQuickOnboarding: () -> Unit = {},
     onLoadDemoData: () -> Unit = {},
     onTriggerReminderAction: (SmartReminder) -> Unit = {},
     onToggleHideAmounts: () -> Unit = {},
     onOpenQuickPresetPicker: () -> Unit = {},
     onMoveDashboardSection: (String, Int) -> Unit = { _, _ -> },
-    onSetDashboardSectionVisibility: (String, Boolean) -> Unit = { _, _ -> }
+    onSetDashboardSectionVisibility: (String, Boolean) -> Unit = { _, _ -> },
+    onConvertSubscriptionToBill: (DetectedSubscription) -> Unit = {},
+    onShareText: (String) -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
@@ -187,7 +192,7 @@ fun OverviewScreen(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // 0. Clean First-Time Onboarding / Optional Demo Mode Card
+        // 0. Clean First-Time Onboarding / 30s Quick Setup / Optional Demo Mode Card
         if (state.isCleanFreshAccount) {
             item(key = "clean_onboarding") {
                 Card(
@@ -215,16 +220,36 @@ fun OverviewScreen(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Vos comptes démarrent à 0 $cur sans fausses transactions. Touchez une carte de compte ci-dessous pour définir votre solde réel, ou chargez le Mode Démo pour explorer toutes les fonctions.",
+                            text = "Configurez votre salaire, jour de paie et 3 enveloppes en 30 secondes, ou saisissez vos soldes.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = onOpenQuickOnboarding,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("btn_open_30s_onboarding")
+                        ) {
+                            Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "إعداد سريع 30 ثانية (الراتب + 3 أظرفة)"
+                                    "darija" -> "إعداد دغيا فـ 30 ثانية (المانضة + 3 أظرفة)"
+                                    "en" -> "30-Second Quick Setup (Salary + 3 Envelopes)"
+                                    else -> "Configuration Express 30s (Salaire + 3 Enveloppes)"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Button(
+                            FilledTonalButton(
                                 onClick = {
                                     val firstAcc = state.accounts.firstOrNull()?.account
                                     onOpenAccountModal(firstAcc)
@@ -249,7 +274,7 @@ fun OverviewScreen(
             }
         }
 
-        // 1. Hero Expressive Card (Cycle Spend + Safe to Spend Today + Privacy Eye Button)
+        // 1. Hero Expressive Card (Cycle Spend + Safe to Spend Today + No-Spend Streak + Month-End Forecast + Privacy Eye Button)
         item(key = "hero_card") {
             Box(
                 modifier = Modifier
@@ -275,8 +300,29 @@ fun OverviewScreen(
                         )
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            // No-Spend Streak Counter Badge on Hero Card
+                            Surface(
+                                shape = CircleShape,
+                                color = Color.Black.copy(alpha = 0.28f),
+                                modifier = Modifier.testTag("hero_no_spend_streak_badge")
+                            ) {
+                                Text(
+                                    text = when (lang) {
+                                        "ar" -> "🔥 ${state.noSpendStreakDays} يوم بدون صرف"
+                                        "darija" -> "🔥 ${state.noSpendStreakDays} يوم بلا مصروف"
+                                        "en" -> "🔥 ${state.noSpendStreakDays}d streak"
+                                        else -> "🔥 ${state.noSpendStreakDays}j sans dépense"
+                                    },
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = AccentAmber,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.5.sp
+                                )
+                            }
+
                             // One-tap Privacy Eye Toggle on Hero Card
                             Surface(
                                 shape = CircleShape,
@@ -378,7 +424,7 @@ fun OverviewScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     LinearProgressIndicator(
                         progress = { (pct / 100f).safeFraction() },
@@ -390,8 +436,27 @@ fun OverviewScreen(
                         trackColor = Color.Black.copy(alpha = 0.35f)
                     )
 
+                    if (state.monthEndForecastMessage.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = Color.Black.copy(alpha = 0.22f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("hero_month_end_forecast_text")
+                        ) {
+                            Text(
+                                text = "🔮 ${state.monthEndForecastMessage}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.95f),
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+
                     if (state.customPrefs.showSafeToSpend) {
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         Surface(
                             shape = RoundedCornerShape(20.dp),
@@ -425,7 +490,8 @@ fun OverviewScreen(
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Surface(
                                     shape = RoundedCornerShape(14.dp),
-                                    color = Color.White.copy(alpha = 0.2f)
+                                    color = Color.White.copy(alpha = 0.2f),
+                                    modifier = Modifier.testTag("hero_safe_to_spend_today_badge")
                                 ) {
                                     Text(
                                         text = "${fmt(state.safeToSpendToday)} ${strings.dhPerDay.replace("DH", cur)}",
@@ -925,7 +991,7 @@ fun OverviewScreen(
                 }
 
                 "insights" -> {
-                    if (state.customPrefs.showSmartInsightsCard && state.smartInsights.isNotEmpty()) {
+                    if (state.customPrefs.showSmartInsightsCard && (state.smartInsights.isNotEmpty() || state.detectedSubscriptions.isNotEmpty())) {
                         item(key = "section_insights") {
                             Card(
                                 shape = RoundedCornerShape(28.dp),
@@ -982,6 +1048,65 @@ fun OverviewScreen(
                                                     style = MaterialTheme.typography.bodyMedium,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
+                                            }
+                                        }
+                                    }
+
+                                    // Subscription Detector Section
+                                    if (state.detectedSubscriptions.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(18.dp),
+                                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("detected_subscriptions_section")
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(
+                                                    text = when (lang) {
+                                                        "ar" -> "🔍 اشتراكات متكررة مكتشفة تلقائياً"
+                                                        "darija" -> "🔍 اشتراكات كتعاود كل شهر (Subscription Detector)"
+                                                        "en" -> "🔍 Recurring Charges Detected Automatically"
+                                                        else -> "🔍 Abonnements récurrents détectés"
+                                                    },
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                state.detectedSubscriptions.forEach { sub ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(
+                                                                text = sub.name,
+                                                                style = MaterialTheme.typography.labelLarge,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                            Text(
+                                                                text = "${fmt(sub.amount)} $cur • ${sub.occurrences}x (~le ${sub.typicalDayOfMonth})",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                        FilledTonalButton(
+                                                            onClick = {
+                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                onConvertSubscriptionToBill(sub)
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                            modifier = Modifier.testTag("btn_convert_sub_${sub.name.take(10)}")
+                                                        ) {
+                                                            Text("+ Facture", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1125,48 +1250,132 @@ fun OverviewScreen(
                 "monthly_review" -> {
                     if (state.customPrefs.showMonthlyReviewCard) {
                         item(key = "section_monthly_review") {
+                            val vsLastMonthDiff = if (state.previousCycleExpenses > 0.0) {
+                                (((state.cycleExpenses - state.previousCycleExpenses) / state.previousCycleExpenses) * 100.0).safeRoundToInt()
+                            } else 0
+                            val vsLastMonthText = if (state.previousCycleExpenses > 0.0) {
+                                val sign = if (vsLastMonthDiff > 0) "+" else ""
+                                "$sign$vsLastMonthDiff% vs mois dernier"
+                            } else {
+                                "1er cycle suivi"
+                            }
+                            val topCatName = state.topEnvelopeStatus?.config?.localizedName(lang) ?: "—"
+                            val topCatPct = state.topEnvelopeStatus?.usagePercent ?: 0
+                            val biggestDayLabel = if (state.biggestSpendingDayIso.isNotBlank()) {
+                                "${state.biggestSpendingDayIso} (${fmt(state.biggestSpendingDayAmount)} $cur)"
+                            } else "—"
+
                             Card(
                                 shape = RoundedCornerShape(topStart = 14.dp, topEnd = 28.dp, bottomEnd = 28.dp, bottomStart = 28.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("monthly_recap_card")
                             ) {
                                 Column(modifier = Modifier.padding(18.dp)) {
                                     Row(
+                                        modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(40.dp)
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(MaterialTheme.colorScheme.primary),
-                                            contentAlignment = Alignment.Center
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(MaterialTheme.colorScheme.primary),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Lightbulb,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onPrimary
+                                                )
+                                            }
+                                            Column {
+                                                Text(
+                                                    text = "${strings.monthlyReviewTitle} • $vsLastMonthText",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                Text(
+                                                    text = if (state.remainingBudget >= 0) {
+                                                        "Reste ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j restants)"
+                                                    } else {
+                                                        "Dépassement de ${fmt(-state.remainingBudget)} $cur"
+                                                    },
+                                                    style = MaterialTheme.typography.titleMedium,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
+                                        }
+                                        FilledTonalButton(
+                                            onClick = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                val sharePayload = buildString {
+                                                    appendLine("📊 Mon Bilan Masroufi (${state.activeWindow.cycleKey})")
+                                                    appendLine("• Budget utilisé : $pct% (montants masqués •••• $cur)")
+                                                    appendLine("• Top catégorie : $topCatName ($topCatPct%)")
+                                                    appendLine("• Plus grosse journée : ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
+                                                    appendLine("• Évolution : $vsLastMonthText")
+                                                    appendLine("• Série sans dépense : 🔥 ${state.noSpendStreakDays}j")
+                                                }
+                                                onShareText(sharePayload)
+                                            },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                            modifier = Modifier.testTag("btn_share_monthly_recap")
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Lightbulb,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onPrimary
+                                                imageVector = Icons.Default.Share,
+                                                contentDescription = "Partager le bilan",
+                                                modifier = Modifier.size(14.dp)
                                             )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Partager", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
-                                        Column {
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    // Top category + Biggest spending day summary banner
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainer,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "🏆 Top catégorie : $topCatName",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = "📅 Jour record : $biggestDayLabel",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
                                             Text(
-                                                text = strings.monthlyReviewTitle,
+                                                text = vsLastMonthText,
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Text(
-                                                text = if (state.remainingBudget >= 0) {
-                                                    "Reste ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j restants)"
-                                                } else {
-                                                    "Dépassement de ${fmt(-state.remainingBudget)} $cur"
-                                                },
-                                                style = MaterialTheme.typography.titleMedium,
-                                                color = MaterialTheme.colorScheme.onSurface
+                                                color = if (vsLastMonthDiff <= 0) AccentEmerald else AccentCoral,
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
 
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Spacer(modifier = Modifier.height(10.dp))
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),

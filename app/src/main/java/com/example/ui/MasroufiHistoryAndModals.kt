@@ -94,6 +94,13 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntOffset
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.NotificationsActive
+import com.example.notifications.MasroufiNotificationManager
 import com.example.security.AppSecurityManager
 import com.example.ui.theme.AccentAmber
 import kotlin.math.abs
@@ -106,6 +113,7 @@ fun HistoryScreen(
     onUpdateFilter: ((FilterState) -> FilterState) -> Unit,
     onEditTransaction: (TransactionItem) -> Unit,
     onDeleteTransaction: (TransactionItem) -> Unit,
+    onDuplicateTransaction: (TransactionItem) -> Unit = {},
     onShareJson: (String) -> Unit,
     onCopyJson: (String) -> Unit,
     onShareCsv: () -> Unit,
@@ -124,6 +132,35 @@ fun HistoryScreen(
     var backupPassword by remember { mutableStateOf("") }
     var passwordValidationError by remember { mutableStateOf<String?>(null) }
     var pendingUnencryptedExportAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val todayIso = remember { PayCycleEngine.todayIso() }
+    val groupedByDay = remember(state.filteredHistory) {
+        state.filteredHistory
+            .groupBy { it.isoDate.ifBlank { todayIso } }
+            .entries
+            .sortedByDescending { it.key }
+    }
+
+    fun formatDayHeaderLabel(iso: String): String {
+        val todayEpoch = PayCycleEngine.parseEpochDays(todayIso)
+        val dayEpoch = PayCycleEngine.parseEpochDays(iso)
+        val diff = (todayEpoch - dayEpoch).toInt()
+        return when (diff) {
+            0 -> when (lang) {
+                "ar" -> "اليوم ($iso)"
+                "darija" -> "اليوم ($iso)"
+                "en" -> "Today ($iso)"
+                else -> "Aujourd'hui ($iso)"
+            }
+            1 -> when (lang) {
+                "ar" -> "أمس ($iso)"
+                "darija" -> "البارح ($iso)"
+                "en" -> "Yesterday ($iso)"
+                else -> "Hier ($iso)"
+            }
+            else -> iso
+        }
+    }
 
     fun handleJsonExportRequest(action: (String) -> Unit) {
         val trimmedPwd = backupPassword.trim()
@@ -215,224 +252,207 @@ fun HistoryScreen(
         )
     }
 
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .testTag("history_screen"),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .testTag("history_screen")
     ) {
-        // Search & Filter Card
-        item {
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(18.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+        LazyColumn(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // Header & Swipe Gesture Hint
+            item(key = "history_top_header") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = strings.historyTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest
                     ) {
                         Text(
-                            text = strings.historyTitle,
-                            style = MaterialTheme.typography.titleMedium
+                            text = "${state.filteredHistory.size} op. · ${groupedByDay.size} j",
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest
+                    }
+                }
+            }
+
+            if (state.filteredHistory.isNotEmpty()) {
+                item(key = "swipe_hint_pill") {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("history_swipe_hint")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Swipe,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "اسحب يميناً للتكرار · اسحب يساراً للحذف (مع تراجع) · اضغط للتعديل"
+                                    "darija" -> "جر لليمين باش تكرر · جر لليسار باش تمسح (مع رجع) · ورك باش تبدل"
+                                    "en" -> "Swipe right to duplicate · Swipe left to delete (with Undo) · Tap to edit"
+                                    else -> "Glissez à droite pour dupliquer · à gauche pour supprimer (Annuler) · Touchez pour modifier"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            } else {
+                // Actionable Empty State Card
+                item(key = "empty_history_state") {
+                    Card(
+                        shape = RoundedCornerShape(26.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("history_empty_state_card")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(22.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Text(
-                                text = "${state.filteredHistory.size} op.",
-                                style = MaterialTheme.typography.labelSmall,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                text = when (lang) {
+                                    "ar" -> "لا توجد عمليات مسجلة في هذه الدورة"
+                                    "darija" -> "مازال ما قيدتي حتى عملية فهاد الشهر"
+                                    "en" -> "No transactions recorded in this cycle yet"
+                                    else -> "Aucune opération enregistrée sur ce cycle"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    OutlinedTextField(
-                        value = state.filterState.searchQuery,
-                        onValueChange = { q -> onUpdateFilter { it.copy(searchQuery = q) } },
-                        placeholder = { Text(strings.searchHint) },
-                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                        trailingIcon = {
-                            if (state.filterState.searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { onUpdateFilter { it.copy(searchQuery = "") } }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Clear")
-                                }
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "سجل أول مصروف أو مدخول بضغطة واحدة لمتابعة ميزانيتك."
+                                    "darija" -> "زيد أول مصروف أو مدخول بضغطة وحدة باش تتبع حساباتك."
+                                    "en" -> "Log your first expense or income in one tap to start tracking."
+                                    else -> "Ajoutez votre première dépense ou entrée en un geste."
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = onAddFirstTransaction,
+                                shape = RoundedCornerShape(18.dp),
+                                modifier = Modifier.testTag("empty_history_add_btn")
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(strings.btnAddAction, fontWeight = FontWeight.Bold)
                             }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(18.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("history_search_input")
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Category filter chips
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = state.filterState.selectedCategoryKey == "all",
-                            onClick = { onUpdateFilter { it.copy(selectedCategoryKey = "all") } },
-                            label = { Text(strings.filterAll) }
-                        )
-                        state.envelopes.forEach { env ->
-                            FilterChip(
-                                selected = state.filterState.selectedCategoryKey == env.config.key,
-                                onClick = { onUpdateFilter { it.copy(selectedCategoryKey = env.config.key) } },
-                                label = {
-                                    Text(env.config.localizedName(state.profile.language).take(18))
-                                }
-                            )
-                        }
-                    }
-
-                    // Account filter chips
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = state.filterState.selectedAccountId == "all",
-                            onClick = { onUpdateFilter { it.copy(selectedAccountId = "all") } },
-                            label = { Text("Tous comptes") }
-                        )
-                        state.accounts.forEach { acc ->
-                            FilterChip(
-                                selected = state.filterState.selectedAccountId == acc.account.id,
-                                onClick = { onUpdateFilter { it.copy(selectedAccountId = acc.account.id) } },
-                                label = { Text(acc.account.name.take(16)) }
-                            )
                         }
                     }
                 }
             }
-        }
 
-        // Swipe hint pill
-        if (state.filteredHistory.isNotEmpty()) {
-            item(key = "swipe_hint_pill") {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("history_swipe_hint")
-                ) {
-                    Row(
+            // Day-Grouped Transactions with Daily Totals
+            groupedByDay.forEach { (dayIso, dayTxs) ->
+                val dayExpenses = dayTxs.filter { it.type == "expense" }.sumOf { it.amount }
+                val dayIncomes = dayTxs.filter { it.type == "income" }.sumOf { it.amount }
+                val dayNet = dayIncomes - dayExpenses
+                item(key = "day_header_$dayIso") {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .testTag("history_day_header_$dayIso")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Swipe,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = when (lang) {
-                                "ar" -> "اسحب يميناً للتعديل · اسحب يساراً للحذف (مع زر تراجع)"
-                                "darija" -> "جر لليمين باش تبدل · جر لليسار باش تمسح (مع زر رجع)"
-                                "en" -> "Swipe right to edit · Swipe left to delete (with Undo)"
-                                else -> "Glissez à droite pour modifier · à gauche pour supprimer (avec Annuler)"
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        } else {
-            // Actionable Empty State Card
-            item(key = "empty_history_state") {
-                Card(
-                    shape = RoundedCornerShape(26.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("history_empty_state_card")
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(22.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text(
-                            text = when (lang) {
-                                "ar" -> "لا توجد عمليات مسجلة في هذه الدورة"
-                                "darija" -> "مازال ما قيدتي حتى عملية فهاد الشهر"
-                                "en" -> "No transactions recorded in this cycle yet"
-                                else -> "Aucune opération enregistrée sur ce cycle"
-                            },
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = when (lang) {
-                                "ar" -> "سجل أول مصروف أو مدخول بضغطة واحدة لمتابعة ميزانيتك."
-                                "darija" -> "زيد أول مصروف أو مدخول بضغطة وحدة باش تتبع حساباتك."
-                                "en" -> "Log your first expense or income in one tap to start tracking."
-                                else -> "Ajoutez votre première dépense ou entrée en un geste."
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = onAddFirstTransaction,
-                            shape = RoundedCornerShape(18.dp),
-                            modifier = Modifier.testTag("empty_history_add_btn")
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(strings.btnAddAction, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = formatDayHeaderLabel(dayIso),
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            val totalLabel = if (hide) {
+                                "•••• $cur"
+                            } else if (dayExpenses > 0 && dayIncomes == 0.0) {
+                                "-${PayCycleEngine.formatDh(dayExpenses)} $cur"
+                            } else if (dayNet >= 0) {
+                                "+${PayCycleEngine.formatDh(dayNet)} $cur"
+                            } else {
+                                "-${PayCycleEngine.formatDh(abs(dayNet))} $cur"
+                            }
+                            Text(
+                                text = totalLabel,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (dayNet > 0 && dayExpenses == 0.0) AccentEmerald else AccentCoral,
+                                modifier = Modifier.testTag("history_day_total_$dayIso")
+                            )
                         }
                     }
                 }
+
+                items(dayTxs, key = { it.id }) { tx ->
+                    val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
+                    SwipeableTransactionRow(
+                        tx = tx,
+                        accountName = accountName,
+                        currencySymbol = cur,
+                        hideAmounts = hide,
+                        deleteLabel = strings.deleteBtn,
+                        duplicateLabel = when (lang) {
+                            "ar" -> "تكرار"
+                            "darija" -> "عاودها"
+                            "en" -> "Duplicate"
+                            else -> "Dupliquer"
+                        },
+                        editLabel = when (lang) {
+                            "ar" -> "تعديل"
+                            "darija" -> "بدل"
+                            "en" -> "Edit"
+                            else -> "Modifier"
+                        },
+                        onEditTransaction = { onEditTransaction(tx) },
+                        onDuplicateTransaction = { onDuplicateTransaction(tx) },
+                        onDeleteTransaction = { onDeleteTransaction(tx) }
+                    )
+                }
             }
-        }
 
-        // Transactions List (Swipe Right to Edit, Swipe Left to Delete + Tap to Edit + Delete Button)
-        items(state.filteredHistory, key = { it.id }) { tx ->
-            val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
-            SwipeableTransactionRow(
-                tx = tx,
-                accountName = accountName,
-                currencySymbol = cur,
-                hideAmounts = hide,
-                deleteLabel = strings.deleteBtn,
-                editLabel = when (lang) {
-                    "ar" -> "تعديل"
-                    "darija" -> "بدل"
-                    "en" -> "Edit"
-                    else -> "Modifier"
-                },
-                onEditTransaction = { onEditTransaction(tx) },
-                onDeleteTransaction = { onDeleteTransaction(tx) }
-            )
-        }
-
-        // Export & Backup Card
-        item {
-            Card(
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            // Export & Backup Card
+            item {
+                Card(
+                    shape = RoundedCornerShape(28.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(18.dp)) {
@@ -668,7 +688,89 @@ fun HistoryScreen(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(76.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+        }
+
+        // Docked Bottom Thumb-Reach Search & Filter Bar (One-Handed Ergonomics)
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("history_thumb_filter_bar")
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Category & Account Filter Chips within thumb reach
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = state.filterState.selectedCategoryKey == "all",
+                        onClick = { onUpdateFilter { it.copy(selectedCategoryKey = "all") } },
+                        label = { Text(strings.filterAll, fontSize = 11.5.sp) }
+                    )
+                    state.envelopes.forEach { env ->
+                        FilterChip(
+                            selected = state.filterState.selectedCategoryKey == env.config.key,
+                            onClick = { onUpdateFilter { it.copy(selectedCategoryKey = env.config.key) } },
+                            label = {
+                                Text(env.config.localizedName(state.profile.language).take(16), fontSize = 11.5.sp)
+                            }
+                        )
+                    }
+                    FilterChip(
+                        selected = state.filterState.selectedAccountId == "all",
+                        onClick = { onUpdateFilter { it.copy(selectedAccountId = "all") } },
+                        label = { Text("Tous comptes", fontSize = 11.5.sp) }
+                    )
+                    state.accounts.forEach { acc ->
+                        FilterChip(
+                            selected = state.filterState.selectedAccountId == acc.account.id,
+                            onClick = { onUpdateFilter { it.copy(selectedAccountId = acc.account.id) } },
+                            label = { Text(acc.account.name.take(14), fontSize = 11.5.sp) }
+                        )
+                    }
+                }
+
+                // Thumb-reach Search Field (paired with FAB clearance on the right)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 96.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = state.filterState.searchQuery,
+                        onValueChange = { q -> onUpdateFilter { it.copy(searchQuery = q) } },
+                        placeholder = { Text(strings.searchHint, fontSize = 12.sp, maxLines = 1) },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                        trailingIcon = {
+                            if (state.filterState.searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { onUpdateFilter { it.copy(searchQuery = "") } }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("history_search_input")
+                    )
+                }
+            }
         }
     }
 }
@@ -680,17 +782,43 @@ fun TransactionEditorSheet(
     initialType: String,
     state: DashboardState,
     strings: AppStrings,
+    autoLaunchVoice: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (String, String, Double, String, String, String, String, String, String) -> Unit,
     onDelete: ((TransactionItem) -> Unit)? = null
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    val lang = state.profile.language
+    val haptics = LocalHapticFeedback.current
+
+    // Smart defaults from last-used transaction when creating a new operation
+    val initialSmartDefault = remember(existingTx) {
+        if (existingTx == null) {
+            PayCycleEngine.inferSmartDefaults(
+                description = "",
+                allTransactions = state.allTransactions,
+                envelopes = state.envelopes.map { it.config },
+                accounts = state.accounts.map { it.account },
+                lang = lang
+            )
+        } else null
+    }
+
     var txType by remember { mutableStateOf(existingTx?.type ?: initialType) }
-    var amountText by remember { mutableStateOf(existingTx?.amount?.let { if (it > 0) it.toString() else "" } ?: "") }
+    var amountText by remember {
+        mutableStateOf(
+            existingTx?.amount?.let {
+                if (it > 0) {
+                    if (it % 1.0 == 0.0) it.toInt().toString() else it.toString()
+                } else ""
+            } ?: ""
+        )
+    }
     var isoDate by remember { mutableStateOf(existingTx?.isoDate ?: PayCycleEngine.todayIso()) }
     var selectedEnvelopeKey by remember {
         mutableStateOf(
             existingTx?.envelopeKey?.ifBlank { null }
+                ?: initialSmartDefault?.envelopeKey
                 ?: state.envelopes.firstOrNull()?.config?.key
                 ?: "transport"
         )
@@ -698,12 +826,18 @@ fun TransactionEditorSheet(
     var customCategory by remember {
         mutableStateOf(
             existingTx?.category
+                ?: initialSmartDefault?.categoryName
                 ?: state.envelopes.firstOrNull()?.config?.localizedName(state.profile.language)
                 ?: "Transport & Carburant"
         )
     }
     var selectedAccountId by remember {
-        mutableStateOf(existingTx?.accountId ?: state.accounts.firstOrNull()?.account?.id ?: "acc_cash")
+        mutableStateOf(
+            existingTx?.accountId
+                ?: initialSmartDefault?.accountId
+                ?: state.accounts.firstOrNull()?.account?.id
+                ?: "acc_cash"
+        )
     }
     var toAccountId by remember {
         mutableStateOf(
@@ -713,6 +847,93 @@ fun TransactionEditorSheet(
         )
     }
     var desc by remember { mutableStateOf(existingTx?.desc ?: "") }
+    var twoTapInstantSave by remember { mutableStateOf(existingTx == null) }
+    var dateError by remember { mutableStateOf<String?>(null) }
+    var smartDefaultHint by remember { mutableStateOf<String?>(null) }
+    var duplicateWarningTx by remember { mutableStateOf<TransactionItem?>(null) }
+
+    // Multi-currency state (MAD, EUR, USD for MRE users and trips)
+    val baseCurrencyCode = PayCycleEngine.normalizeCurrencyCode(cur)
+    var entryCurrency by remember { mutableStateOf(baseCurrencyCode) }
+    var eurRateText by remember { mutableStateOf(PayCycleEngine.DEFAULT_EUR_TO_MAD.toString()) }
+    var usdRateText by remember { mutableStateOf(PayCycleEngine.DEFAULT_USD_TO_MAD.toString()) }
+
+    val recentCategories = remember(state.allTransactions, state.envelopes, lang) {
+        computeTopThreeRecentCategories(state)
+    }
+
+    fun computeConvertedAmount(): Double {
+        val rawAmt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
+        val eurRate = eurRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_EUR_TO_MAD
+        val usdRate = usdRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_USD_TO_MAD
+        return PayCycleEngine.convertCurrencyAmount(
+            amount = rawAmt,
+            fromCurrency = entryCurrency,
+            toCurrency = baseCurrencyCode,
+            eurToMadRate = eurRate,
+            usdToMadRate = usdRate
+        )
+    }
+
+    fun tryCommitTransaction(
+        overrideCategory: String = customCategory,
+        overrideEnvKey: String = selectedEnvelopeKey,
+        ignoreDuplicateCheck: Boolean = false
+    ): Boolean {
+        val rawAmt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
+        val convertedAmt = computeConvertedAmount()
+        val normalizedDate = isoDate.trim().ifEmpty { PayCycleEngine.todayIso() }
+        if (!PayCycleEngine.isValidIsoDate(normalizedDate)) {
+            dateError = "Date invalide ('$normalizedDate'). Format requis : YYYY-MM-DD réel (ex: ${PayCycleEngine.todayIso()})."
+            return false
+        }
+        if (txType == "transfer" && (toAccountId.isBlank() || toAccountId == selectedAccountId)) {
+            dateError = "Veuillez sélectionner un compte destinataire différent du compte source."
+            return false
+        }
+        if (convertedAmt <= 0.0) {
+            return false
+        }
+
+        // Duplicate warning check when adding a new transaction
+        if (existingTx == null && !ignoreDuplicateCheck) {
+            val dup = PayCycleEngine.findRecentDuplicateTransaction(
+                type = txType,
+                amount = convertedAmt,
+                envelopeKey = if (txType == "transfer") "autre" else overrideEnvKey,
+                category = if (txType == "transfer") "Transfert" else overrideCategory,
+                allTransactions = state.allTransactions,
+                nowIso = normalizedDate
+            )
+            if (dup != null) {
+                duplicateWarningTx = dup
+                return false
+            }
+        }
+
+        dateError = null
+        duplicateWarningTx = null
+        val baseDesc = desc.ifBlank { if (txType == "transfer") "Transfert entre comptes" else overrideCategory }
+        val finalDesc = if (entryCurrency != baseCurrencyCode && rawAmt > 0.0) {
+            "$baseDesc (${PayCycleEngine.formatDh(rawAmt)} $entryCurrency)"
+        } else {
+            baseDesc
+        }
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        onSave(
+            existingTx?.id ?: "",
+            txType,
+            convertedAmt,
+            if (txType == "transfer") "Transfert" else overrideCategory,
+            if (txType == "transfer") "autre" else overrideEnvKey,
+            selectedAccountId,
+            if (txType == "transfer") toAccountId else "",
+            finalDesc,
+            normalizedDate
+        )
+        onDismiss()
+        return true
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -746,10 +967,125 @@ fun TransactionEditorSheet(
                 }
             }
 
+            // 1. Voice Entry in Darija / AR / FR / EN ("9ahwa 15" / "coffee 15" / "قهوة 15")
+            VoiceDarijaEntrySection(
+                state = state,
+                autoLaunchVoice = autoLaunchVoice,
+                onVoiceParsed = { parsed ->
+                    txType = parsed.txType
+                    amountText = if (parsed.amount % 1.0 == 0.0) {
+                        parsed.amount.toInt().toString()
+                    } else {
+                        parsed.amount.toString()
+                    }
+                    desc = parsed.description
+                    selectedEnvelopeKey = parsed.envelopeKey
+                    customCategory = parsed.categoryName
+                }
+            )
+
+            // 2. Large Numeric Keypad + 3 Most Recent Categories (2-Tap Entry)
+            LargeNumericKeypadSection(
+                amountText = amountText,
+                currencySymbol = if (entryCurrency == baseCurrencyCode) cur else entryCurrency,
+                language = lang,
+                twoTapInstantSave = twoTapInstantSave,
+                onToggleTwoTapInstantSave = { twoTapInstantSave = it },
+                recentCategories = recentCategories,
+                selectedEnvelopeKey = selectedEnvelopeKey,
+                onAmountChange = {
+                    amountText = it
+                    duplicateWarningTx = null
+                },
+                onSelectCategoryShortcut = { shortcut, commitImmediately ->
+                    selectedEnvelopeKey = shortcut.envelopeKey
+                    customCategory = shortcut.categoryName
+                    if (commitImmediately && txType != "transfer") {
+                        tryCommitTransaction(
+                            overrideCategory = shortcut.categoryName,
+                            overrideEnvKey = shortcut.envelopeKey
+                        )
+                    }
+                }
+            )
+
+            // 2B. Multi-Currency Selector (MAD / EUR / USD for MRE users & trips)
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("multi_currency_bar")
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🌍 Multi-devises (MAD / EUR / USD) :",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("MAD", "EUR", "USD").forEach { code ->
+                                FilterChip(
+                                    selected = entryCurrency == code,
+                                    onClick = { entryCurrency = code },
+                                    label = { Text(code, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.testTag("currency_chip_$code")
+                                )
+                            }
+                        }
+                    }
+                    if (entryCurrency != baseCurrencyCode) {
+                        val isEur = entryCurrency == "EUR"
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = if (isEur) eurRateText else usdRateText,
+                                onValueChange = { if (isEur) eurRateText = it else usdRateText = it },
+                                label = { Text("Taux 1 $entryCurrency → MAD") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("fx_rate_input")
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer
+                            ) {
+                                Text(
+                                    text = "= ${PayCycleEngine.formatDh(computeConvertedAmount())} $cur",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                        .testTag("fx_converted_preview_text")
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = amountText,
-                onValueChange = { amountText = it },
-                label = { Text("${strings.amountLabel} ($cur)") },
+                onValueChange = {
+                    amountText = it
+                    duplicateWarningTx = null
+                },
+                label = { Text("${strings.amountLabel} (${if (entryCurrency == baseCurrencyCode) cur else entryCurrency})") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
@@ -758,14 +1094,39 @@ fun TransactionEditorSheet(
                     .testTag("tx_amount_input")
             )
 
-            OutlinedTextField(
-                value = isoDate,
-                onValueChange = { isoDate = it },
-                label = { Text("Date (YYYY-MM-DD)") },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth()
-            )
+            // Duplicate Warning Banner
+            if (duplicateWarningTx != null) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = AccentAmber.copy(alpha = 0.18f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, AccentAmber, RoundedCornerShape(16.dp))
+                        .testTag("duplicate_tx_warning_card")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "⚠️ Doublon détecté : ${PayCycleEngine.formatDh(duplicateWarningTx!!.amount)} $cur dans '${duplicateWarningTx!!.category}' a déjà été ajouté il y a quelques instants.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AccentAmber,
+                            fontWeight = FontWeight.Bold
+                        )
+                        FilledTonalButton(
+                            onClick = {
+                                tryCommitTransaction(ignoreDuplicateCheck = true)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("btn_confirm_duplicate_tx")
+                        ) {
+                            Text("Ajouter quand même", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
 
             // Source Account selector
             Text(
@@ -808,7 +1169,7 @@ fun TransactionEditorSheet(
                 }
             } else if (txType == "expense") {
                 Text(
-                    text = "Enveloppe / Catégorie :",
+                    text = "Toutes les Enveloppes / Catégories :",
                     style = MaterialTheme.typography.labelLarge
                 )
                 Row(
@@ -818,16 +1179,62 @@ fun TransactionEditorSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     state.envelopes.forEach { env ->
+                        val catLabel = env.config.localizedName(state.profile.language)
                         FilterChip(
                             selected = selectedEnvelopeKey == env.config.key,
                             onClick = {
                                 selectedEnvelopeKey = env.config.key
-                                customCategory = env.config.localizedName(state.profile.language)
+                                customCategory = catLabel
+                                duplicateWarningTx = null
+                                if (twoTapInstantSave) {
+                                    tryCommitTransaction(
+                                        overrideCategory = catLabel,
+                                        overrideEnvKey = env.config.key
+                                    )
+                                }
                             },
-                            label = { Text(env.config.localizedName(state.profile.language).take(22)) }
+                            label = { Text(catLabel.take(22)) }
                         )
                     }
                 }
+            }
+
+            OutlinedTextField(
+                value = desc,
+                onValueChange = { newDesc ->
+                    desc = newDesc
+                    if (existingTx == null && newDesc.trim().length >= 2) {
+                        val guessed = PayCycleEngine.inferSmartDefaults(
+                            description = newDesc,
+                            allTransactions = state.allTransactions,
+                            envelopes = state.envelopes.map { it.config },
+                            accounts = state.accounts.map { it.account },
+                            lang = lang
+                        )
+                        selectedEnvelopeKey = guessed.envelopeKey
+                        customCategory = guessed.categoryName
+                        selectedAccountId = guessed.accountId
+                        smartDefaultHint = "✨ Catégorie & compte suggérés : ${guessed.categoryName}"
+                    } else {
+                        smartDefaultHint = null
+                    }
+                },
+                label = { Text("Description / Note (Smart Default auto)") },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("tx_desc_input")
+            )
+
+            if (!smartDefaultHint.isNullOrBlank()) {
+                Text(
+                    text = smartDefaultHint!!,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = AccentEmerald,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.testTag("smart_default_hint_text")
+                )
             }
 
             OutlinedTextField(
@@ -840,17 +1247,13 @@ fun TransactionEditorSheet(
             )
 
             OutlinedTextField(
-                value = desc,
-                onValueChange = { desc = it },
-                label = { Text("Description / Note") },
+                value = isoDate,
+                onValueChange = { isoDate = it },
+                label = { Text("Date (YYYY-MM-DD)") },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("tx_desc_input")
+                modifier = Modifier.fillMaxWidth()
             )
-
-            var dateError by remember { mutableStateOf<String?>(null) }
 
             if (!dateError.isNullOrBlank()) {
                 Text(
@@ -883,31 +1286,7 @@ fun TransactionEditorSheet(
 
                 Button(
                     onClick = {
-                        val amt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
-                        val normalizedDate = isoDate.trim().ifEmpty { PayCycleEngine.todayIso() }
-                        if (!PayCycleEngine.isValidIsoDate(normalizedDate)) {
-                            dateError = "Date invalide ('$normalizedDate'). Format requis : YYYY-MM-DD réel (ex: ${PayCycleEngine.todayIso()})."
-                            return@Button
-                        }
-                        if (txType == "transfer" && (toAccountId.isBlank() || toAccountId == selectedAccountId)) {
-                            dateError = "Veuillez sélectionner un compte destinataire différent du compte source."
-                            return@Button
-                        }
-                        if (amt > 0.0) {
-                            dateError = null
-                            onSave(
-                                existingTx?.id ?: "",
-                                txType,
-                                amt,
-                                if (txType == "transfer") "Transfert" else customCategory,
-                                if (txType == "transfer") "autre" else selectedEnvelopeKey,
-                                selectedAccountId,
-                                if (txType == "transfer") toAccountId else "",
-                                desc.ifBlank { if (txType == "transfer") "Transfert entre comptes" else customCategory },
-                                normalizedDate
-                            )
-                            onDismiss()
-                        }
+                        tryCommitTransaction()
                     },
                     modifier = Modifier
                         .weight(2f)
@@ -930,6 +1309,7 @@ fun SettingsBottomSheet(
     onDismiss: () -> Unit,
     onSaveSettings: (Double, Int, Boolean) -> Unit,
     onOpenCustomizationStudio: () -> Unit,
+    onOpenQuickOnboarding: () -> Unit = {},
     onLoadDemoData: () -> Unit = {},
     onResetCleanAccount: () -> Unit = {},
     onFlagSecureChanged: (Boolean) -> Unit = {},
@@ -949,6 +1329,26 @@ fun SettingsBottomSheet(
     var hasPinConfigured by remember { mutableStateOf(AppSecurityManager.hasPinConfigured(context)) }
     var newPinInput by remember { mutableStateOf("") }
     var pinFeedback by remember { mutableStateOf<String?>(null) }
+
+    var notifyBills by remember { mutableStateOf(MasroufiNotificationManager.isNotifyBillsEnabled(context)) }
+    var notifyDaret by remember { mutableStateOf(MasroufiNotificationManager.isNotifyDaretEnabled(context)) }
+    var notifyBudget80 by remember { mutableStateOf(MasroufiNotificationManager.isNotifyBudget80Enabled(context)) }
+    var notifyEvening by remember { mutableStateOf(MasroufiNotificationManager.isNotifyEveningEnabled(context)) }
+    var notifFeedback by remember { mutableStateOf<String?>(null) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            MasroufiNotificationManager.triggerImmediateCheck(context)
+            notifFeedback = when (lang) {
+                "ar" -> "تم تفعيل الإشعارات وإرسال فحص فوري!"
+                "darija" -> "تفعلو الإشعارات وتصيفط التذكير دابا!"
+                "en" -> "Notifications enabled & immediate check scheduled!"
+                else -> "Notifications activées et vérification lancée !"
+            }
+        }
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -1282,6 +1682,227 @@ fun SettingsBottomSheet(
                         )
                     }
                 }
+            }
+
+            // WorkManager Notifications Card (Bills, Daret, 80% Budget, Evening Reminder)
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_notifications_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            tint = AccentAmber,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "إشعارات وتنبيهات ذكية (WorkManager)"
+                                "darija" -> "إشعارات وتذكيرات ذكية (الفواتير، دارت، 80%)"
+                                "en" -> "Smart Alerts & Reminders (WorkManager)"
+                                else -> "Alertes & Rappels Intelligents (WorkManager)"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            color = AccentAmber,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "الفواتير القادمة والاشتراكات"
+                                "darija" -> "الفواتير اللي قربو يتخلصو"
+                                "en" -> "Upcoming Bills & Subscriptions"
+                                else -> "Factures & abonnements à venir"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = notifyBills,
+                            onCheckedChange = { enabled ->
+                                notifyBills = enabled
+                                MasroufiNotificationManager.setNotifyBillsEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_notify_bills_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "جولات دارت (القرعة الشهرية)"
+                                "darija" -> "نوبة ومساهمة دارت"
+                                "en" -> "Daret Turns & Contributions"
+                                else -> "Tours & cotisations Daret"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = notifyDaret,
+                            onCheckedChange = { enabled ->
+                                notifyDaret = enabled
+                                MasroufiNotificationManager.setNotifyDaretEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_notify_daret_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "تنبيه استهلاك 80% من الميزانية أو الأظرفة"
+                                "darija" -> "تنبيه ملي توصل 80% من الميزانية"
+                                "en" -> "80% Budget & Envelope Threshold Alert"
+                                else -> "Alerte seuil 80% du budget / enveloppes"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = notifyBudget80,
+                            onCheckedChange = { enabled ->
+                                notifyBudget80 = enabled
+                                MasroufiNotificationManager.setNotifyBudget80Enabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_notify_budget80_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "تذكير مسائي لتسجيل مصاريف اليوم"
+                                "darija" -> "تذكير فـ العشية باش تقيد مصاريف النهار"
+                                "en" -> "Evening Daily Expense Reminder"
+                                else -> "Rappel du soir pour noter vos dépenses"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = notifyEvening,
+                            onCheckedChange = { enabled ->
+                                notifyEvening = enabled
+                                MasroufiNotificationManager.setNotifyEveningEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_notify_evening_switch")
+                        )
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                MasroufiNotificationManager.triggerImmediateCheck(context)
+                                notifFeedback = when (lang) {
+                                    "ar" -> "تم جدولة فحص الإشعارات الآن!"
+                                    "darija" -> "تبرمج فحص الإشعارات دابا!"
+                                    "en" -> "Immediate alert check scheduled!"
+                                    else -> "Vérification des alertes programmée !"
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_test_notifications_btn")
+                    ) {
+                        Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "تفعيل واختبار الإشعارات الآن"
+                                "darija" -> "فعل وجرب الإشعارات دابا"
+                                "en" -> "Enable & Check Alerts Now"
+                                else -> "Activer & Vérifier les alertes maintenant"
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (!notifFeedback.isNullOrBlank()) {
+                        Text(
+                            text = notifFeedback!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentEmerald,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Household or Partner Account via Invite
+            HouseholdInviteSectionCard(
+                userId = state.profile.userId.ifBlank { "masroufi_user" },
+                lang = lang,
+                onShareInvite = { inviteText ->
+                    val sendIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(android.content.Intent.EXTRA_TEXT, inviteText)
+                    }
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent.createChooser(sendIntent, "Inviter un partenaire")
+                        )
+                    }
+                }
+            )
+
+            FilledTonalButton(
+                onClick = {
+                    onDismiss()
+                    onOpenQuickOnboarding()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_open_30s_onboarding_btn")
+            ) {
+                Icon(Icons.Default.Bolt, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = when (lang) {
+                        "ar" -> "إعداد سريع 30 ثانية (الراتب، اليوم و 3 أظرفة)"
+                        "darija" -> "إعداد دغيا فـ 30 ثانية (المانضة، النهار و 3 أظرفة)"
+                        "en" -> "30-Second Quick Setup (Salary, Pay Day & 3 Envelopes)"
+                        else -> "Config Express 30s (Salaire, Jour & 3 Enveloppes)"
+                    },
+                    fontWeight = FontWeight.Bold
+                )
             }
 
             FilledTonalButton(
@@ -1931,6 +2552,9 @@ fun AddFinancialItemSheet(
     var dateOrDirText by remember {
         mutableStateOf(existingItem?.dateOrCycle?.ifBlank { "2027-01-01" } ?: "2027-01-01")
     }
+    var itemSubtitleText by remember {
+        mutableStateOf(existingItem?.subtitle ?: "")
+    }
 
     // Account customization fields
     var selectedAccountKind by remember {
@@ -1967,19 +2591,72 @@ fun AddFinancialItemSheet(
             val isEditing = existingAccount != null || existingItem != null
             val title = when (itemType) {
                 "account" -> if (isEditing) "Modifier le Compte" else "Nouveau Compte (Cash / Banque / Wallet)"
-                "daret" -> if (isEditing) "Modifier la Daret" else "Nouvelle Daret (Tontine)"
-                "debt" -> if (isEditing) "Modifier Crédit / Dette" else "Nouveau Crédit / Dette"
-                "seasonal" -> if (isEditing) "Modifier Planificateur Saisonnier" else "Planificateur Saisonnier"
+                "daret" -> if (isEditing) "Modifier la Daret" else "Nouvelle Daret (Jam3iya)"
+                "debt" -> if (isEditing) "Modifier Sellef (Crédit / Dette)" else "Nouveau Sellef (Crédit / Dette)"
+                "seasonal" -> if (isEditing) "Modifier Enveloppe Saisonnière" else "Enveloppe Saisonnière (Ramadan, Aïd, Rentrée)"
                 "bill" -> if (isEditing) "Modifier Facture Récurrente" else "Nouvelle Facture Récurrente"
                 "preset" -> if (isEditing) "Modifier Achat Rapide (1-Tap)" else "Nouveau Bouton d'Achat Rapide"
                 else -> if (isEditing) "Modifier Objectif d'Épargne" else "Nouvel Objectif d'Épargne"
             }
             Text(text = title, style = MaterialTheme.typography.titleLarge)
 
+            // Moroccan Bill Templates inside Bill modal
+            if (itemType == "bill") {
+                val billTemplates = remember { PayCycleEngine.moroccanBillTemplates() }
+                Text(
+                    text = "Modèles rapides Maroc (Lydec, Redal, Amendis, ONEE, IAM, Inwi, Orange, Loyer) :",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    billTemplates.forEach { tpl ->
+                        FilterChip(
+                            selected = name.contains(tpl.name, ignoreCase = true),
+                            onClick = {
+                                name = "${tpl.emoji} ${tpl.name}"
+                                amountText = tpl.defaultAmount.toInt().toString()
+                                dayOrTurnText = tpl.defaultDueDay.toString()
+                            },
+                            label = { Text("${tpl.emoji} ${tpl.name} (J${tpl.defaultDueDay})", fontSize = 11.sp) }
+                        )
+                    }
+                }
+            } else if (itemType == "seasonal") {
+                val seasonalTemplates = remember { PayCycleEngine.moroccanSeasonalTemplates() }
+                Text(
+                    text = "Modèles saisonniers Maroc :",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    seasonalTemplates.forEach { tpl ->
+                        FilterChip(
+                            selected = name.contains(tpl.name, ignoreCase = true),
+                            onClick = {
+                                name = "${tpl.emoji} ${tpl.name}"
+                                amountText = tpl.targetAmount.toInt().toString()
+                                dateOrDirText = tpl.targetIsoDate
+                            },
+                            label = { Text("${tpl.emoji} ${tpl.name}", fontSize = 11.sp) }
+                        )
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Nom") },
+                label = { Text(if (itemType == "debt") "Nom de la personne (Qui ?)" else "Nom") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -2074,6 +2751,20 @@ fun AddFinancialItemSheet(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                OutlinedTextField(
+                    value = itemSubtitleText,
+                    onValueChange = { itemSubtitleText = it },
+                    label = { Text("À qui le tour ce mois-ci ? (ex: Tour de Yassine)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = dateOrDirText,
+                    onValueChange = { dateOrDirText = it },
+                    label = { Text("Date de réception prévue (YYYY-MM-DD ou Mois)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             } else if (itemType == "bill") {
                 OutlinedTextField(
                     value = dayOrTurnText,
@@ -2087,14 +2778,21 @@ fun AddFinancialItemSheet(
                     FilterChip(
                         selected = dateOrDirText != "borrowed",
                         onClick = { dateOrDirText = "lent" },
-                        label = { Text("On me doit (Crédit)") }
+                        label = { Text("On me doit (Sellef prêté)") }
                     )
                     FilterChip(
                         selected = dateOrDirText == "borrowed",
                         onClick = { dateOrDirText = "borrowed" },
-                        label = { Text("Je dois (Dette)") }
+                        label = { Text("Je dois (Sellef emprunté)") }
                     )
                 }
+                OutlinedTextField(
+                    value = itemSubtitleText,
+                    onValueChange = { itemSubtitleText = it },
+                    label = { Text("Motif / Note (ex: Dîner, Avance, Café)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             } else if (itemType == "goal") {
                 Text(
                     text = "Cibles rapides :",
@@ -2185,7 +2883,11 @@ fun AddFinancialItemSheet(
                                         id = existingItem?.id ?: "",
                                         itemType = itemType,
                                         name = n,
-                                        subtitle = if (itemType == "preset") selectedPresetEnvelopeKey else (existingItem?.subtitle?.ifBlank { n } ?: n),
+                                        subtitle = when (itemType) {
+                                            "preset" -> selectedPresetEnvelopeKey
+                                            "daret", "debt" -> itemSubtitleText.trim().ifBlank { existingItem?.subtitle ?: "" }
+                                            else -> existingItem?.subtitle?.ifBlank { n } ?: n
+                                        },
                                         amount = amt.coerceAtLeast(0.01),
                                         secondaryAmount = when (itemType) {
                                             "daret" -> (secondaryText.replace(",", ".").toDoubleOrNull() ?: 10.0)
@@ -2409,7 +3111,9 @@ private fun SwipeableTransactionRow(
     hideAmounts: Boolean,
     deleteLabel: String,
     editLabel: String,
+    duplicateLabel: String = "Dupliquer",
     onEditTransaction: () -> Unit,
+    onDuplicateTransaction: () -> Unit = {},
     onDeleteTransaction: () -> Unit
 ) {
     val density = LocalDensity.current
@@ -2435,7 +3139,7 @@ private fun SwipeableTransactionRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(22.dp))
     ) {
-        // Background Reveal Banner (Right Swipe = Emerald Edit, Left Swipe = Coral Delete)
+        // Background Reveal Banner (Right Swipe = Emerald Duplicate, Left Swipe = Coral Delete)
         val isSwipingRight = animatedOffsetX > 8f
         val isSwipingLeft = animatedOffsetX < -8f
         if (isSwipingRight || isSwipingLeft) {
@@ -2454,13 +3158,13 @@ private fun SwipeableTransactionRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
-                        imageVector = if (isSwipingRight) Icons.Default.Edit else Icons.Default.DeleteOutline,
-                        contentDescription = if (isSwipingRight) editLabel else deleteLabel,
+                        imageVector = if (isSwipingRight) Icons.Default.ContentCopy else Icons.Default.DeleteOutline,
+                        contentDescription = if (isSwipingRight) duplicateLabel else deleteLabel,
                         tint = contentColor,
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = if (isSwipingRight) editLabel else deleteLabel,
+                        text = if (isSwipingRight) duplicateLabel else deleteLabel,
                         style = MaterialTheme.typography.labelLarge,
                         color = contentColor,
                         fontWeight = FontWeight.ExtraBold
@@ -2487,7 +3191,7 @@ private fun SwipeableTransactionRow(
                                 rawOffsetX >= thresholdPx -> {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     rawOffsetX = 0f
-                                    onEditTransaction()
+                                    onDuplicateTransaction()
                                 }
                                 rawOffsetX <= -thresholdPx -> {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -2567,7 +3271,7 @@ private fun SwipeableTransactionRow(
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
                         text = if (hideAmounts) "•••• $currencySymbol" else "$prefix${PayCycleEngine.formatDh(tx.amount)} $currencySymbol",
@@ -2575,6 +3279,17 @@ private fun SwipeableTransactionRow(
                         color = amountColor,
                         fontWeight = FontWeight.ExtraBold
                     )
+                    IconButton(
+                        onClick = onDuplicateTransaction,
+                        modifier = Modifier.testTag("duplicate_tx_${tx.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = duplicateLabel,
+                            tint = AccentEmerald,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     IconButton(
                         onClick = onDeleteTransaction,
                         modifier = Modifier.testTag("delete_tx_${tx.id}")
