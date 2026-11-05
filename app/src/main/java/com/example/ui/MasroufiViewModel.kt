@@ -953,6 +953,21 @@ class MasroufiViewModel(
         }
     }
 
+    fun applyDefaultLightRevolutThemeMigration() {
+        val curProfile = uiState.value.profile
+        if (curProfile.isDarkTheme) {
+            val updatedProfile = curProfile.copy(isDarkTheme = false)
+            _optimisticProfile.value = updatedProfile
+            safeLaunch("migrateLightMode") {
+                repository.saveProfile(updatedProfile)
+            }
+        }
+        val curPrefs = uiState.value.customPrefs
+        if (curPrefs.accentPalette == "emerald" || curPrefs.accentPalette.isBlank()) {
+            saveCustomizationPrefs(curPrefs.copy(accentPalette = "majorelle"))
+        }
+    }
+
     fun saveBudgetSettings(baseBudget: Double, payCycleDay: Int, rolloverEnabled: Boolean) {
         val cur = uiState.value.profile
         val updated = cur.copy(

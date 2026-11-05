@@ -130,9 +130,8 @@ fun ExpressiveAmbientBackground(
 ) {
     val pal = paletteForKey(accentPalette)
     val bgColor = MaterialTheme.colorScheme.background
-    val primaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.14f) else pal.primaryLight.copy(alpha = 0.10f)
-    val secondaryGlow = if (isDarkTheme) pal.heroStart.copy(alpha = 0.18f) else pal.primaryContainerLight.copy(alpha = 0.32f)
-    val tertiaryGlow = if (isDarkTheme) AccentAmber.copy(alpha = 0.06f) else AccentSkyBlue.copy(alpha = 0.07f)
+    val primaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.06f) else pal.primaryLight.copy(alpha = 0.035f)
+    val secondaryGlow = if (isDarkTheme) pal.heroMid.copy(alpha = 0.05f) else AccentSkyBlue.copy(alpha = 0.025f)
 
     Box(
         modifier = modifier
@@ -145,29 +144,20 @@ fun ExpressiveAmbientBackground(
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(primaryGlow, Color.Transparent),
-                    center = Offset(w * 0.85f, h * 0.08f),
-                    radius = w * 0.78f
+                    center = Offset(w * 0.85f, h * 0.06f),
+                    radius = w * 0.65f
                 ),
-                radius = w * 0.78f,
-                center = Offset(w * 0.85f, h * 0.08f)
+                radius = w * 0.65f,
+                center = Offset(w * 0.85f, h * 0.06f)
             )
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(secondaryGlow, Color.Transparent),
-                    center = Offset(w * 0.12f, h * 0.42f),
-                    radius = w * 0.72f
+                    center = Offset(w * 0.12f, h * 0.35f),
+                    radius = w * 0.55f
                 ),
-                radius = w * 0.72f,
-                center = Offset(w * 0.12f, h * 0.42f)
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(tertiaryGlow, Color.Transparent),
-                    center = Offset(w * 0.82f, h * 0.84f),
-                    radius = w * 0.65f
-                ),
-                radius = w * 0.65f,
-                center = Offset(w * 0.82f, h * 0.84f)
+                radius = w * 0.55f,
+                center = Offset(w * 0.12f, h * 0.35f)
             )
         }
         content()
@@ -175,13 +165,13 @@ fun ExpressiveAmbientBackground(
 }
 
 /**
- * Reusable translucent floating glass card with a subtle specular rim border
- * and optional spring-morphing press interaction.
+ * Reusable high-contrast Fintech card with crisp neutral surface, subtle elevation,
+ * clean specular border, and spring-morphing press interaction.
  */
 @Composable
 fun ExpressiveGlassCard(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 28.dp,
+    cornerRadius: Dp = 26.dp,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     accentRimColor: Color? = null,
     contentPadding: PaddingValues = PaddingValues(18.dp),
@@ -189,7 +179,7 @@ fun ExpressiveGlassCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val glassFill = containerColor.copy(alpha = if (isDark) 0.84f else 0.92f)
+    val glassFill = containerColor.copy(alpha = if (isDark) 0.96f else 0.99f)
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val haptics = LocalHapticFeedback.current
@@ -205,17 +195,18 @@ fun ExpressiveGlassCard(
         label = "glass_card_scale"
     )
 
-    val topRim = accentRimColor?.copy(alpha = if (isDark) 0.42f else 0.35f)
-        ?: if (isDark) Color.White.copy(alpha = 0.13f) else Color.White.copy(alpha = 0.75f)
-    val bottomRim = accentRimColor?.copy(alpha = 0.10f)
-        ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.28f else 0.38f)
+    val topRim = accentRimColor?.copy(alpha = if (isDark) 0.45f else 0.40f)
+        ?: if (isDark) Color(0xFF29364F) else Color(0xFFE2E8F0)
+    val bottomRim = accentRimColor?.copy(alpha = 0.18f)
+        ?: if (isDark) Color(0xFF1E293B) else Color(0xFFCBD5E1).copy(alpha = 0.75f)
 
     val shape = RoundedCornerShape(animatedRadius)
 
     Surface(
         shape = shape,
         color = glassFill,
-        tonalElevation = if (isDark) 3.dp else 1.dp,
+        tonalElevation = if (isDark) 2.dp else 0.dp,
+        shadowElevation = if (isDark) 4.dp else 2.dp,
         border = BorderStroke(
             width = 1.dp,
             brush = Brush.linearGradient(listOf(topRim, bottomRim))
@@ -244,21 +235,21 @@ fun ExpressiveGlassCard(
 }
 
 /**
- * Reusable translucent inner glass tile for nested items inside cards or sheets.
+ * Reusable crisp inner tile for nested items inside cards or sheets.
  */
 @Composable
 fun ExpressiveGlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(20.dp),
+    shape: Shape = RoundedCornerShape(18.dp),
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     accentBorderColor: Color? = null,
     onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val fill = containerColor.copy(alpha = if (isDark) 0.78f else 0.88f)
-    val borderColor = accentBorderColor?.copy(alpha = 0.38f)
-        ?: if (isDark) Color.White.copy(alpha = 0.08f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f)
+    val fill = containerColor.copy(alpha = if (isDark) 0.95f else 0.98f)
+    val borderColor = accentBorderColor?.copy(alpha = 0.42f)
+        ?: if (isDark) Color(0xFF29364F) else Color(0xFFE2E8F0)
     val haptics = LocalHapticFeedback.current
 
     Surface(

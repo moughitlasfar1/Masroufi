@@ -77,6 +77,10 @@ import com.example.ui.theme.MasroufiPalettes
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressivePillChip
+import com.example.ui.theme.distinctEnvelopeColor
+import com.example.ui.theme.semanticExpenseColor
+import com.example.ui.theme.semanticIncomeColor
+import com.example.ui.theme.semanticTransferColor
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -389,6 +393,9 @@ fun HistoryScreen(
                 val dayExpenses = dayTxs.filter { it.type == "expense" }.sumOf { it.amount }
                 val dayIncomes = dayTxs.filter { it.type == "income" }.sumOf { it.amount }
                 val dayNet = dayIncomes - dayExpenses
+                val isDark = state.profile.isDarkTheme
+                val incColor = semanticIncomeColor(isDark)
+                val expColor = semanticExpenseColor(isDark)
                 item(key = "day_header_$dayIso") {
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(16.dp),
@@ -424,7 +431,7 @@ fun HistoryScreen(
                                 text = totalLabel,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = if (dayNet > 0 && dayExpenses == 0.0) AccentEmerald else AccentCoral,
+                                color = if (dayNet > 0 && dayExpenses == 0.0) incColor else expColor,
                                 modifier = Modifier.testTag("history_day_total_$dayIso")
                             )
                         }
@@ -3226,10 +3233,11 @@ private fun SwipeableTransactionRow(
     val animatedOffsetX by animateFloatAsState(targetValue = rawOffsetX, label = "txSwipeOffset")
 
     val amountColor = when (tx.type) {
-        "income" -> AccentEmerald
-        "transfer" -> AccentSkyBlue
-        else -> AccentCoral
+        "income" -> semanticIncomeColor(false)
+        "transfer" -> semanticTransferColor(false)
+        else -> semanticExpenseColor(false)
     }
+    val catAccent = distinctEnvelopeColor(tx.envelopeKey.ifBlank { tx.category }, false)
     val prefix = when (tx.type) {
         "income" -> "+"
         "transfer" -> "⇄ "
@@ -3277,7 +3285,9 @@ private fun SwipeableTransactionRow(
 
         Surface(
             shape = RoundedCornerShape(22.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            shadowElevation = 1.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
@@ -3323,11 +3333,18 @@ private fun SwipeableTransactionRow(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(catAccent)
+                        )
                         Text(
                             text = tx.desc.ifBlank { tx.category },
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
                         )
                         Icon(
                             imageVector = Icons.Default.Edit,
@@ -3336,28 +3353,31 @@ private fun SwipeableTransactionRow(
                             modifier = Modifier.size(14.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest
+                            color = catAccent.copy(alpha = 0.14f)
                         ) {
                             Text(
                                 text = tx.category.take(22),
                                 style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = catAccent,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
                         }
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
                         ) {
                             Text(
                                 text = accountName.take(14),
                                 style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )

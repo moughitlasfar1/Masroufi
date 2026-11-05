@@ -15,7 +15,7 @@ data class UserProfile(
     val rolloverEnabled: Boolean = true,
     val language: String = "fr",
     @get:PropertyName("isDarkTheme")
-    val isDarkTheme: Boolean = true,
+    val isDarkTheme: Boolean = false,
     val seeded: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -61,7 +61,7 @@ data class EnvelopeConfig(
     val percentage: Double = 0.0,
     @get:PropertyName("hasCap")
     val hasCap: Boolean = true,
-    val colorHex: String = "#10B981",
+    val colorHex: String = "#2563EB",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -90,7 +90,7 @@ data class FinancialItem(
 )
 
 data class CustomizationPrefs(
-    val accentPalette: String = "emerald", // "emerald", "majorelle", "amber", "amethyst", "terracotta", "ocean"
+    val accentPalette: String = "majorelle", // "emerald", "majorelle", "amber", "amethyst", "terracotta", "ocean"
     val currencySymbol: String = "DH", // "DH", "MAD", "د.م.", "€", "$"
     val customTitle: String = "Masroufi",
     val customSubtitle: String = "",

@@ -97,7 +97,11 @@ import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.ExpressiveSectionHeader
+import com.example.ui.theme.distinctAccountColor
 import com.example.ui.theme.heroGradientColors
+import com.example.ui.theme.semanticExpenseColor
+import com.example.ui.theme.semanticIncomeColor
+import com.example.ui.theme.semanticTransferColor
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -426,19 +430,48 @@ fun OverviewScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "${strings.budgetLabel}: ${fmt(state.totalAvailableBudget)} $cur",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.92f),
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(0xFF10B981).copy(alpha = 0.25f),
+                                border = BorderStroke(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.55f))
+                            ) {
+                                Text(
+                                    text = "${strings.budgetLabel}: ${fmt(state.totalAvailableBudget)} $cur",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                            if (state.cycleIncomes > 0.0) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(0xFF10B981).copy(alpha = 0.32f),
+                                    border = BorderStroke(1.dp, Color(0xFF6EE7B7).copy(alpha = 0.65f))
+                                ) {
+                                    Text(
+                                        text = "+${fmt(state.cycleIncomes)} $cur",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = Color(0xFFA7F3D0),
+                                        fontWeight = FontWeight.ExtraBold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
                         if (state.totalCycleRollover > 0) {
                             Text(
                                 text = strings.rolloverBadge.replace("{amt}", fmt(state.totalCycleRollover)),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = AccentAmber
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFDE68A)
                             )
                         }
                     }
@@ -812,11 +845,10 @@ fun OverviewScreen(
                                             "wallet" -> Icons.Default.Smartphone
                                             else -> Icons.Default.Payments
                                         }
-                                        val accent = when (accWithBal.account.kind) {
-                                            "bank" -> AccentSkyBlue
-                                            "wallet" -> AccentAmber
-                                            else -> AccentEmerald
-                                        }
+                                        val accent = distinctAccountColor(
+                                            accWithBal.account.kind,
+                                            state.profile.isDarkTheme
+                                        )
                                         ExpressiveGlassSurface(
                                             shape = RoundedCornerShape(20.dp),
                                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1567,7 +1599,7 @@ private fun ModernBankingQuickActionsCard(
             BankingQuickActionTile(
                 title = expenseTitle,
                 icon = Icons.Default.ArrowUpward,
-                accentColor = AccentCoral,
+                accentColor = semanticExpenseColor(false),
                 onClick = onAddExpense,
                 testTag = "quick_action_expense",
                 modifier = Modifier.weight(1f)
@@ -1575,7 +1607,7 @@ private fun ModernBankingQuickActionsCard(
             BankingQuickActionTile(
                 title = incomeTitle,
                 icon = Icons.Default.ArrowDownward,
-                accentColor = AccentEmerald,
+                accentColor = semanticIncomeColor(false),
                 onClick = onAddIncome,
                 testTag = "quick_action_income",
                 modifier = Modifier.weight(1f)
@@ -1583,7 +1615,7 @@ private fun ModernBankingQuickActionsCard(
             BankingQuickActionTile(
                 title = transferTitle,
                 icon = Icons.Default.SwapHoriz,
-                accentColor = AccentSkyBlue,
+                accentColor = semanticTransferColor(false),
                 onClick = onTransfer,
                 testTag = "quick_action_transfer",
                 modifier = Modifier.weight(1f)

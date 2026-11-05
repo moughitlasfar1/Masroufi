@@ -313,7 +313,7 @@ fun AppNavigation(
     val currentUser by resolvedAuth.authStateFlow().collectAsStateWithLifecycle(initialValue = resolvedAuth.currentUser)
     val user = currentUser
     if (user == null) {
-        MasroufiTheme(darkTheme = true) {
+        MasroufiTheme(darkTheme = false, accentPalette = "majorelle") {
             AuthScreen(onAuthSuccess = {})
         }
     } else {
@@ -366,9 +366,19 @@ fun MainFeatureScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Restore persistent privacy mask & last active tab on first composition
+    // Restore persistent privacy mask & apply one-time Revolut Light Mode + Indigo migration
     LaunchedEffect(Unit) {
         viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
+    }
+
+    LaunchedEffect(state.isLoading) {
+        if (!state.isLoading) {
+            val uiPrefs = context.getSharedPreferences("masroufi_ui_prefs", Context.MODE_PRIVATE)
+            if (!uiPrefs.getBoolean("revolut_color_v3_migrated", false)) {
+                uiPrefs.edit().putBoolean("revolut_color_v3_migrated", true).apply()
+                viewModel.applyDefaultLightRevolutThemeMigration()
+            }
+        }
     }
 
     // Sync Home-Screen Widget, Quick Settings Tile & WorkManager Smart Notifications whenever DashboardState updates
@@ -1597,10 +1607,11 @@ private fun MasroufiTopBar(
     onShiftCycle: (Int) -> Unit
 ) {
     val pal = paletteForKey(accentPalette)
-    val glassSurface = MaterialTheme.colorScheme.surface.copy(alpha = if (isDarkTheme) 0.86f else 0.92f)
+    val glassSurface = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDarkTheme) 0.96f else 0.99f)
     Surface(
         color = glassSurface,
-        tonalElevation = 4.dp
+        tonalElevation = if (isDarkTheme) 2.dp else 0.dp,
+        shadowElevation = 2.dp
     ) {
         Column(
             modifier = Modifier

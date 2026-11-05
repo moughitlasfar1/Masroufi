@@ -250,6 +250,7 @@ fun AuthScreen(
                     .fillMaxWidth()
                     .widthIn(max = 460.dp),
                 shape = RoundedCornerShape(32.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceContainer
                 )
@@ -266,7 +267,7 @@ fun AuthScreen(
                             .clip(RoundedCornerShape(22.dp, 22.dp, 22.dp, 8.dp))
                             .background(
                                 Brush.linearGradient(
-                                    listOf(Color(0xFF10B981), Color(0xFF047857))
+                                    listOf(Color(0xFF2563EB), Color(0xFF4F46E5))
                                 )
                             ),
                         contentAlignment = Alignment.Center

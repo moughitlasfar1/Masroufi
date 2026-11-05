@@ -41,7 +41,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                     if (snapshot.exists()) {
                         val isDark = snapshot.getBoolean("isDarkTheme")
                             ?: snapshot.getBoolean("darkTheme")
-                            ?: true
+                            ?: false
                         UserProfile(
                             id = snapshot.id,
                             userId = snapshot.getString("userId") ?: userId,
@@ -442,7 +442,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             nameEn = "1. Commute & Transit (Train, Taxi)",
             percentage = 35.0,
             hasCap = true,
-            colorHex = "#10B981"
+            colorHex = "#0EA5E9"
         ),
         EnvelopeConfig(
             id = "env_charges",
@@ -454,7 +454,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             nameEn = "2. Fixed Bills & Household",
             percentage = 26.5,
             hasCap = true,
-            colorHex = "#38BDF8"
+            colorHex = "#7C3AED"
         ),
         EnvelopeConfig(
             id = "env_cafe",
@@ -466,7 +466,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             nameEn = "3. Café & Outings (Personal & Leisure)",
             percentage = 18.5,
             hasCap = true,
-            colorHex = "#FBBF24"
+            colorHex = "#D97706"
         ),
         EnvelopeConfig(
             id = "env_epargne",
@@ -478,7 +478,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             nameEn = "4. Savings & Investments",
             percentage = 20.0,
             hasCap = true,
-            colorHex = "#A78BFA"
+            colorHex = "#059669"
         ),
         EnvelopeConfig(
             id = "env_autre",
@@ -490,7 +490,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             nameEn = "Other / Unplanned",
             percentage = 0.0,
             hasCap = false,
-            colorHex = "#F87171"
+            colorHex = "#E11D48"
         )
     )
 
@@ -526,7 +526,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                 payCycleDay = 1,
                 rolloverEnabled = true,
                 language = "fr",
-                isDarkTheme = true,
+                isDarkTheme = false,
                 seeded = true,
                 createdAt = existingCreatedAt
             )

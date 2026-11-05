@@ -80,6 +80,9 @@ import com.example.ui.theme.ExpressiveAnimatedProgressBar
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveSectionHeader
+import com.example.ui.theme.distinctEnvelopeColor
+import com.example.ui.theme.semanticExpenseColor
+import com.example.ui.theme.semanticIncomeColor
 
 @Composable
 fun MonthScreen(
@@ -198,25 +201,45 @@ fun MonthScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(12.dp))
+                val isDark = state.profile.isDarkTheme
+                val incColor = semanticIncomeColor(isDark)
+                val expColor = semanticExpenseColor(isDark)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "${strings.incomes}: ${fmt(state.totalAvailableBudget)} $cur",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "${strings.expenses}: ${fmt(state.cycleExpenses)} $cur",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = AccentCoral
-                    )
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = incColor.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, incColor.copy(alpha = 0.35f))
+                    ) {
+                        Text(
+                            text = "+ ${strings.incomes}: ${fmt(state.totalAvailableBudget)} $cur",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = incColor,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = expColor.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, expColor.copy(alpha = 0.35f))
+                    ) {
+                        Text(
+                            text = "- ${strings.expenses}: ${fmt(state.cycleExpenses)} $cur",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = expColor,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
                 ExpressiveAnimatedProgressBar(
                     progress = (pct / 100f).safeFraction(),
-                    color = if (isOver) AccentCoral else AccentEmerald,
+                    color = if (isOver) expColor else MaterialTheme.colorScheme.primary,
                     trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                     height = 10.dp
                 )
@@ -230,7 +253,7 @@ fun MonthScreen(
                     text = "${if (isOver && !hide) "-" else ""}${fmt(abs(state.remainingBudget))} $cur",
                     style = MaterialTheme.typography.displayMedium,
                     fontWeight = FontWeight.ExtraBold,
-                    color = if (isOver) AccentCoral else AccentEmerald
+                    color = if (isOver) expColor else incColor
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
@@ -238,9 +261,10 @@ fun MonthScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "${strings.extraIncome}: ${fmt(state.cycleIncomes)} $cur",
+                        text = "${strings.extraIncome}: +${fmt(state.cycleIncomes)} $cur",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontWeight = FontWeight.SemiBold,
+                        color = incColor
                     )
                     Text(
                         text = "${strings.endOfMonthProj}: ${fmt(state.projectedCycleSpend)} $cur",
@@ -651,11 +675,18 @@ fun BudgetAndDaretScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                val isDark = state.profile.isDarkTheme
+                val expColor = semanticExpenseColor(isDark)
                 state.envelopes.forEach { envStatus ->
+                    val envColor = distinctEnvelopeColor(
+                        envStatus.config.key.ifBlank { envStatus.config.nameFr },
+                        isDark
+                    )
+                    val activeAccent = if (envStatus.isOver90Percent) expColor else envColor
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(22.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = if (envStatus.isOver90Percent) AccentCoral else AccentEmerald,
+                        accentBorderColor = activeAccent,
                         onClick = { onOpenCustomizeEnvelopes() },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -667,20 +698,39 @@ fun BudgetAndDaretScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = envStatus.config.localizedName(state.profile.language),
-                                    style = MaterialTheme.typography.labelLarge,
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.weight(1f)
-                                )
-                                Text(
-                                    text = if (envStatus.config.hasCap) {
-                                        "${fmt(envStatus.totalAvailable)} $cur (${envStatus.config.percentage.safeRoundToInt()}%)"
-                                    } else {
-                                        strings.noCap
-                                    },
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(12.dp)
+                                            .clip(CircleShape)
+                                            .background(envColor)
+                                    )
+                                    Text(
+                                        text = envStatus.config.localizedName(state.profile.language),
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                                Surface(
+                                    shape = CircleShape,
+                                    color = envColor.copy(alpha = 0.14f)
+                                ) {
+                                    Text(
+                                        text = if (envStatus.config.hasCap) {
+                                            "${fmt(envStatus.totalAvailable)} $cur (${envStatus.config.percentage.safeRoundToInt()}%)"
+                                        } else {
+                                            strings.noCap
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = envColor,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                    )
+                                }
                             }
 
                             if (envStatus.rolloverAmount > 0) {
@@ -692,22 +742,24 @@ fun BudgetAndDaretScreen(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "${strings.expenses}: ${fmt(envStatus.spent)} $cur",
+                                    text = "${strings.expenses}: -${fmt(envStatus.spent)} $cur",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (envStatus.spent > 0) expColor else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Text(
                                     text = "${envStatus.usagePercent}%",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (envStatus.isOver90Percent) AccentCoral else MaterialTheme.colorScheme.primary
+                                    color = activeAccent
                                 )
                             }
 
@@ -715,7 +767,7 @@ fun BudgetAndDaretScreen(
 
                             ExpressiveAnimatedProgressBar(
                                 progress = (envStatus.usagePercent / 100f).safeFraction(),
-                                color = if (envStatus.isOver90Percent) AccentCoral else AccentEmerald,
+                                color = activeAccent,
                                 trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                                 height = 10.dp
                             )
@@ -1227,7 +1279,9 @@ fun CategoryDonutChart(
     currencySymbol: String = "DH",
     hideAmounts: Boolean = false
 ) {
-    val palette = listOf(AccentEmerald, AccentSkyBlue, AccentAmber, AccentViolet, AccentCoral)
+    val envColors = envelopes.map { env ->
+        distinctEnvelopeColor(env.config.key.ifBlank { env.config.nameFr }, isDark = false)
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1256,7 +1310,7 @@ fun CategoryDonutChart(
                             val sweep = ((env.spent / totalSpent) * 360.0).toFloat()
                             if (sweep.isFinite() && sweep > 0f) {
                                 drawArc(
-                                    color = palette[index % palette.size],
+                                    color = envColors[index],
                                     startAngle = startAngle,
                                     sweepAngle = sweep,
                                     useCenter = false,
@@ -1288,6 +1342,7 @@ fun CategoryDonutChart(
         ) {
             envelopes.forEachIndexed { index, env ->
                 val sharePct = if (totalSpent > 0) ((env.spent / totalSpent) * 100.0).safeRoundToInt() else 0
+                val dotColor = envColors[index]
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1296,11 +1351,12 @@ fun CategoryDonutChart(
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(palette[index % palette.size])
+                            .background(dotColor)
                     )
                     Text(
                         text = env.config.localizedName(lang).take(20),
                         style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp,
                         modifier = Modifier.weight(1f),
                         maxLines = 1
@@ -1308,7 +1364,8 @@ fun CategoryDonutChart(
                     Text(
                         text = "$sharePct%",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        fontWeight = FontWeight.Bold,
+                        color = dotColor
                     )
                 }
             }
