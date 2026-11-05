@@ -309,9 +309,9 @@ fun MonthScreen(
                     val diff = curSpent - prevSpent
                     val badgeText = when {
                         prevSpent <= 0.0 && curSpent <= 0.0 -> "Stable (0 $cur)"
-                        prevSpent <= 0.0 -> "Nouveau (${fmt(curSpent)} $cur)"
-                        diff <= 0.0 -> "-${fmt(abs(diff))} $cur vs mois préc."
-                        else -> "+${fmt(diff)} $cur vs mois préc."
+                        prevSpent <= 0.0 -> "${strings.newLabel} (${fmt(curSpent)} $cur)"
+                        diff <= 0.0 -> "-${fmt(abs(diff))} $cur ${strings.vsLastMonthSuffix}"
+                        else -> "+${fmt(diff)} $cur ${strings.vsLastMonthSuffix}"
                     }
                     val badgeColor = if (diff <= 0.0) AccentEmerald else AccentCoral
                     ExpressiveGlassSurface(
@@ -336,7 +336,7 @@ fun MonthScreen(
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = "Actuel: ${fmt(curSpent)} $cur · Préc.: ${fmt(prevSpent)} $cur",
+                                    text = "${strings.currentShortLabel}: ${fmt(curSpent)} $cur · ${strings.previousShortLabel}: ${fmt(prevSpent)} $cur",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontSize = 11.5.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -670,7 +670,8 @@ fun BudgetAndDaretScreen(
                     totalSpent = state.cycleExpenses,
                     lang = state.profile.language,
                     currencySymbol = cur,
-                    hideAmounts = hide
+                    hideAmounts = hide,
+                    isDarkTheme = state.profile.isDarkTheme
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -919,11 +920,11 @@ fun BudgetAndDaretScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.CallSplit,
-                                    contentDescription = "Partager une note",
+                                    contentDescription = strings.splitBillDesc,
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Split", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Text(strings.splitBillBtnLabel, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
                             FilledTonalButton(
                                 onClick = { onOpenNewDebt(null) },
@@ -982,7 +983,7 @@ fun BudgetAndDaretScreen(
                                         )
                                     }
                                     Text(
-                                        text = "Reste: ${fmt(remDebt)} $cur / ${fmt(debt.amount)} $cur",
+                                        text = "${strings.remainingLabel}: ${fmt(remDebt)} $cur / ${fmt(debt.amount)} $cur",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1100,13 +1101,13 @@ fun BudgetAndDaretScreen(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilledTonalButton(onClick = { onOpenNewGoal(null) }) {
-                            Text("+ Objectif", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.addGoalBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                         FilledTonalButton(
                             onClick = { onOpenNewBill(null) },
                             modifier = Modifier.testTag("btn_open_new_bill")
                         ) {
-                            Text("+ Facture", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.addBillBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1115,7 +1116,7 @@ fun BudgetAndDaretScreen(
 
                 // 1-Tap Moroccan Bill Templates Bar (Lydec, Redal, Amendis, ONEE, IAM, Inwi, Orange, Rent)
                 Text(
-                    text = "⚡ Modèles Maroc (jour d'échéance pré-rempli) :",
+                    text = strings.moroccoTemplatesTitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1190,11 +1191,11 @@ fun BudgetAndDaretScreen(
                                         onClick = { onPayBill(bill) },
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                     ) {
-                                        Text("Payer", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(strings.payBillBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 } else {
                                     Text(
-                                        text = "Payée ✓",
+                                        text = strings.paidBadgeLabel,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = AccentEmerald,
                                         fontWeight = FontWeight.Bold,
@@ -1277,10 +1278,11 @@ fun CategoryDonutChart(
     totalSpent: Double,
     lang: String,
     currencySymbol: String = "DH",
-    hideAmounts: Boolean = false
+    hideAmounts: Boolean = false,
+    isDarkTheme: Boolean = false
 ) {
     val envColors = envelopes.map { env ->
-        distinctEnvelopeColor(env.config.key.ifBlank { env.config.nameFr }, isDark = false)
+        distinctEnvelopeColor(env.config.key.ifBlank { env.config.nameFr }, isDark = isDarkTheme)
     }
     Row(
         modifier = Modifier

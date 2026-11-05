@@ -853,6 +853,24 @@ object AppSecurityManager {
         }
         return out
     }
+
+    private const val KEY_DISMISSED_RECURRING_BILLS = "dismissed_recurring_bills"
+
+    fun getDismissedRecurringBills(context: Context): Set<String> {
+        val raw = prefs(context).getStringSet(KEY_DISMISSED_RECURRING_BILLS, emptySet()) ?: emptySet()
+        return raw.map { it.trim().lowercase(java.util.Locale.ROOT) }.filter { it.isNotEmpty() }.toSet()
+    }
+
+    fun dismissRecurringBill(context: Context, merchant: String) {
+        val clean = merchant.trim().lowercase(java.util.Locale.ROOT)
+        if (clean.isEmpty()) return
+        val updated = getDismissedRecurringBills(context) + clean
+        prefs(context).edit().putStringSet(KEY_DISMISSED_RECURRING_BILLS, updated).apply()
+    }
+
+    fun clearDismissedRecurringBills(context: Context) {
+        prefs(context).edit().remove(KEY_DISMISSED_RECURRING_BILLS).apply()
+    }
 }
 
 @Composable

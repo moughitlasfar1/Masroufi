@@ -6,6 +6,9 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
 
 data class AccentPaletteSpec(
     val key: String,
@@ -21,7 +24,47 @@ data class AccentPaletteSpec(
     val heroMid: Color,
     val heroEnd: Color,
     val swatchColor: Color
-)
+) {
+    fun localizedLabel(lang: String): String = when (key) {
+        "emerald" -> when (lang) {
+            "ar" -> "زمردي فينتك"
+            "darija" -> "خضر زمردي"
+            "en" -> "Fintech Emerald"
+            else -> labelFr
+        }
+        "majorelle" -> when (lang) {
+            "ar" -> "أزرق ماجوريل (ريفولوت)"
+            "darija" -> "زرق ماجوريل (Revolut)"
+            "en" -> "Revolut Indigo Blue"
+            else -> labelFr
+        }
+        "amber" -> when (lang) {
+            "ar" -> "ذهبي وعنبري فاخر"
+            "darija" -> "ذهبي ملكي"
+            "en" -> "Luxury Gold & Amber"
+            else -> labelFr
+        }
+        "amethyst" -> when (lang) {
+            "ar" -> "بنفسجي ملكي"
+            "darija" -> "موف ملكي"
+            "en" -> "Royal Amethyst"
+            else -> labelFr
+        }
+        "terracotta" -> when (lang) {
+            "ar" -> "ياقوتي مراكشي"
+            "darija" -> "أحمر ياقوتي"
+            "en" -> "Vibrant Ruby Rose"
+            else -> labelFr
+        }
+        "ocean" -> when (lang) {
+            "ar" -> "أزرق المحيط"
+            "darija" -> "زرق البحر"
+            "en" -> "Pacific Cyan"
+            else -> labelFr
+        }
+        else -> labelFr
+    }
+}
 
 val MasroufiPalettes = listOf(
     AccentPaletteSpec(
@@ -31,7 +74,7 @@ val MasroufiPalettes = listOf(
         onPrimaryDark = Color(0xFF022C22),
         primaryContainerDark = Color(0xFF064E3B),
         onPrimaryContainerDark = Color(0xFFD1FAE5),
-        primaryLight = Color(0xFF059669),
+        primaryLight = Color(0xFF047857),
         primaryContainerLight = Color(0xFFD1FAE5),
         onPrimaryContainerLight = Color(0xFF064E3B),
         heroStart = Color(0xFF059669),
@@ -46,7 +89,7 @@ val MasroufiPalettes = listOf(
         onPrimaryDark = Color(0xFF082F49),
         primaryContainerDark = Color(0xFF1E3A8A),
         onPrimaryContainerDark = Color(0xFFDBEAFE),
-        primaryLight = Color(0xFF2563EB),
+        primaryLight = Color(0xFF1D4ED8),
         primaryContainerLight = Color(0xFFDBEAFE),
         onPrimaryContainerLight = Color(0xFF1E3A8A),
         heroStart = Color(0xFF2563EB),
@@ -61,7 +104,7 @@ val MasroufiPalettes = listOf(
         onPrimaryDark = Color(0xFF451A03),
         primaryContainerDark = Color(0xFF78350F),
         onPrimaryContainerDark = Color(0xFFFEF3C7),
-        primaryLight = Color(0xFFD97706),
+        primaryLight = Color(0xFF92400E),
         primaryContainerLight = Color(0xFFFEF3C7),
         onPrimaryContainerLight = Color(0xFF451A03),
         heroStart = Color(0xFFD97706),
@@ -72,11 +115,11 @@ val MasroufiPalettes = listOf(
     AccentPaletteSpec(
         key = "amethyst",
         labelFr = "Violet Royal",
-        primaryDark = Color(0xFFA78BFA),
+        primaryDark = Color(0xFFC4B5FD),
         onPrimaryDark = Color(0xFF2E1065),
         primaryContainerDark = Color(0xFF4C1D95),
         onPrimaryContainerDark = Color(0xFFEDE9FE),
-        primaryLight = Color(0xFF7C3AED),
+        primaryLight = Color(0xFF6D28D9),
         primaryContainerLight = Color(0xFFEDE9FE),
         onPrimaryContainerLight = Color(0xFF2E1065),
         heroStart = Color(0xFF7C3AED),
@@ -87,11 +130,11 @@ val MasroufiPalettes = listOf(
     AccentPaletteSpec(
         key = "terracotta",
         labelFr = "Rose Rubis Vif",
-        primaryDark = Color(0xFFFB7185),
+        primaryDark = Color(0xFFFDA4AF),
         onPrimaryDark = Color(0xFF4C0519),
         primaryContainerDark = Color(0xFF881337),
         onPrimaryContainerDark = Color(0xFFFFE4E6),
-        primaryLight = Color(0xFFE11D48),
+        primaryLight = Color(0xFFBE123C),
         primaryContainerLight = Color(0xFFFFE4E6),
         onPrimaryContainerLight = Color(0xFF4C0519),
         heroStart = Color(0xFFE11D48),
@@ -106,7 +149,7 @@ val MasroufiPalettes = listOf(
         onPrimaryDark = Color(0xFF082F49),
         primaryContainerDark = Color(0xFF0369A1),
         onPrimaryContainerDark = Color(0xFFE0F2FE),
-        primaryLight = Color(0xFF0284C7),
+        primaryLight = Color(0xFF0369A1),
         primaryContainerLight = Color(0xFFE0F2FE),
         onPrimaryContainerLight = Color(0xFF0C4A6E),
         heroStart = Color(0xFF0284C7),
@@ -126,6 +169,21 @@ fun heroGradientColors(accentPalette: String, isOverBudget: Boolean): List<Color
     }
     val spec = paletteForKey(accentPalette)
     return listOf(spec.heroStart, spec.heroMid, spec.heroEnd)
+}
+
+/**
+ * Computes WCAG 2.1 relative luminance and contrast ratio (1.0 .. 21.0) between [foreground] and [background].
+ */
+fun wcagContrastRatio(foreground: Color, background: Color): Double {
+    fun channelLum(c: Float): Double {
+        val v = c.toDouble().coerceIn(0.0, 1.0)
+        return if (v <= 0.03928) v / 12.92 else ((v + 0.055) / 1.055).pow(2.4)
+    }
+    val lum1 = 0.2126 * channelLum(foreground.red) + 0.7152 * channelLum(foreground.green) + 0.0722 * channelLum(foreground.blue)
+    val lum2 = 0.2126 * channelLum(background.red) + 0.7152 * channelLum(background.green) + 0.0722 * channelLum(background.blue)
+    val lighter = max(lum1, lum2)
+    val darker = min(lum1, lum2)
+    return (lighter + 0.05) / (darker + 0.05)
 }
 
 val ExpressiveShapes = androidx.compose.material3.Shapes(
@@ -179,11 +237,11 @@ fun MasroufiTheme(
             onPrimary = Color.White,
             primaryContainer = spec.primaryContainerLight,
             onPrimaryContainer = spec.onPrimaryContainerLight,
-            secondary = Color(0xFF0284C7),
+            secondary = Color(0xFF0369A1),
             onSecondary = Color.White,
             secondaryContainer = Color(0xFFE0F2FE),
             onSecondaryContainer = Color(0xFF0C4A6E),
-            tertiary = Color(0xFFD97706),
+            tertiary = Color(0xFFB45309),
             onTertiary = Color.White,
             background = MasroufiSurfaceLight,
             onBackground = MasroufiOnSurfaceLight,

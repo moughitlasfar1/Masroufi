@@ -943,6 +943,8 @@ fun SplitBillToSellefSheet(
     ) -> Unit
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    val lang = state.profile.language
+    val strings = com.example.domain.Translations.forLang(lang)
     val haptics = LocalHapticFeedback.current
     var billTitle by remember { mutableStateOf("Dîner / Café entre amis") }
     var totalAmountText by remember { mutableStateOf("300") }
@@ -967,12 +969,18 @@ fun SplitBillToSellefSheet(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "🍕 Partager une note (Split Bill → Sellef)",
+                text = "🍕 ${strings.splitBillDesc} (Split Bill → Sellef)",
                 style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
-                text = "Divisez une addition entre amis : la part de chaque ami est automatiquement ajoutée dans votre suivi Sellef (On me doit) avec rappel WhatsApp.",
+                text = when (lang) {
+                    "ar" -> "قسّم الفاتورة بين الأصدقاء: يتم تسجيل حصة كل صديق تلقائياً في متابعة السلف مع تذكير واتساب."
+                    "darija" -> "قسم الكونط مع صحابك: حق كل واحد كيتزاد أوتوماتيك فـ السلف مع تذكير واتساب."
+                    "en" -> "Split a bill with friends: each friend's share is automatically added to your Sellef tracker with WhatsApp reminder."
+                    else -> "Divisez une addition entre amis : la part de chaque ami est automatiquement ajoutée dans votre suivi Sellef (On me doit) avec rappel WhatsApp."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -980,7 +988,16 @@ fun SplitBillToSellefSheet(
             OutlinedTextField(
                 value = billTitle,
                 onValueChange = { billTitle = it },
-                label = { Text("Titre de la sortie / facture (ex: Restaurant, Foot, Voyage)") },
+                label = {
+                    Text(
+                        when (lang) {
+                            "ar" -> "عنوان الخرجة / الفاتورة"
+                            "darija" -> "عنوان الخرجة / الفاتورة"
+                            "en" -> "Outing / Bill Title"
+                            else -> "Titre de la sortie / facture (ex: Restaurant, Foot, Voyage)"
+                        }
+                    )
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -991,7 +1008,16 @@ fun SplitBillToSellefSheet(
             OutlinedTextField(
                 value = totalAmountText,
                 onValueChange = { totalAmountText = it },
-                label = { Text("Montant total payé ($cur)") },
+                label = {
+                    Text(
+                        when (lang) {
+                            "ar" -> "المبلغ الإجمالي المدفوع ($cur)"
+                            "darija" -> "المبلغ كامل اللي تخلص ($cur)"
+                            "en" -> "Total Amount Paid ($cur)"
+                            else -> "Montant total payé ($cur)"
+                        }
+                    )
+                },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
@@ -1003,7 +1029,16 @@ fun SplitBillToSellefSheet(
             OutlinedTextField(
                 value = friendsCsv,
                 onValueChange = { friendsCsv = it },
-                label = { Text("Prénoms des amis (séparés par une virgule)") },
+                label = {
+                    Text(
+                        when (lang) {
+                            "ar" -> "أسماء الأصدقاء (مفصولة بفاصلة)"
+                            "darija" -> "سميات صحابك (مفروقين بفاصلة)"
+                            "en" -> "Friends' Names (comma-separated)"
+                            else -> "Prénoms des amis (séparés par une virgule)"
+                        }
+                    )
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
@@ -1017,8 +1052,14 @@ fun SplitBillToSellefSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "M'inclure dans le partage (${parsedFriends.size + if (includeSelf) 1 else 0} pers.)",
+                    text = when (lang) {
+                        "ar" -> "تضميني في القسمة (${parsedFriends.size + if (includeSelf) 1 else 0} أشخاص)"
+                        "darija" -> "حسبني معاهم فالقسمة (${parsedFriends.size + if (includeSelf) 1 else 0} ناس)"
+                        "en" -> "Include me in the split (${parsedFriends.size + if (includeSelf) 1 else 0} people)"
+                        else -> "M'inclure dans le partage (${parsedFriends.size + if (includeSelf) 1 else 0} pers.)"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
                 Switch(
@@ -1033,8 +1074,14 @@ fun SplitBillToSellefSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Enregistrer aussi la dépense totale dans mes opérations",
+                    text = when (lang) {
+                        "ar" -> "تسجيل المصروف الإجمالي أيضاً في عملياتي"
+                        "darija" -> "قيد حتى المصروف كامل فـ العمليات ديالي"
+                        "en" -> "Also record full expense in my transactions"
+                        else -> "Enregistrer aussi la dépense totale dans mes opérations"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
                 Switch(
@@ -1050,13 +1097,13 @@ fun SplitBillToSellefSheet(
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        text = "Part par personne : ${PayCycleEngine.formatDh(perPerson)} $cur",
+                        text = "${PayCycleEngine.formatDh(perPerson)} $cur / pers.",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        text = "${parsedFriends.size} entrée(s) Sellef créée(s) : ${parsedFriends.joinToString(", ")}",
+                        text = "${parsedFriends.size} Sellef : ${parsedFriends.joinToString(", ")}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                     )
@@ -1082,7 +1129,10 @@ fun SplitBillToSellefSheet(
                     .height(52.dp)
                     .testTag("split_bill_confirm_btn")
             ) {
-                Text("Créer les ${parsedFriends.size} Sellef (${PayCycleEngine.formatDh(perPerson)} $cur/pers.)", fontWeight = FontWeight.ExtraBold)
+                Text(
+                    text = "${strings.splitBillBtnLabel} (${parsedFriends.size} • ${PayCycleEngine.formatDh(perPerson)} $cur)",
+                    fontWeight = FontWeight.ExtraBold
+                )
             }
             Spacer(modifier = Modifier.height(20.dp))
         }
@@ -1125,8 +1175,14 @@ fun HouseholdInviteSectionCard(
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
-                text = "Code d'invitation de votre foyer : $inviteCode",
+                text = when (lang) {
+                    "ar" -> "رمز دعوة العائلة: $inviteCode"
+                    "darija" -> "كود الدعوة ديال الدار: $inviteCode"
+                    "en" -> "Your household invite code: $inviteCode"
+                    else -> "Code d'invitation de votre foyer : $inviteCode"
+                },
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.Bold
             )
             Row(
@@ -1137,7 +1193,17 @@ fun HouseholdInviteSectionCard(
                 OutlinedTextField(
                     value = partnerCodeInput,
                     onValueChange = { partnerCodeInput = it.uppercase().take(14) },
-                    label = { Text("Code partenaire (ex: MSR-AB12CD)", fontSize = 11.sp) },
+                    label = {
+                        Text(
+                            when (lang) {
+                                "ar" -> "رمز الشريك (مثال: MSR-AB12CD)"
+                                "darija" -> "كود الشريك (مثال: MSR-AB12CD)"
+                                "en" -> "Partner code (e.g. MSR-AB12CD)"
+                                else -> "Code partenaire (ex: MSR-AB12CD)"
+                            },
+                            fontSize = 11.sp
+                        )
+                    },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
@@ -1157,7 +1223,21 @@ fun HouseholdInviteSectionCard(
                     modifier = Modifier.testTag("btn_household_invite_action")
                 ) {
                     Text(
-                        text = if (partnerCodeInput.trim().length >= 4) "Lier" else "Inviter",
+                        text = if (partnerCodeInput.trim().length >= 4) {
+                            when (lang) {
+                                "ar" -> "ربط"
+                                "darija" -> "ربط"
+                                "en" -> "Link"
+                                else -> "Lier"
+                            }
+                        } else {
+                            when (lang) {
+                                "ar" -> "دعوة"
+                                "darija" -> "عرض"
+                                "en" -> "Invite"
+                                else -> "Inviter"
+                            }
+                        },
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -1165,7 +1245,7 @@ fun HouseholdInviteSectionCard(
             }
             if (!linkedPartnerCode.isNullOrBlank()) {
                 Text(
-                    text = "✓ Foyer lié au code partenaire : $linkedPartnerCode",
+                    text = "✓ $linkedPartnerCode",
                     style = MaterialTheme.typography.labelSmall,
                     color = AccentEmerald,
                     fontWeight = FontWeight.Bold

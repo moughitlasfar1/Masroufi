@@ -388,6 +388,68 @@ fun HistoryScreen(
                 }
             }
 
+            // Upcoming (Future-dated) Transactions Group at the top
+            if (state.upcomingTransactions.isNotEmpty()) {
+                val upcomingExpenses = state.upcomingTransactions.filter { it.type == "expense" }.sumOf { it.amount }
+                val isDark = state.profile.isDarkTheme
+                val expColor = semanticExpenseColor(isDark)
+                item(key = "upcoming_header") {
+                    ExpressiveGlassSurface(
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        accentBorderColor = AccentAmber,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("history_upcoming_header")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = strings.upcomingGroupTitle,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = AccentAmber
+                            )
+                            Text(
+                                text = if (hide) "•••• $cur" else "-${PayCycleEngine.formatDh(upcomingExpenses)} $cur",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = expColor,
+                                modifier = Modifier.testTag("history_upcoming_total")
+                            )
+                        }
+                    }
+                }
+                items(state.upcomingTransactions, key = { "upcoming_${it.id}" }) { tx ->
+                    val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
+                    SwipeableTransactionRow(
+                        tx = tx,
+                        accountName = accountName,
+                        currencySymbol = cur,
+                        hideAmounts = hide,
+                        lang = lang,
+                        envelopes = state.envelopes.map { it.config },
+                        isDarkTheme = state.profile.isDarkTheme,
+                        deleteLabel = strings.deleteBtn,
+                        duplicateLabel = when (lang) {
+                            "ar" -> "تكرار"
+                            "darija" -> "عاودها"
+                            "en" -> "Duplicate"
+                            else -> "Dupliquer"
+                        },
+                        editLabel = strings.editBtn,
+                        onEditTransaction = { onEditTransaction(tx) },
+                        onDuplicateTransaction = { onDuplicateTransaction(tx) },
+                        onDeleteTransaction = { onDeleteTransaction(tx) }
+                    )
+                }
+            }
+
             // Day-Grouped Transactions with Daily Totals
             groupedByDay.forEach { (dayIso, dayTxs) ->
                 val dayExpenses = dayTxs.filter { it.type == "expense" }.sumOf { it.amount }
@@ -445,6 +507,9 @@ fun HistoryScreen(
                         accountName = accountName,
                         currencySymbol = cur,
                         hideAmounts = hide,
+                        lang = lang,
+                        envelopes = state.envelopes.map { it.config },
+                        isDarkTheme = state.profile.isDarkTheme,
                         deleteLabel = strings.deleteBtn,
                         duplicateLabel = when (lang) {
                             "ar" -> "تكرار"
@@ -452,12 +517,7 @@ fun HistoryScreen(
                             "en" -> "Duplicate"
                             else -> "Dupliquer"
                         },
-                        editLabel = when (lang) {
-                            "ar" -> "تعديل"
-                            "darija" -> "بدل"
-                            "en" -> "Edit"
-                            else -> "Modifier"
-                        },
+                        editLabel = strings.editBtn,
                         onEditTransaction = { onEditTransaction(tx) },
                         onDuplicateTransaction = { onDuplicateTransaction(tx) },
                         onDeleteTransaction = { onDeleteTransaction(tx) }
@@ -752,7 +812,7 @@ fun HistoryScreen(
                         FilterChip(
                             selected = state.filterState.selectedAccountId == "all",
                             onClick = { onUpdateFilter { it.copy(selectedAccountId = "all") } },
-                            label = { Text("Tous comptes", fontSize = 11.5.sp) }
+                            label = { Text(strings.allAccountsLabel, fontSize = 11.5.sp) }
                         )
                         state.accounts.forEach { acc ->
                             FilterChip(
@@ -1102,7 +1162,7 @@ fun TransactionEditorSheet(
                                 .fillMaxWidth()
                                 .testTag("btn_confirm_duplicate_tx")
                         ) {
-                            Text("Ajouter quand même", fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
+                            Text(strings.addAnywayBtn, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp)
                         }
                     }
                 }
@@ -1119,8 +1179,9 @@ fun TransactionEditorSheet(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        text = if (txType == "transfer") "Compte source :" else "Compte :",
+                        text = if (txType == "transfer") strings.sourceAccountFieldLabel else strings.accountFieldLabel,
                         style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold
                     )
                     Row(
@@ -1331,7 +1392,7 @@ fun TransactionEditorSheet(
                         OutlinedTextField(
                             value = customCategory,
                             onValueChange = { customCategory = it },
-                            label = { Text("Nom de la catégorie") },
+                            label = { Text(strings.categoryNameLabel) },
                             singleLine = true,
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -2022,7 +2083,7 @@ fun SettingsBottomSheet(
             ) {
                 Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Studio de Personnalisation (Thèmes, Cartes, Devise)", fontWeight = FontWeight.Bold)
+                Text(strings.customizationStudioFullBtn, fontWeight = FontWeight.Bold)
             }
 
             // Clean Account vs Optional Demo Data Mode
@@ -2036,7 +2097,7 @@ fun SettingsBottomSheet(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Données du compte & Mode Démo",
+                        text = strings.demoModeBtn,
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -2053,7 +2114,7 @@ fun SettingsBottomSheet(
                                 .weight(1f)
                                 .testTag("settings_load_demo_btn")
                         ) {
-                            Text("Mode Démo", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.demoModeBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         FilledTonalButton(
                             onClick = {
@@ -2067,7 +2128,7 @@ fun SettingsBottomSheet(
                                 .weight(1f)
                                 .testTag("settings_reset_clean_btn")
                         ) {
-                            Text("Compte Vierge (0 DH)", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.cleanAccountBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -2157,6 +2218,7 @@ fun CustomizationStudioSheet(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            val strings = com.example.domain.Translations.forLang(lang)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2167,13 +2229,9 @@ fun CustomizationStudioSheet(
                     tint = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    text = when (lang) {
-                        "darija" -> "تخصيص التطبيق والواجهة (Gostimazation)"
-                        "ar" -> "تخصيص المظهر والواجهة"
-                        "en" -> "App & UI Customization Studio"
-                        else -> "Studio de Personnalisation"
-                    },
-                    style = MaterialTheme.typography.titleLarge
+                    text = strings.customizationStudioTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
 
@@ -2197,7 +2255,7 @@ fun CustomizationStudioSheet(
             ) {
                 MasroufiPalettes.forEach { pal ->
                     val isSelected = selectedPalette == pal.key
-                    val label = pal.labelFr
+                    val label = pal.localizedLabel(lang)
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -2282,7 +2340,7 @@ fun CustomizationStudioSheet(
             OutlinedTextField(
                 value = customTitle,
                 onValueChange = { customTitle = it.take(40) },
-                label = { Text("Nom personnalisé (ex: Masroufi Pro, Budget Dari)") },
+                label = { Text(strings.customTitleFieldLabel) },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -2290,7 +2348,7 @@ fun CustomizationStudioSheet(
             OutlinedTextField(
                 value = customSubtitle,
                 onValueChange = { customSubtitle = it.take(80) },
-                label = { Text("Sous-titre personnalisé (optionnel)") },
+                label = { Text(strings.customSubtitleFieldLabel) },
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth()
@@ -2358,7 +2416,7 @@ fun CustomizationStudioSheet(
                                 enabled = idx > 0,
                                 modifier = Modifier.size(34.dp)
                             ) {
-                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = "Monter")
+                                Icon(Icons.Default.KeyboardArrowUp, contentDescription = strings.moveUpDesc)
                             }
                             IconButton(
                                 onClick = {
@@ -2372,7 +2430,7 @@ fun CustomizationStudioSheet(
                                 enabled = idx < dashboardOrder.lastIndex,
                                 modifier = Modifier.size(34.dp)
                             ) {
-                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Descendre")
+                                Icon(Icons.Default.KeyboardArrowDown, contentDescription = strings.moveDownDesc)
                             }
                             Switch(
                                 checked = isVisibleFor(sectionKey),
@@ -2408,7 +2466,7 @@ fun CustomizationStudioSheet(
                     .height(52.dp)
                     .testTag("save_customization_btn")
             ) {
-                Text("Appliquer la personnalisation", fontWeight = FontWeight.ExtraBold)
+                Text(strings.applyCustomizationBtn, fontWeight = FontWeight.ExtraBold)
             }
             Spacer(modifier = Modifier.height(24.dp))
         }
@@ -2943,6 +3001,7 @@ fun AddFinancialItemSheet(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                val itemStrings = com.example.domain.Translations.forLang(state.profile.language)
                 if (existingAccount != null && onDeleteAccount != null && state.accounts.size > 1) {
                     FilledTonalButton(
                         onClick = {
@@ -2955,7 +3014,7 @@ fun AddFinancialItemSheet(
                         ),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Supprimer", fontWeight = FontWeight.Bold)
+                        Text(itemStrings.deleteBtn, fontWeight = FontWeight.Bold)
                     }
                 } else if (existingItem != null && onDeleteItem != null) {
                     FilledTonalButton(
@@ -2969,7 +3028,7 @@ fun AddFinancialItemSheet(
                         ),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Supprimer", fontWeight = FontWeight.Bold)
+                        Text(itemStrings.deleteBtn, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -3020,7 +3079,7 @@ fun AddFinancialItemSheet(
                         .weight(2f)
                         .height(52.dp)
                 ) {
-                    Text("Enregistrer", fontWeight = FontWeight.ExtraBold)
+                    Text(itemStrings.saveBtn, fontWeight = FontWeight.ExtraBold)
                 }
             }
             Spacer(modifier = Modifier.height(24.dp))
@@ -3218,6 +3277,9 @@ private fun SwipeableTransactionRow(
     accountName: String,
     currencySymbol: String,
     hideAmounts: Boolean,
+    lang: String = "fr",
+    envelopes: List<EnvelopeConfig> = emptyList(),
+    isDarkTheme: Boolean = false,
     deleteLabel: String,
     editLabel: String,
     duplicateLabel: String = "Dupliquer",
@@ -3232,12 +3294,15 @@ private fun SwipeableTransactionRow(
     var rawOffsetX by remember(tx.id) { mutableFloatStateOf(0f) }
     val animatedOffsetX by animateFloatAsState(targetValue = rawOffsetX, label = "txSwipeOffset")
 
-    val amountColor = when (tx.type) {
-        "income" -> semanticIncomeColor(false)
-        "transfer" -> semanticTransferColor(false)
-        else -> semanticExpenseColor(false)
+    val resolvedCategoryDisplay = remember(tx.category, tx.envelopeKey, lang, envelopes) {
+        tx.localizedCategory(lang, envelopes)
     }
-    val catAccent = distinctEnvelopeColor(tx.envelopeKey.ifBlank { tx.category }, false)
+    val amountColor = when (tx.type) {
+        "income" -> semanticIncomeColor(isDarkTheme)
+        "transfer" -> semanticTransferColor(isDarkTheme)
+        else -> semanticExpenseColor(isDarkTheme)
+    }
+    val catAccent = distinctEnvelopeColor(tx.envelopeKey.ifBlank { tx.category }, isDarkTheme)
     val prefix = when (tx.type) {
         "income" -> "+"
         "transfer" -> "⇄ "
@@ -3341,8 +3406,17 @@ private fun SwipeableTransactionRow(
                                 .clip(CircleShape)
                                 .background(catAccent)
                         )
+                        val descDisplay = tx.desc.ifBlank { resolvedCategoryDisplay }.let { rawDesc ->
+                            // If the description itself was just the default category name, localize it too
+                            com.example.data.DefaultCategoryResolver.resolveTransactionCategoryDisplay(
+                                rawDesc,
+                                tx.envelopeKey,
+                                envelopes,
+                                lang
+                            )
+                        }
                         Text(
-                            text = tx.desc.ifBlank { tx.category },
+                            text = descDisplay,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -3363,7 +3437,7 @@ private fun SwipeableTransactionRow(
                             color = catAccent.copy(alpha = 0.14f)
                         ) {
                             Text(
-                                text = tx.category.take(22),
+                                text = resolvedCategoryDisplay.take(22),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = catAccent,
@@ -3477,7 +3551,7 @@ fun QuickPresetPickerSheet(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("+ Preset", fontWeight = FontWeight.Bold)
+                    Text(strings.addPresetBtn, fontWeight = FontWeight.Bold)
                 }
             }
 

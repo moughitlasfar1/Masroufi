@@ -593,6 +593,16 @@ class ExampleRobolectricTest {
                 createdAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 120_000L))
             ),
             TransactionItem(
+                id = "tx_sub_0",
+                type = "expense",
+                amount = 95.0,
+                category = "Fixes",
+                envelopeKey = "fixes",
+                accountId = "acc_bank",
+                desc = "Netflix",
+                isoDate = "2026-03-05"
+            ),
+            TransactionItem(
                 id = "tx_sub_1",
                 type = "expense",
                 amount = 95.0,
@@ -692,6 +702,188 @@ class ExampleRobolectricTest {
             hideAmounts = false
         )
         assertTrue(whatIfMsg.contains("sooner"))
+    }
+
+    @Test
+    fun `Phase 0 trust and text requirements are verified`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Future-dated transactions (date > today) excluded from envelope spent when maxDateIso is passed
+        val window = PayCycleEngine.computeWindow("2026-05", 1, "2026-05-10")
+        val prevWindow = PayCycleEngine.computeWindow("2026-04", 1, "2026-05-10")
+        val envelopes = listOf(
+            EnvelopeConfig(id = "e_cafe", key = "cafe", nameFr = "3. Café & Sorties", percentage = 25.0)
+        )
+        val pastAndFutureTxs = listOf(
+            TransactionItem(id = "p1", type = "expense", amount = 100.0, category = "cafe", envelopeKey = "cafe", isoDate = "2026-05-05"),
+            TransactionItem(id = "f1", type = "expense", amount = 400.0, category = "cafe", envelopeKey = "cafe", isoDate = "2026-05-20")
+        )
+        val computedEnvs = PayCycleEngine.computeEnvelopes(
+            envelopes = envelopes,
+            baseBudget = 4000.0,
+            rolloverEnabled = false,
+            currentWindow = window,
+            previousWindow = prevWindow,
+            allTransactions = pastAndFutureTxs,
+            maxDateIso = "2026-05-10"
+        )
+        assertEquals(100.0, computedEnvs.first().spent, 0.01)
+
+        // 2. Overspend projection: median daily variable spend ignoring scheduled bills & >3x median outliers,
+        // gated on daysElapsed >= 7 and transactionCount >= 10, with AMBER vs RED alert levels.
+        val tenDailyTxs = (1..9).map { day ->
+            TransactionItem(
+                id = "d_$day",
+                type = "expense",
+                amount = 200.0,
+                category = "cafe",
+                envelopeKey = "cafe",
+                desc = "Repas $day",
+                isoDate = "2026-05-0$day"
+            )
+        } + listOf(
+            // Single-day outlier > 3x median (should be ignored from median variable rate)
+            TransactionItem(
+                id = "d_10",
+                type = "expense",
+                amount = 1500.0,
+                category = "cafe",
+                envelopeKey = "cafe",
+                desc = "Achat exceptionnel",
+                isoDate = "2026-05-10"
+            )
+        )
+        val proj = PayCycleEngine.computeOverspendProjection(
+            window = window,
+            totalAvailableBudget = 5000.0,
+            spentSoFar = tenDailyTxs.sumOf { it.amount },
+            scheduledBills = 300.0,
+            pastOrTodayCycleTransactions = tenDailyTxs,
+            bills = emptyList()
+        )
+        assertTrue(proj.showEstimateAlert)
+        assertEquals(200.0, proj.medianDailyVariable, 0.01)
+        assertEquals(com.example.domain.ProjectionAlertLevel.RED, proj.alertLevel)
+
+        // When transactionCount < 10, alert is suppressed
+        val projTooFew = PayCycleEngine.computeOverspendProjection(
+            window = window,
+            totalAvailableBudget = 1000.0,
+            spentSoFar = 1000.0,
+            scheduledBills = 0.0,
+            pastOrTodayCycleTransactions = tenDailyTxs.take(5),
+            bills = emptyList()
+        )
+        assertFalse(projTooFew.showEstimateAlert)
+
+        // 3. Recurring-charge detection ignores debt repayments ("Remboursement" / sellef) and transfers,
+        // requires 3+ occurrences with monthly/weekly spacing and amounts within 10%, and respects "Not a bill" dismiss
+        val recurringCandidates = listOf(
+            // Valid 3x monthly subscription within 10%
+            TransactionItem(id = "sp1", type = "expense", amount = 50.0, desc = "Spotify", isoDate = "2026-03-10"),
+            TransactionItem(id = "sp2", type = "expense", amount = 52.0, desc = "Spotify", isoDate = "2026-04-10"),
+            TransactionItem(id = "sp3", type = "expense", amount = 50.0, desc = "Spotify", isoDate = "2026-05-10"),
+            // Debt repayment 3x monthly -> MUST be ignored
+            TransactionItem(id = "rb1", type = "expense", amount = 500.0, desc = "Remboursement Sellef Karim", isoDate = "2026-03-10"),
+            TransactionItem(id = "rb2", type = "expense", amount = 500.0, desc = "Remboursement Sellef Karim", isoDate = "2026-04-10"),
+            TransactionItem(id = "rb3", type = "expense", amount = 500.0, desc = "Remboursement Sellef Karim", isoDate = "2026-05-10"),
+            // Only 2 occurrences -> MUST be ignored
+            TransactionItem(id = "tw1", type = "expense", amount = 100.0, desc = "Gym Club", isoDate = "2026-04-10"),
+            TransactionItem(id = "tw2", type = "expense", amount = 100.0, desc = "Gym Club", isoDate = "2026-05-10")
+        )
+        val detected = PayCycleEngine.detectRecurringSubscriptions(recurringCandidates, emptyList())
+        assertEquals(1, detected.size)
+        assertEquals("Spotify", detected.first().merchant)
+
+        com.example.security.AppSecurityManager.clearDismissedRecurringBills(context)
+        com.example.security.AppSecurityManager.dismissRecurringBill(context, "Spotify")
+        val dismissedSet = com.example.security.AppSecurityManager.getDismissedRecurringBills(context)
+        val detectedAfterDismiss = PayCycleEngine.detectRecurringSubscriptions(
+            recurringCandidates,
+            emptyList(),
+            dismissedSet
+        )
+        assertTrue(detectedAfterDismiss.isEmpty())
+
+        // 4. Category names: stable IDs, migration of stored defaults, removal of "1." "2." numeric prefixes,
+        // while preserving user-renamed categories
+        assertEquals("cafe", com.example.data.DefaultCategoryResolver.canonicalDefaultId("3. Café & Sorties"))
+        assertEquals("cafe", com.example.data.DefaultCategoryResolver.canonicalDefaultId("Café & Outings"))
+        assertEquals("charges", com.example.data.DefaultCategoryResolver.canonicalDefaultId("2. Charges fixes & Maison"))
+        val defaultEnv = EnvelopeConfig(
+            id = "env_cafe",
+            key = "cafe",
+            nameFr = "3. Café & Sorties",
+            nameEn = "3. Café & Outings",
+            nameAr = "3. مقهى وخرجات",
+            nameDarija = "3. قهوة وخرجات"
+        )
+        assertTrue(defaultEnv.isDefaultUnrenamed())
+        assertEquals("Café & Outings (Personal & Leisure)", defaultEnv.localizedName("en"))
+        assertEquals("Café & Sorties (Personnel & Loisirs)", defaultEnv.localizedName("fr"))
+        assertFalse(defaultEnv.localizedName("fr").startsWith("3."))
+
+        val renamedEnv = defaultEnv.copy(nameFr = "Restaurants & Sushi", nameEn = "Restaurants & Sushi")
+        assertFalse(renamedEnv.isDefaultUnrenamed())
+        assertEquals("Restaurants & Sushi", renamedEnv.localizedName("fr"))
+
+        // 5. Contrast >= 4.5:1 in dark and light mode for every accent palette
+        val lightSurface = com.example.ui.theme.MasroufiSurfaceLight
+        val darkSurface = com.example.ui.theme.MasroufiSurfaceDark
+        assertTrue(com.example.ui.theme.wcagContrastRatio(com.example.ui.theme.MasroufiOnSurfaceLight, lightSurface) >= 4.5)
+        assertTrue(com.example.ui.theme.wcagContrastRatio(com.example.ui.theme.MasroufiOnSurfaceVariantLight, lightSurface) >= 4.5)
+        assertTrue(com.example.ui.theme.wcagContrastRatio(com.example.ui.theme.MasroufiOnSurfaceDark, darkSurface) >= 4.5)
+        assertTrue(com.example.ui.theme.wcagContrastRatio(com.example.ui.theme.MasroufiOnSurfaceVariantDark, darkSurface) >= 4.5)
+        com.example.ui.theme.MasroufiPalettes.forEach { pal ->
+            val lightContrast = com.example.ui.theme.wcagContrastRatio(pal.primaryLight, lightSurface)
+            val darkContrast = com.example.ui.theme.wcagContrastRatio(pal.primaryDark, darkSurface)
+            assertTrue("Palette ${pal.key} light contrast $lightContrast < 4.5", lightContrast >= 4.5)
+            assertTrue("Palette ${pal.key} dark contrast $darkContrast < 4.5", darkContrast >= 4.5)
+        }
+
+        // 6. Translations completeness and forbidden hard-coded UI literal check
+        listOf("fr", "en", "ar", "darija").forEach { langCode ->
+            val s = com.example.domain.Translations.forLang(langCode)
+            assertTrue(s.upcomingGroupTitle.isNotBlank())
+            assertTrue(s.estimateLabel.isNotBlank())
+            assertTrue(s.notABillBtn.isNotBlank())
+            assertTrue(s.remainingLabel.isNotBlank())
+            assertTrue(s.shareBtn.isNotBlank())
+            assertTrue(s.editBtn.isNotBlank())
+            assertTrue(s.billLabel.isNotBlank())
+            assertTrue(s.newLabel.isNotBlank())
+            assertTrue(s.currentShortLabel.isNotBlank())
+            assertTrue(s.previousShortLabel.isNotBlank())
+            assertTrue(s.accountFieldLabel.isNotBlank())
+            assertTrue(s.categoryNameLabel.isNotBlank())
+            assertTrue(s.applyCustomizationBtn.isNotBlank())
+            assertTrue(s.moroccoTemplatesTitle.isNotBlank())
+            assertTrue(s.demoModeBtn.isNotBlank())
+            assertTrue(s.customizationStudioTitle.isNotBlank())
+            assertTrue(s.quickActionsMenuDesc.isNotBlank())
+        }
+
+        val uiFiles = listOf(
+            java.io.File("src/main/java/com/example/MainActivity.kt"),
+            java.io.File("src/main/java/com/example/ui/MasroufiOverviewAndWeekScreens.kt"),
+            java.io.File("src/main/java/com/example/ui/MasroufiMonthAndBudgetScreens.kt"),
+            java.io.File("src/main/java/com/example/ui/MasroufiHistoryAndModals.kt")
+        ).filter { it.exists() }
+        val forbiddenLiterals = listOf(
+            "Text(\"Mode Démo\"",
+            "Text(\"Appliquer la personnalisation\"",
+            "Text(\"Nom de la catégorie\"",
+            "contentDescription = \"Menu Actions Rapides\"",
+            "\"Studio de Personnalisation (Thèmes, Cartes, Devise)\"",
+            "\"⚡ Modèles Maroc (jour d'échéance pré-rempli) :\"",
+            "\"if (txType == \\\"transfer\\\") \\\"Compte source :\\\" else \\\"Compte :\\\"\""
+        )
+        uiFiles.forEach { file ->
+            val content = file.readText()
+            forbiddenLiterals.forEach { forbidden ->
+                assertFalse("Forbidden hard-coded literal $forbidden found in ${file.name}", content.contains(forbidden))
+            }
+        }
     }
 
     @Test

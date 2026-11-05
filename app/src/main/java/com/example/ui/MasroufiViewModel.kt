@@ -5,12 +5,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AccountItem
 import com.example.data.CustomizationPrefs
+import com.example.data.DefaultCategoryResolver
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.domain.AccountWithBalance
+import com.example.domain.CycleSpendProjection
 import com.example.domain.DetectedSubscription
 import com.example.domain.EnvelopeStatus
 import com.example.domain.PayCycleEngine
@@ -313,7 +315,7 @@ object BackupSerializer {
             val hasInsightsBit = mask >= 64
             val orderStr = customObj.optString("dashboardOrder", "")
             CustomizationPrefs(
-                accentPalette = customObj.optString("accentPalette", "emerald").ifBlank { "emerald" }.take(30),
+                accentPalette = customObj.optString("accentPalette", "majorelle").ifBlank { "majorelle" }.take(30),
                 currencySymbol = customObj.optString("currencySymbol", "DH").ifBlank { "DH" }.take(10),
                 customTitle = customObj.optString("customTitle", "").take(80),
                 customSubtitle = customObj.optString("customSubtitle", "").take(200),
@@ -562,6 +564,13 @@ object BackupSerializer {
     }
 }
 
+data class WeeklyBreakdownResult(
+    val weekSpend: List<Double>,
+    val weekFutureSpend: List<Double>,
+    val prevWeekSpend: List<Double>,
+    val weekLabel: String
+)
+
 data class DashboardState(
     val isLoading: Boolean = true,
     val profile: UserProfile = UserProfile(),
@@ -572,6 +581,7 @@ data class DashboardState(
     val envelopes: List<EnvelopeStatus> = emptyList(),
     val cycleTransactions: List<TransactionItem> = emptyList(),
     val filteredHistory: List<TransactionItem> = emptyList(),
+    val upcomingTransactions: List<TransactionItem> = emptyList(),
     val allTransactions: List<TransactionItem> = emptyList(),
     val cycleExpenses: Double = 0.0,
     val cycleIncomes: Double = 0.0,
@@ -582,8 +592,10 @@ data class DashboardState(
     val safeToSpendToday: Double = 0.0,
     val dailyAverageSpend: Double = 0.0,
     val projectedCycleSpend: Double = 0.0,
+    val spendProjection: CycleSpendProjection = CycleSpendProjection(),
     val previousCycleExpenses: Double = 0.0,
     val weekDaysSpend: List<Double> = List(7) { 0.0 },
+    val weekDaysFutureSpend: List<Double> = List(7) { 0.0 },
     val weekTotalSpend: Double = 0.0,
     val prevWeekTotalSpend: Double = 0.0,
     val weekRangeLabel: String = "",
@@ -619,13 +631,16 @@ class MasroufiViewModel(
     private val currentUserId: String,
     initialHideAmounts: Boolean = false,
     initialRollbackSnapshot: String? = null,
-    private val onRollbackSnapshotChanged: (String?) -> Unit = {}
+    initialDismissedSubscriptions: Set<String> = emptySet(),
+    private val onRollbackSnapshotChanged: (String?) -> Unit = {},
+    private val onDismissSubscription: (String) -> Unit = {}
 ) : ViewModel() {
 
     private val _selectedCycleKey = MutableStateFlow<String?>(null)
     private val _filterState = MutableStateFlow(FilterState())
     private val _whatIfState = MutableStateFlow(WhatIfSimulatorState())
     private val _hideAmounts = MutableStateFlow(initialHideAmounts)
+    private val _dismissedSubscriptions = MutableStateFlow(initialDismissedSubscriptions)
     private val _lastDeletedTx = MutableStateFlow<TransactionItem?>(null)
     val lastDeletedTx: StateFlow<TransactionItem?> = _lastDeletedTx.asStateFlow()
     private val _lastDeletedItem = MutableStateFlow<FinancialItem?>(null)
@@ -704,9 +719,9 @@ class MasroufiViewModel(
         combine(
             combine(_selectedCycleKey, _filterState, _whatIfState) { c, f, w -> Triple(c, f, w) },
             combine(_optimisticCustomPrefs, _errorMessage, _hideAmounts) { cp, err, hide -> Triple(cp, err, hide) },
-            _pendingWritesCount
-        ) { (c, f, w), (cp, err, hide), pendingCount ->
-            listOf(c, f, w, cp, err, hide, pendingCount > 0)
+            combine(_pendingWritesCount, _dismissedSubscriptions) { pCount, dismissed -> pCount to dismissed }
+        ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs) ->
+            listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs)
         }
     ) { (profileOpt, txs, _), (accs, envs, finItems), extraList ->
         val selCycle = extraList[0] as? String
@@ -716,6 +731,8 @@ class MasroufiViewModel(
         val errMsg = extraList[4] as? String
         val hideAmounts = extraList[5] as? Boolean ?: false
         val isSyncingNow = extraList[6] as? Boolean ?: false
+        @Suppress("UNCHECKED_CAST")
+        val dismissedSubs = (extraList.getOrNull(7) as? Set<String>) ?: emptySet()
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find { it.itemType == "custom_prefs" || it.id == "custom_prefs" }
@@ -724,12 +741,13 @@ class MasroufiViewModel(
         }
         val customPrefs = optCustomPrefs ?: CustomizationPrefs.fromFinancialItem(storedPrefsItem)
         val curSymbol = customPrefs.currencySymbol.ifBlank { "DH" }
+        val todayIso = PayCycleEngine.todayIso()
 
-        val defaultCycle = PayCycleEngine.currentCycleKey(profile.payCycleDay)
+        val defaultCycle = PayCycleEngine.currentCycleKey(profile.payCycleDay, todayIso)
         val activeCycleKey = selCycle ?: defaultCycle
-        val window = PayCycleEngine.computeWindow(activeCycleKey, profile.payCycleDay)
+        val window = PayCycleEngine.computeWindow(activeCycleKey, profile.payCycleDay, todayIso)
         val prevCycleKey = PayCycleEngine.shiftCycleKey(activeCycleKey, -1)
-        val prevWindow = PayCycleEngine.computeWindow(prevCycleKey, profile.payCycleDay)
+        val prevWindow = PayCycleEngine.computeWindow(prevCycleKey, profile.payCycleDay, todayIso)
 
         val sortedAccounts = accs.sortedBy { it.name }
         val accountBalances = PayCycleEngine.computeAccountBalances(sortedAccounts, txs)
@@ -742,16 +760,22 @@ class MasroufiViewModel(
             rolloverEnabled = profile.rolloverEnabled,
             currentWindow = window,
             previousWindow = prevWindow,
-            allTransactions = txs
+            allTransactions = txs,
+            maxDateIso = todayIso
         )
 
         val cycleTxs = txs.filter { PayCycleEngine.isInWindow(it.isoDate, window) }
             .sortedWith(compareByDescending<TransactionItem> { it.isoDate }.thenByDescending { it.id })
 
-        val cycleExpenses = cycleTxs.filter { it.type == "expense" }.sumOf { it.amount }
-        val cycleIncomes = cycleTxs.filter { it.type == "income" }.sumOf { it.amount }
-        val prevCycleExpenses = txs.filter { it.type == "expense" && PayCycleEngine.isInWindow(it.isoDate, prevWindow) }
-            .sumOf { it.amount }
+        // Phase 0: Exclude future-dated transactions (date > today) from spent-so-far, daily average, and cycle balance
+        val pastOrTodayCycleTxs = cycleTxs.filter { it.isoDate <= todayIso }
+        val futureCycleExpenses = cycleTxs.filter { it.type == "expense" && it.isoDate > todayIso }.sumOf { it.amount }
+
+        val cycleExpenses = pastOrTodayCycleTxs.filter { it.type == "expense" }.sumOf { it.amount }
+        val cycleIncomes = pastOrTodayCycleTxs.filter { it.type == "income" }.sumOf { it.amount }
+        val prevCycleExpenses = txs.filter {
+            it.type == "expense" && PayCycleEngine.isInWindow(it.isoDate, prevWindow) && it.isoDate <= todayIso
+        }.sumOf { it.amount }
 
         val totalRollover = envelopeStatuses.sumOf { it.rolloverAmount }
         val totalAvailable = profile.baseBudget + cycleIncomes + totalRollover
@@ -766,14 +790,29 @@ class MasroufiViewModel(
         val unpaidBills = bills.filter { !PayCycleEngine.isBillPaidInCycle(it, activeCycleKey) }
             .sumOf { it.amount }
 
-        val safePool = max(0.0, remaining - unpaidBills)
+        // Count future-dated transactions in Safe-to-spend only as committed bills
+        val committedBillsAndFuture = unpaidBills + futureCycleExpenses
+        val safePool = max(0.0, remaining - committedBillsAndFuture)
         val safeToday = if (window.daysRemaining > 0) safePool / window.daysRemaining else safePool
         val dailyAvg = cycleExpenses / max(1, window.daysElapsed)
-        val projectedSpend = if (window.isCurrentCycle) dailyAvg * window.totalDays else cycleExpenses
+
+        val spendProjection = PayCycleEngine.computeOverspendProjection(
+            window = window,
+            totalAvailableBudget = totalAvailable,
+            spentSoFar = cycleExpenses,
+            scheduledBills = committedBillsAndFuture,
+            pastOrTodayCycleTransactions = pastOrTodayCycleTxs,
+            bills = bills
+        )
+        val projectedSpend = spendProjection.projectedTotal
 
         // Timezone/DST-safe weekly calculations (Monday - Sunday of anchor date)
-        val anchorIso = if (window.isCurrentCycle) PayCycleEngine.todayIso() else window.endIso
-        val (weekSpend, prevWeekSpend, weekLabel) = computeWeeklyBreakdown(anchorIso, txs)
+        val anchorIso = if (window.isCurrentCycle) todayIso else minOf(window.endIso, todayIso)
+        val weeklyBreakdown = computeWeeklyBreakdown(anchorIso, txs, todayIso)
+        val weekSpend = weeklyBreakdown.weekSpend
+        val weekFutureSpend = weeklyBreakdown.weekFutureSpend
+        val prevWeekSpend = weeklyBreakdown.prevWeekSpend
+        val weekLabel = weeklyBreakdown.weekLabel
         val weekTotal = weekSpend.sum()
         val maxDaySpend = weekSpend.maxOrNull() ?: 0.0
         val maxDayIdx = if (maxDaySpend > 0.0) weekSpend.indexOfFirst { it == maxDaySpend } else -1
@@ -796,7 +835,7 @@ class MasroufiViewModel(
             envelopes = envelopeStatuses
         )
         val anomalyInsights = PayCycleEngine.computeAnomalyNudges(
-            allTransactions = txs,
+            allTransactions = txs.filter { it.isoDate <= todayIso },
             envelopes = sortedEnvelopes,
             lang = profile.language,
             nowIso = anchorIso
@@ -804,21 +843,24 @@ class MasroufiViewModel(
         val smartInsights = (anomalyInsights + baseInsights).take(4)
 
         val noSpendStreak = PayCycleEngine.computeNoSpendStreakDays(
-            cycleTransactions = cycleTxs,
+            cycleTransactions = pastOrTodayCycleTxs,
             window = window,
             nowIso = anchorIso
         )
-        val (biggestDayIso, biggestDayAmt) = PayCycleEngine.computeBiggestSpendingDayInCycle(cycleTxs)
-        val forecastMsg = PayCycleEngine.formatMonthEndForecast(
-            totalAvailableBudget = totalAvailable,
-            projectedCycleSpend = projectedSpend,
-            currency = curSymbol,
-            lang = profile.language,
-            hideAmounts = hideAmounts
-        )
+        val (biggestDayIso, biggestDayAmt) = PayCycleEngine.computeBiggestSpendingDayInCycle(pastOrTodayCycleTxs)
+        val forecastMsg = if (spendProjection.showEstimateAlert) {
+            PayCycleEngine.formatMonthEndForecast(
+                totalAvailableBudget = totalAvailable,
+                projectedCycleSpend = projectedSpend,
+                currency = curSymbol,
+                lang = profile.language,
+                hideAmounts = hideAmounts
+            )
+        } else ""
         val detectedSubs = PayCycleEngine.detectRecurringSubscriptions(
-            allTransactions = txs,
-            existingBills = bills
+            allTransactions = txs.filter { it.isoDate <= todayIso },
+            existingBills = bills,
+            dismissedMerchants = dismissedSubs
         )
 
         val smartReminders = PayCycleEngine.computeSmartReminders(
@@ -829,11 +871,13 @@ class MasroufiViewModel(
             debts = debts
         )
 
-        val filteredList = cycleTxs.filter { tx ->
+        fun matchesFilter(tx: TransactionItem): Boolean {
             val q = filter.searchQuery.trim().lowercase()
+            val locCat = tx.localizedCategory(profile.language, sortedEnvelopes).lowercase()
             val matchesQuery = q.isEmpty() ||
                 tx.desc.lowercase().contains(q) ||
                 tx.category.lowercase().contains(q) ||
+                locCat.contains(q) ||
                 tx.amount.toInt().toString().contains(q)
             val resolvedKey = tx.envelopeKey.ifBlank {
                 PayCycleEngine.resolveEnvelopeKey(tx.category, tx.desc, sortedEnvelopes)
@@ -844,8 +888,12 @@ class MasroufiViewModel(
                 tx.toAccountId == filter.selectedAccountId
             val matchesType = filter.selectedType == "all" || tx.type == filter.selectedType
             val matchesMin = filter.minAmount == null || tx.amount >= filter.minAmount
-            matchesQuery && matchesCat && matchesAcc && matchesType && matchesMin
+            return matchesQuery && matchesCat && matchesAcc && matchesType && matchesMin
         }
+
+        val filteredList = pastOrTodayCycleTxs.filter { matchesFilter(it) }
+        val upcomingList = txs.filter { it.isoDate > todayIso && matchesFilter(it) }
+            .sortedWith(compareBy<TransactionItem> { it.isoDate }.thenByDescending { it.id })
 
         DashboardState(
             isLoading = false,
@@ -857,6 +905,7 @@ class MasroufiViewModel(
             envelopes = envelopeStatuses,
             cycleTransactions = cycleTxs,
             filteredHistory = filteredList,
+            upcomingTransactions = upcomingList,
             allTransactions = txs,
             cycleExpenses = cycleExpenses,
             cycleIncomes = cycleIncomes,
@@ -867,8 +916,10 @@ class MasroufiViewModel(
             safeToSpendToday = safeToday,
             dailyAverageSpend = dailyAvg,
             projectedCycleSpend = projectedSpend,
+            spendProjection = spendProjection,
             previousCycleExpenses = prevCycleExpenses,
             weekDaysSpend = weekSpend,
+            weekDaysFutureSpend = weekFutureSpend,
             weekTotalSpend = weekTotal,
             prevWeekTotalSpend = prevWeekSpend.sum(),
             weekRangeLabel = weekLabel,
@@ -912,22 +963,40 @@ class MasroufiViewModel(
 
     private fun computeWeeklyBreakdown(
         anchorIso: String,
-        txs: List<TransactionItem>
-    ): Triple<List<Double>, List<Double>, String> {
+        txs: List<TransactionItem>,
+        todayIso: String = PayCycleEngine.todayIso()
+    ): WeeklyBreakdownResult {
         val (mondayEpochDay, rangeLabel) = PayCycleEngine.computeMondayEpochDayAndLabel(anchorIso)
         val curWeek = DoubleArray(7)
+        val futureWeek = DoubleArray(7)
         val prevWeek = DoubleArray(7)
         for (tx in txs) {
             if (tx.type != "expense") continue
             val txDay = PayCycleEngine.parseEpochDays(tx.isoDate)
             val diff = (txDay - mondayEpochDay).toInt()
             if (diff in 0..6) {
-                curWeek[diff] += tx.amount
-            } else if (diff in -7..-1) {
+                if (tx.isoDate > todayIso) {
+                    futureWeek[diff] += tx.amount
+                } else {
+                    curWeek[diff] += tx.amount
+                }
+            } else if (diff in -7..-1 && tx.isoDate <= todayIso) {
                 prevWeek[diff + 7] += tx.amount
             }
         }
-        return Triple(curWeek.toList(), prevWeek.toList(), rangeLabel)
+        return WeeklyBreakdownResult(
+            weekSpend = curWeek.toList(),
+            weekFutureSpend = futureWeek.toList(),
+            prevWeekSpend = prevWeek.toList(),
+            weekLabel = rangeLabel
+        )
+    }
+
+    fun dismissDetectedSubscription(merchant: String) {
+        val clean = merchant.trim().lowercase(java.util.Locale.ROOT)
+        if (clean.isEmpty()) return
+        _dismissedSubscriptions.value = _dismissedSubscriptions.value + clean
+        onDismissSubscription(clean)
     }
 
     fun shiftCycle(delta: Int) {
@@ -1091,6 +1160,7 @@ class MasroufiViewModel(
         val resolvedEnvKey = envelopeKey.ifBlank {
             PayCycleEngine.resolveEnvelopeKey(category, desc, uiState.value.envelopes.map { it.config })
         }
+        val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(category, resolvedEnvKey)
         safeLaunch("saveTransaction") {
             repository.upsertTransaction(
                 TransactionItem(
@@ -1098,7 +1168,7 @@ class MasroufiViewModel(
                     userId = currentUserId,
                     type = type,
                     amount = amount,
-                    category = category.ifBlank { "Général" },
+                    category = normalizedCat,
                     envelopeKey = resolvedEnvKey,
                     accountId = accountId.ifBlank { "acc_cash" },
                     toAccountId = if (type == "transfer") toAccountId else "",
@@ -1112,14 +1182,16 @@ class MasroufiViewModel(
 
     fun quickAddPreset(preset: FinancialItem, onAdded: (TransactionItem) -> Unit = {}) {
         val env = uiState.value.envelopes.find { it.config.key == preset.subtitle }?.config
-        val catName = env?.localizedName(uiState.value.profile.language) ?: preset.name
+        val envKey = preset.subtitle.ifBlank { "cafe" }
+        val rawCat = if (env != null && !env.isDefaultUnrenamed()) env.nameFr else envKey
+        val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(rawCat, envKey)
         val tx = TransactionItem(
             id = "tx_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = "expense",
             amount = preset.amount.coerceAtLeast(1.0),
-            category = catName.ifBlank { preset.name },
-            envelopeKey = preset.subtitle.ifBlank { "cafe" },
+            category = normalizedCat,
+            envelopeKey = envKey,
             accountId = preset.dateOrCycle.ifBlank { "acc_cash" },
             toAccountId = "",
             desc = preset.name,
@@ -1350,15 +1422,16 @@ class MasroufiViewModel(
         val nowMs = System.currentTimeMillis()
         safeLaunch("splitBillIntoSellef") {
             if (recordFullExpenseNow) {
-                val envName = uiState.value.envelopes.find { it.config.key == envelopeKey }
-                    ?.config?.localizedName(uiState.value.profile.language) ?: "Café, Resto & Sorties"
+                val env = uiState.value.envelopes.find { it.config.key == envelopeKey }?.config
+                val rawCat = if (env != null && !env.isDefaultUnrenamed()) env.nameFr else envelopeKey
+                val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(rawCat, envelopeKey)
                 repository.upsertTransaction(
                     TransactionItem(
                         id = "tx_split_$nowMs",
                         userId = currentUserId,
                         type = "expense",
                         amount = totalAmount,
-                        category = envName,
+                        category = normalizedCat,
                         envelopeKey = envelopeKey,
                         accountId = accountId.ifBlank { "acc_cash" },
                         desc = "$cleanTitle (Partagé ×$divisor)",
@@ -1397,7 +1470,7 @@ class MasroufiViewModel(
             userId = currentUserId,
             type = "expense",
             amount = bill.amount.coerceAtLeast(1.0),
-            category = "Charges fixes & Maison",
+            category = "charges",
             envelopeKey = "charges",
             accountId = "acc_bank",
             desc = bill.name,
@@ -1417,7 +1490,7 @@ class MasroufiViewModel(
             userId = currentUserId,
             type = "expense",
             amount = addAmount,
-            category = "Épargne & Investissement",
+            category = "epargne",
             envelopeKey = "epargne",
             accountId = "acc_bank",
             desc = item.name,
@@ -1439,7 +1512,7 @@ class MasroufiViewModel(
             userId = currentUserId,
             type = "expense",
             amount = daret.amount.coerceAtLeast(1.0),
-            category = "Épargne & Investissement",
+            category = "epargne",
             envelopeKey = "epargne",
             accountId = "acc_bank",
             desc = "Cotisation ${daret.name} ($nextPaid/$totalMembers)",
@@ -1461,7 +1534,7 @@ class MasroufiViewModel(
             userId = currentUserId,
             type = if (isLent) "income" else "expense",
             amount = payment,
-            category = "Autre / Imprévus",
+            category = "autre",
             envelopeKey = "autre",
             accountId = "acc_cash",
             desc = "Remboursement: ${debt.name}",

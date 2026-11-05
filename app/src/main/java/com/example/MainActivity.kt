@@ -346,12 +346,16 @@ fun MainFeatureScreen(
                     currentUserId = currentUserId,
                     initialHideAmounts = AppSecurityManager.isHideAmountsEnabled(app),
                     initialRollbackSnapshot = AppSecurityManager.loadEncryptedRollbackSnapshot(app),
+                    initialDismissedSubscriptions = AppSecurityManager.getDismissedRecurringBills(app),
                     onRollbackSnapshotChanged = { snapshot ->
                         if (snapshot.isNullOrBlank()) {
                             AppSecurityManager.clearEncryptedRollbackSnapshot(app)
                         } else {
                             AppSecurityManager.saveEncryptedRollbackSnapshot(app, snapshot)
                         }
+                    },
+                    onDismissSubscription = { merchant ->
+                        AppSecurityManager.dismissRecurringBill(app, merchant)
                     }
                 )
             }
@@ -731,7 +735,7 @@ fun MainFeatureScreen(
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             imageVector = if (isSpeedDialOpen) Icons.Default.Close else Icons.Default.Bolt,
-                                            contentDescription = "Menu Actions Rapides",
+                                            contentDescription = strings.quickActionsMenuDesc,
                                             tint = if (isSpeedDialOpen) MaterialTheme.colorScheme.onErrorContainer else AccentAmber
                                         )
                                     }
@@ -804,7 +808,7 @@ fun MainFeatureScreen(
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Text(
-                                            text = "Réessayer",
+                                            text = strings.retryBtn,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             modifier = Modifier.padding(start = 4.dp)
@@ -816,7 +820,7 @@ fun MainFeatureScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Fermer",
+                                            contentDescription = strings.closeDesc,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -887,6 +891,9 @@ fun MainFeatureScreen(
                                                 snackbarHostState.showSnackbar("Facture récurrente '${bill.name}' ajoutée (le ${bill.dayOrTurn}) !")
                                             }
                                         }
+                                    },
+                                    onDismissDetectedSubscription = { sub ->
+                                        viewModel.dismissDetectedSubscription(sub.merchant)
                                     },
                                     onShareText = { textPayload ->
                                         shareTextContent(context, textPayload, "Bilan Masroufi", "text/plain")
@@ -1531,10 +1538,10 @@ private fun NavTabShortcutsSheet(
             val actions: List<Pair<String, () -> Unit>> = when (tabKey) {
                 "categories" -> listOf(
                     strings.editEnvelopesBtn to onOpenCustomizeEnvelopes,
-                    "+ Daret (Tontine)" to { onOpenNewItem("daret") },
-                    "+ Facture récurrente" to { onOpenNewItem("bill") },
-                    "+ Crédit / Dette" to { onOpenNewItem("debt") },
-                    "+ Objectif d'épargne" to { onOpenNewItem("goal") }
+                    "+ ${strings.daretTitle}" to { onOpenNewItem("daret") },
+                    strings.addBillBtn to { onOpenNewItem("bill") },
+                    "+ ${strings.debtsTitle}" to { onOpenNewItem("debt") },
+                    strings.addGoalBtn to { onOpenNewItem("goal") }
                 )
                 "historique" -> listOf(
                     strings.expenseTab to onQuickExpense,
@@ -1546,7 +1553,7 @@ private fun NavTabShortcutsSheet(
                     strings.incomeTab to onQuickIncome,
                     strings.transferTab to onQuickTransfer,
                     strings.quickPresetsTitle to onQuickPresetPicker,
-                    "Studio de Personnalisation" to onOpenCustomization
+                    strings.customizationStudioTitle to onOpenCustomization
                 )
             }
 

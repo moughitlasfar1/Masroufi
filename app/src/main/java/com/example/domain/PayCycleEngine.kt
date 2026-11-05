@@ -4,6 +4,7 @@ import com.example.data.AccountItem
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.TransactionItem
+import com.example.data.DefaultCategoryResolver
 import java.text.NumberFormat
 import java.util.Calendar
 import java.util.Locale
@@ -12,6 +13,21 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+
+enum class ProjectionAlertLevel {
+    NONE, AMBER, RED
+}
+
+data class CycleSpendProjection(
+    val projectedTotal: Double = 0.0,
+    val optimisticTotal: Double = 0.0,
+    val medianDailyVariable: Double = 0.0,
+    val lowerQuartileDailyVariable: Double = 0.0,
+    val daysElapsed: Int = 0,
+    val transactionCount: Int = 0,
+    val showEstimateAlert: Boolean = false,
+    val alertLevel: ProjectionAlertLevel = ProjectionAlertLevel.NONE
+)
 
 data class PayCycleWindow(
     val cycleKey: String, // "YYYY-MM" anchor
@@ -258,14 +274,20 @@ object PayCycleEngine {
         desc: String,
         envelopes: List<EnvelopeConfig>
     ): String {
-        val text = "$category $desc".lowercase(Locale.ROOT)
+        DefaultCategoryResolver.canonicalDefaultId(category)?.let { canonical ->
+            if (envelopes.isEmpty() || envelopes.any { it.key.equals(canonical, ignoreCase = true) }) {
+                return canonical
+            }
+        }
+        val strippedCat = DefaultCategoryResolver.stripNumericPrefix(category)
+        val text = "$strippedCat $desc".lowercase(Locale.ROOT)
         for (env in envelopes) {
             if (env.key.isNotBlank() && (
-                    category.equals(env.nameFr, ignoreCase = true) ||
-                    category.equals(env.nameEn, ignoreCase = true) ||
-                    category.equals(env.nameAr, ignoreCase = true) ||
-                    category.equals(env.nameDarija, ignoreCase = true) ||
-                    category.equals(env.key, ignoreCase = true)
+                    strippedCat.equals(DefaultCategoryResolver.stripNumericPrefix(env.nameFr), ignoreCase = true) ||
+                    strippedCat.equals(DefaultCategoryResolver.stripNumericPrefix(env.nameEn), ignoreCase = true) ||
+                    strippedCat.equals(DefaultCategoryResolver.stripNumericPrefix(env.nameAr), ignoreCase = true) ||
+                    strippedCat.equals(DefaultCategoryResolver.stripNumericPrefix(env.nameDarija), ignoreCase = true) ||
+                    strippedCat.equals(env.key, ignoreCase = true)
                 )
             ) {
                 return env.key
@@ -317,9 +339,14 @@ object PayCycleEngine {
         rolloverEnabled: Boolean,
         currentWindow: PayCycleWindow,
         previousWindow: PayCycleWindow,
-        allTransactions: List<TransactionItem>
+        allTransactions: List<TransactionItem>,
+        maxDateIso: String = ""
     ): List<EnvelopeStatus> {
-        val curExpenses = allTransactions.filter { it.type == "expense" && isInWindow(it.isoDate, currentWindow) }
+        val curExpenses = allTransactions.filter {
+            it.type == "expense" &&
+                isInWindow(it.isoDate, currentWindow) &&
+                (maxDateIso.isBlank() || it.isoDate <= maxDateIso)
+        }
         val prevExpenses = allTransactions.filter { it.type == "expense" && isInWindow(it.isoDate, previousWindow) }
         val totalCurExp = curExpenses.sumOf { it.amount }
 
@@ -561,22 +588,143 @@ object PayCycleEngine {
         return nudges
     }
 
+    private val DEBT_REPAYMENT_KEYWORDS = listOf(
+        "remboursement",
+        "sellef",
+        "selef",
+        "crédit",
+        "credit",
+        "dette",
+        "سلف",
+        "كريدي",
+        "تسديد",
+        "رد الكريدي"
+    )
+
+    private fun isDebtRepaymentTransaction(tx: TransactionItem): Boolean {
+        if (tx.id.startsWith("tx_debt_", ignoreCase = true)) return true
+        val combined = "${tx.category} ${tx.desc}".lowercase(Locale.ROOT)
+        return DEBT_REPAYMENT_KEYWORDS.any { kw -> combined.contains(kw) }
+    }
+
     /**
-     * Subscription detector: automatically detects recurring charges from transaction history
-     * that are not yet tracked in [existingBills].
+     * Phase 0 Overspend Projection:
+     * projected = spentSoFar + scheduledBills + median(daily variable spend this cycle,
+     *             ignoring scheduled bills and single-day outliers above 3x the median) * daysLeft.
+     * Shows the alert only if daysElapsed >= 7 and transactionCount >= 10, labeled "Estimate".
+     * Uses amber when the projection exceeds the budget, red only when even an optimistic
+     * estimate (lower-quartile daily spend) exceeds it.
+     */
+    fun computeOverspendProjection(
+        window: PayCycleWindow,
+        totalAvailableBudget: Double,
+        spentSoFar: Double,
+        scheduledBills: Double,
+        pastOrTodayCycleTransactions: List<TransactionItem>,
+        bills: List<FinancialItem> = emptyList()
+    ): CycleSpendProjection {
+        val expenseTxs = pastOrTodayCycleTransactions.filter { it.type == "expense" && it.amount > 0.0 }
+        val txCount = expenseTxs.size
+        val billNamesLower = bills.map { it.name.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }
+
+        val variableExpenses = expenseTxs.filter { tx ->
+            val isBillTx = tx.id.startsWith("tx_bill_", ignoreCase = true) ||
+                tx.envelopeKey.equals("charges", ignoreCase = true) ||
+                DefaultCategoryResolver.canonicalDefaultId(tx.category) == "charges" ||
+                billNamesLower.any { bn -> tx.desc.lowercase(Locale.ROOT).contains(bn) }
+            !isBillTx
+        }
+
+        val dailyByDate = variableExpenses
+            .groupBy { it.isoDate }
+            .mapValues { (_, list) -> list.sumOf { it.amount } }
+
+        val elapsedCount = max(1, window.daysElapsed)
+        val rawDailySamples: List<Double> = if (dailyByDate.isEmpty()) {
+            emptyList()
+        } else if (dailyByDate.size * 2 >= elapsedCount) {
+            val zerosCount = (elapsedCount - dailyByDate.size).coerceAtLeast(0)
+            (List(zerosCount) { 0.0 } + dailyByDate.values).sorted()
+        } else {
+            dailyByDate.values.sorted()
+        }
+
+        val initialMedian = computePercentile(rawDailySamples, 0.50)
+        val filteredSamples = if (initialMedian > 0.0) {
+            rawDailySamples.filter { it <= initialMedian * 3.0 }.ifEmpty { rawDailySamples }
+        } else {
+            rawDailySamples
+        }
+
+        val cleanMedian = computePercentile(filteredSamples, 0.50)
+        val lowerQuartile = computePercentile(filteredSamples, 0.25)
+
+        val daysLeft = if (window.isCurrentCycle) {
+            (window.totalDays - window.daysElapsed).coerceAtLeast(0)
+        } else {
+            0
+        }
+
+        val projectedTotal = if (window.isCurrentCycle) {
+            spentSoFar + scheduledBills + (cleanMedian * daysLeft)
+        } else {
+            spentSoFar
+        }
+        val optimisticTotal = if (window.isCurrentCycle) {
+            spentSoFar + scheduledBills + (lowerQuartile * daysLeft)
+        } else {
+            spentSoFar
+        }
+
+        val eligibleForAlert = window.isCurrentCycle && window.daysElapsed >= 7 && txCount >= 10
+        val alertLevel = when {
+            !eligibleForAlert -> ProjectionAlertLevel.NONE
+            optimisticTotal > totalAvailableBudget -> ProjectionAlertLevel.RED
+            projectedTotal > totalAvailableBudget -> ProjectionAlertLevel.AMBER
+            else -> ProjectionAlertLevel.NONE
+        }
+
+        return CycleSpendProjection(
+            projectedTotal = projectedTotal,
+            optimisticTotal = optimisticTotal,
+            medianDailyVariable = cleanMedian,
+            lowerQuartileDailyVariable = lowerQuartile,
+            daysElapsed = window.daysElapsed,
+            transactionCount = txCount,
+            showEstimateAlert = eligibleForAlert && alertLevel != ProjectionAlertLevel.NONE,
+            alertLevel = alertLevel
+        )
+    }
+
+    private fun computePercentile(sorted: List<Double>, p: Double): Double {
+        if (sorted.isEmpty()) return 0.0
+        if (sorted.size == 1) return sorted[0]
+        val pos = p.coerceIn(0.0, 1.0) * (sorted.size - 1)
+        val lowerIdx = pos.toInt()
+        val upperIdx = (lowerIdx + 1).coerceAtMost(sorted.lastIndex)
+        val weight = pos - lowerIdx
+        return sorted[lowerIdx] * (1.0 - weight) + sorted[upperIdx] * weight
+    }
+
+    /**
+     * Subscription detector (Phase 0):
+     * - Ignores debt repayments ("Remboursement" / sellef) and transfers.
+     * - Ignores locally dismissed merchants ("Not a bill").
+     * - Requires 3+ occurrences, roughly monthly or weekly spacing, and amounts within 10%.
      */
     fun detectRecurringSubscriptions(
         allTransactions: List<TransactionItem>,
-        existingBills: List<FinancialItem>
+        existingBills: List<FinancialItem>,
+        dismissedMerchants: Set<String> = emptySet()
     ): List<DetectedSubscription> {
-        val existingNamesLower = existingBills.map { it.name.trim().lowercase(Locale.ROOT) }
-        val subscriptionKeywords = listOf(
-            "netflix", "spotify", "icloud", "youtube", "chatgpt", "shahid", "bein",
-            "maroc telecom", "iam", "inwi", "orange", "lydec", "redal", "amendis", "onee",
-            "fibre", "abonnement", "forfait", "gym", "salle de sport", "city club", "loyer", "كراء"
-        )
+        val existingNamesLower = existingBills.map { it.name.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }
+        val dismissedLower = dismissedMerchants.map { it.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }.toSet()
 
-        val expenses = allTransactions.filter { it.type == "expense" && it.desc.isNotBlank() }
+        val expenses = allTransactions.filter { tx ->
+            tx.type == "expense" &&
+                tx.desc.isNotBlank() &&
+                !isDebtRepaymentTransaction(tx)
+        }
         val grouped = expenses.groupBy { tx ->
             tx.desc.trim().lowercase(Locale.ROOT)
                 .replace(Regex("""\s+\d{4}-\d{2}$"""), "")
@@ -586,39 +734,38 @@ object PayCycleEngine {
         val detected = mutableListOf<DetectedSubscription>()
         for ((normKey, txList) in grouped) {
             if (normKey.length < 3) continue
+            if (normKey in dismissedLower) continue
             if (existingNamesLower.any { it.contains(normKey) || normKey.contains(it) }) continue
+            if (txList.size < 3) continue
 
-            val isKnownSubKeyword = subscriptionKeywords.any { kw -> normKey.contains(kw) }
-            val distinctMonths = txList.map { it.isoDate.take(7) }.distinct().size
-            if (txList.size >= 2 && (distinctMonths >= 2 || isKnownSubKeyword || txList.map { it.amount }.distinct().size == 1)) {
-                val latest = txList.maxByOrNull { it.isoDate } ?: txList.first()
-                val dayPart = latest.isoDate.split("-").getOrNull(2)?.toIntOrNull()?.coerceIn(1, 28) ?: 5
-                detected.add(
-                    DetectedSubscription(
-                        merchant = latest.desc.trim().replaceFirstChar {
-                            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-                        },
-                        amount = latest.amount,
-                        suggestedDueDay = dayPart,
-                        occurrences = txList.size,
-                        envelopeKey = latest.envelopeKey.ifBlank { "charges" }
-                    )
-                )
-            } else if (isKnownSubKeyword && txList.isNotEmpty()) {
-                val latest = txList.first()
-                val dayPart = latest.isoDate.split("-").getOrNull(2)?.toIntOrNull()?.coerceIn(1, 28) ?: 5
-                detected.add(
-                    DetectedSubscription(
-                        merchant = latest.desc.trim().replaceFirstChar {
-                            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-                        },
-                        amount = latest.amount,
-                        suggestedDueDay = dayPart,
-                        occurrences = txList.size,
-                        envelopeKey = "charges"
-                    )
-                )
+            val sorted = txList.sortedBy { it.isoDate }
+            val amounts = sorted.map { it.amount }
+            val minAmt = amounts.minOrNull() ?: 0.0
+            val maxAmt = amounts.maxOrNull() ?: 0.0
+            if (minAmt <= 0.0 || (maxAmt - minAmt) / minAmt > 0.100001) continue
+
+            val intervals = sorted.zipWithNext { a, b ->
+                (parseEpochDays(b.isoDate) - parseEpochDays(a.isoDate)).toInt()
             }
+            if (intervals.isEmpty()) continue
+            val avgInterval = intervals.average()
+            val isMonthly = intervals.all { it in 18..45 } && avgInterval in 20.0..40.0
+            val isWeekly = intervals.all { it in 4..11 } && avgInterval in 5.0..9.0
+            if (!isMonthly && !isWeekly) continue
+
+            val latest = sorted.last()
+            val dayPart = latest.isoDate.split("-").getOrNull(2)?.toIntOrNull()?.coerceIn(1, 28) ?: 5
+            detected.add(
+                DetectedSubscription(
+                    merchant = latest.desc.trim().replaceFirstChar {
+                        if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
+                    },
+                    amount = latest.amount,
+                    suggestedDueDay = dayPart,
+                    occurrences = sorted.size,
+                    envelopeKey = latest.envelopeKey.ifBlank { "charges" }
+                )
+            )
         }
         return detected.sortedByDescending { it.occurrences }.take(5)
     }

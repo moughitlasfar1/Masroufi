@@ -71,6 +71,13 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             colRef.whereEqualTo("userId", userId).snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(TransactionItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .map { tx ->
+                            val normCat = DefaultCategoryResolver.normalizeStoredCategoryValue(tx.category, tx.envelopeKey)
+                            val normEnv = DefaultCategoryResolver.canonicalDefaultId(tx.envelopeKey)
+                                ?: DefaultCategoryResolver.canonicalDefaultId(tx.category)
+                                ?: tx.envelopeKey
+                            tx.copy(category = normCat, envelopeKey = normEnv)
+                        }
                 }
                 .catch { error ->
                     if (error is Exception) handleFirestoreError(error, OperationType.LIST, colRef.path)
@@ -113,7 +120,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
                             colorHex = doc.getString("colorHex") ?: "#10B981",
                             createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
                             updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                        )
+                        ).migratedStorageCopy()
                     }
                 }
                 .catch { error ->
@@ -166,12 +173,18 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             }
             else -> ""
         }
+        val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(tx.category, tx.envelopeKey).take(120)
+        val normalizedEnvKey = (
+            DefaultCategoryResolver.canonicalDefaultId(tx.envelopeKey)
+                ?: DefaultCategoryResolver.canonicalDefaultId(tx.category)
+                ?: tx.envelopeKey.ifBlank { "autre" }
+        ).take(60)
         return mapOf(
             "userId" to uid,
             "type" to safeType,
             "amount" to tx.amount.coerceIn(0.01, 100000000.0),
-            "category" to tx.category.ifBlank { "Général" }.take(120),
-            "envelopeKey" to tx.envelopeKey.ifBlank { "autre" }.take(60),
+            "category" to normalizedCat,
+            "envelopeKey" to normalizedEnvKey,
             "accountId" to safeAccountId,
             "toAccountId" to safeToAccountId,
             "desc" to tx.desc.take(250),
@@ -195,18 +208,19 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     }
 
     private fun buildEnvelopePayload(uid: String, envelope: EnvelopeConfig): Map<String, Any> {
-        val safeName = envelope.nameFr.ifBlank { "Catégorie" }.take(100)
+        val migrated = envelope.migratedStorageCopy()
+        val safeName = migrated.nameFr.ifBlank { migrated.key.ifBlank { "custom" } }.take(100)
         return mapOf(
             "userId" to uid,
-            "key" to envelope.key.ifBlank { "custom" }.take(60),
+            "key" to migrated.key.ifBlank { "custom" }.take(60),
             "nameFr" to safeName,
-            "nameAr" to envelope.nameAr.ifBlank { safeName }.take(100),
-            "nameDarija" to envelope.nameDarija.ifBlank { safeName }.take(100),
-            "nameEn" to envelope.nameEn.ifBlank { safeName }.take(100),
-            "percentage" to envelope.percentage.coerceIn(0.0, 100.0),
-            "hasCap" to envelope.hasCap,
-            "colorHex" to envelope.colorHex.ifBlank { "#10B981" }.take(20),
-            "createdAt" to (envelope.createdAt ?: FieldValue.serverTimestamp()),
+            "nameAr" to migrated.nameAr.ifBlank { safeName }.take(100),
+            "nameDarija" to migrated.nameDarija.ifBlank { safeName }.take(100),
+            "nameEn" to migrated.nameEn.ifBlank { safeName }.take(100),
+            "percentage" to migrated.percentage.coerceIn(0.0, 100.0),
+            "hasCap" to migrated.hasCap,
+            "colorHex" to migrated.colorHex.ifBlank { "#10B981" }.take(20),
+            "createdAt" to (migrated.createdAt ?: FieldValue.serverTimestamp()),
             "updatedAt" to FieldValue.serverTimestamp()
         )
     }
@@ -436,10 +450,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             id = "env_transport",
             userId = uid,
             key = "transport",
-            nameFr = "1. Transport & Déplacement (ONCF, Taxi)",
-            nameAr = "1. النقل والتنقل (القطار، سيارة الأجرة)",
-            nameDarija = "1. الخدمة والتنقل (التران، الطاكسي)",
-            nameEn = "1. Commute & Transit (Train, Taxi)",
+            nameFr = "transport",
+            nameAr = "transport",
+            nameDarija = "transport",
+            nameEn = "transport",
             percentage = 35.0,
             hasCap = true,
             colorHex = "#0EA5E9"
@@ -448,10 +462,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             id = "env_charges",
             userId = uid,
             key = "charges",
-            nameFr = "2. Charges fixes & Maison (Factures)",
-            nameAr = "2. الالتزامات الثابتة والمنزل",
-            nameDarija = "2. التزامات قارة ومصاريف الدار",
-            nameEn = "2. Fixed Bills & Household",
+            nameFr = "charges",
+            nameAr = "charges",
+            nameDarija = "charges",
+            nameEn = "charges",
             percentage = 26.5,
             hasCap = true,
             colorHex = "#7C3AED"
@@ -460,10 +474,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             id = "env_cafe",
             userId = uid,
             key = "cafe",
-            nameFr = "3. Café & Sorties (Personnel & Loisirs)",
-            nameAr = "3. مقهى وخروج (شخصي وترفيه)",
-            nameDarija = "3. قهوة وخروج (مصروف شخصي)",
-            nameEn = "3. Café & Outings (Personal & Leisure)",
+            nameFr = "cafe",
+            nameAr = "cafe",
+            nameDarija = "cafe",
+            nameEn = "cafe",
             percentage = 18.5,
             hasCap = true,
             colorHex = "#D97706"
@@ -472,10 +486,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             id = "env_epargne",
             userId = uid,
             key = "epargne",
-            nameFr = "4. Épargne & Investissement",
-            nameAr = "4. الادخار والاستثمار",
-            nameDarija = "4. التوفير والادخار",
-            nameEn = "4. Savings & Investments",
+            nameFr = "epargne",
+            nameAr = "epargne",
+            nameDarija = "epargne",
+            nameEn = "epargne",
             percentage = 20.0,
             hasCap = true,
             colorHex = "#059669"
@@ -484,10 +498,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
             id = "env_autre",
             userId = uid,
             key = "autre",
-            nameFr = "Autre / Imprévus",
-            nameAr = "أخرى / مصاريف غير متوقعة",
-            nameDarija = "حاجة خرى / مكنتش حاسبها",
-            nameEn = "Other / Unplanned",
+            nameFr = "autre",
+            nameAr = "autre",
+            nameDarija = "autre",
+            nameEn = "autre",
             percentage = 0.0,
             hasCap = false,
             colorHex = "#E11D48"

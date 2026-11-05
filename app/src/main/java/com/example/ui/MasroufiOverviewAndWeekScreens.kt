@@ -180,6 +180,7 @@ fun OverviewScreen(
     onMoveDashboardSection: (String, Int) -> Unit = { _, _ -> },
     onSetDashboardSectionVisibility: (String, Boolean) -> Unit = { _, _ -> },
     onConvertSubscriptionToBill: (DetectedSubscription) -> Unit = {},
+    onDismissDetectedSubscription: (DetectedSubscription) -> Unit = {},
     onShareText: (String) -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
@@ -225,14 +226,24 @@ fun OverviewScreen(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                text = "Bienvenue sur Masroufi 2.0 — Compte Vierge Prêt (0 $cur)",
+                                text = when (lang) {
+                                    "ar" -> "مرحباً بك في مصروفي 2.0 — حساب جديد جاهز (0 $cur)"
+                                    "darija" -> "مرحبا بيك فـ مصروفي 2.0 — حساب خاوي واجد (0 $cur)"
+                                    "en" -> "Welcome to Masroufi 2.0 — Clean Account Ready (0 $cur)"
+                                    else -> "Bienvenue sur Masroufi 2.0 — Compte Vierge Prêt (0 $cur)"
+                                },
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Configurez votre salaire, jour de paie et 3 enveloppes en 30 secondes, ou saisissez vos soldes.",
+                            text = when (lang) {
+                                "ar" -> "اضبط راتبك ويوم الراتب و3 أظرفة في 30 ثانية، أو أدخل أرصدتك الحالية."
+                                "darija" -> "قاد الخلصة ونهار الخلاص و3 أظرفة فـ 30 ثانية، أو دخل شحال عندك فالحسابات."
+                                "en" -> "Set up your salary, payday and 3 envelopes in 30 seconds, or enter your account balances."
+                                else -> "Configurez votre salaire, jour de paie et 3 enveloppes en 30 secondes, ou saisissez vos soldes."
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                         )
@@ -268,7 +279,7 @@ fun OverviewScreen(
                                 },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("Saisir mon solde", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(strings.enterBalanceBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                             FilledTonalButton(
                                 onClick = onLoadDemoData,
@@ -278,7 +289,7 @@ fun OverviewScreen(
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Mode Démo", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(strings.demoModeBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -485,21 +496,23 @@ fun OverviewScreen(
                         height = 11.dp
                     )
 
-                    if (state.monthEndForecastMessage.isNotBlank()) {
+                    if (state.spendProjection.showEstimateAlert && state.monthEndForecastMessage.isNotBlank()) {
+                        val isRedAlert = state.spendProjection.alertLevel == com.example.domain.ProjectionAlertLevel.RED
+                        val alertColor = if (isRedAlert) AccentCoral else AccentAmber
                         Spacer(modifier = Modifier.height(10.dp))
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = Color.Black.copy(alpha = 0.24f),
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                            color = alertColor.copy(alpha = 0.24f),
+                            border = BorderStroke(1.dp, alertColor.copy(alpha = 0.72f)),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("hero_month_end_forecast_text")
                         ) {
                             Text(
-                                text = "🔮 ${state.monthEndForecastMessage}",
+                                text = "${strings.estimateLabel} · ${state.monthEndForecastMessage}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(alpha = 0.95f),
-                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                             )
                         }
@@ -564,6 +577,7 @@ fun OverviewScreen(
         item(key = "quick_action_bar") {
             ModernBankingQuickActionsCard(
                 lang = lang,
+                isDarkTheme = state.profile.isDarkTheme,
                 onAddExpense = {
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onOpenAddModal("expense")
@@ -692,7 +706,7 @@ fun OverviewScreen(
                                         .clickable { onOpenCustomizationModal() }
                                 ) {
                                     Text(
-                                        text = "Studio",
+                                        text = strings.studioShortBtn,
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -737,7 +751,7 @@ fun OverviewScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.KeyboardArrowUp,
-                                                    contentDescription = "Monter",
+                                                    contentDescription = strings.moveUpDesc,
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             }
@@ -753,7 +767,7 @@ fun OverviewScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.KeyboardArrowDown,
-                                                    contentDescription = "Descendre",
+                                                    contentDescription = strings.moveDownDesc,
                                                     modifier = Modifier.size(20.dp)
                                                 )
                                             }
@@ -944,7 +958,7 @@ fun OverviewScreen(
                                                 .clickable { editPresetsMode = !editPresetsMode }
                                         ) {
                                             Text(
-                                                text = if (editPresetsMode) "Terminé" else "Modifier",
+                                                text = if (editPresetsMode) strings.doneBtn else strings.editBtn,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = if (editPresetsMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -958,7 +972,7 @@ fun OverviewScreen(
                                                 .clickable { onAddPresetModal(null) }
                                         ) {
                                             Text(
-                                                text = "+ Preset",
+                                                text = strings.addPresetBtn,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
@@ -1134,15 +1148,35 @@ fun OverviewScreen(
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                                         )
                                                     }
-                                                    FilledTonalButton(
-                                                        onClick = {
-                                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                            onConvertSubscriptionToBill(sub)
-                                                        },
-                                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                                        modifier = Modifier.testTag("btn_convert_sub_${sub.name.take(10)}")
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                     ) {
-                                                        Text("+ Facture", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                        androidx.compose.material3.TextButton(
+                                                            onClick = {
+                                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                                onDismissDetectedSubscription(sub)
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                            modifier = Modifier.testTag("btn_dismiss_sub_${sub.name.take(10)}")
+                                                        ) {
+                                                            Text(
+                                                                text = strings.notABillBtn,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
+                                                        }
+                                                        FilledTonalButton(
+                                                            onClick = {
+                                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                onConvertSubscriptionToBill(sub)
+                                                            },
+                                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                            modifier = Modifier.testTag("btn_convert_sub_${sub.name.take(10)}")
+                                                        ) {
+                                                            Text(strings.addBillBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1286,9 +1320,9 @@ fun OverviewScreen(
                             } else 0
                             val vsLastMonthText = if (state.previousCycleExpenses > 0.0) {
                                 val sign = if (vsLastMonthDiff > 0) "+" else ""
-                                "$sign$vsLastMonthDiff% vs mois dernier"
+                                "$sign$vsLastMonthDiff% ${strings.vsLastMonthSuffix}"
                             } else {
-                                "1er cycle suivi"
+                                strings.firstTrackedCycleLabel
                             }
                             val topCatName = state.topEnvelopeStatus?.config?.localizedName(lang) ?: "—"
                             val topCatPct = state.topEnvelopeStatus?.usagePercent ?: 0
@@ -1334,9 +1368,9 @@ fun OverviewScreen(
                                             )
                                             Text(
                                                 text = if (state.remainingBudget >= 0) {
-                                                    "Reste ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j restants)"
+                                                    "${strings.remainingLabel} ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j)"
                                                 } else {
-                                                    "Dépassement de ${fmt(-state.remainingBudget)} $cur"
+                                                    "${strings.overrunLabel} ${fmt(-state.remainingBudget)} $cur"
                                                 },
                                                 style = MaterialTheme.typography.titleMedium,
                                                 fontWeight = FontWeight.ExtraBold,
@@ -1348,12 +1382,11 @@ fun OverviewScreen(
                                         onClick = {
                                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                             val sharePayload = buildString {
-                                                appendLine("📊 Mon Bilan Masroufi (${state.activeWindow.cycleKey})")
-                                                appendLine("• Budget utilisé : $pct% (montants masqués •••• $cur)")
-                                                appendLine("• Top catégorie : $topCatName ($topCatPct%)")
-                                                appendLine("• Plus grosse journée : ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
-                                                appendLine("• Évolution : $vsLastMonthText")
-                                                appendLine("• Série sans dépense : 🔥 ${state.noSpendStreakDays}j")
+                                                appendLine("📊 ${strings.monthlyReviewTitle} (${state.activeWindow.cycleKey})")
+                                                appendLine("• ${strings.budgetLabel} : $pct% (•••• $cur)")
+                                                appendLine("• ${strings.topCategoryPrefix} $topCatName ($topCatPct%)")
+                                                appendLine("• ${strings.biggestDayPrefix} ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
+                                                appendLine("• $vsLastMonthText")
                                             }
                                             onShareText(sharePayload)
                                         },
@@ -1362,11 +1395,11 @@ fun OverviewScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Share,
-                                            contentDescription = "Partager le bilan",
+                                            contentDescription = strings.shareReviewDesc,
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
-                                        Text("Partager", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(strings.shareBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
 
@@ -1387,12 +1420,12 @@ fun OverviewScreen(
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = "🏆 Top catégorie : $topCatName",
+                                                text = "${strings.topCategoryPrefix} $topCatName",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 fontWeight = FontWeight.Bold
                                             )
                                             Text(
-                                                text = "📅 Jour record : $biggestDayLabel",
+                                                text = "${strings.biggestDayPrefix} $biggestDayLabel",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -1441,7 +1474,7 @@ fun OverviewScreen(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
-                                                text = "${state.bestControlledEnvelope?.usagePercent ?: 0}% utilisé",
+                                                text = "${state.bestControlledEnvelope?.usagePercent ?: 0}${strings.usedPercentSuffix}",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontSize = 11.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1478,7 +1511,7 @@ fun OverviewScreen(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
-                                                text = "${state.worstControlledEnvelope?.usagePercent ?: 0}% utilisé",
+                                                text = "${state.worstControlledEnvelope?.usagePercent ?: 0}${strings.usedPercentSuffix}",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontSize = 11.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1554,6 +1587,7 @@ fun OverviewScreen(
 @Composable
 private fun ModernBankingQuickActionsCard(
     lang: String,
+    isDarkTheme: Boolean = false,
     onAddExpense: () -> Unit,
     onAddIncome: () -> Unit,
     onTransfer: () -> Unit,
@@ -1599,7 +1633,7 @@ private fun ModernBankingQuickActionsCard(
             BankingQuickActionTile(
                 title = expenseTitle,
                 icon = Icons.Default.ArrowUpward,
-                accentColor = semanticExpenseColor(false),
+                accentColor = semanticExpenseColor(isDarkTheme),
                 onClick = onAddExpense,
                 testTag = "quick_action_expense",
                 modifier = Modifier.weight(1f)
@@ -1607,7 +1641,7 @@ private fun ModernBankingQuickActionsCard(
             BankingQuickActionTile(
                 title = incomeTitle,
                 icon = Icons.Default.ArrowDownward,
-                accentColor = semanticIncomeColor(false),
+                accentColor = semanticIncomeColor(isDarkTheme),
                 onClick = onAddIncome,
                 testTag = "quick_action_income",
                 modifier = Modifier.weight(1f)
@@ -1615,7 +1649,7 @@ private fun ModernBankingQuickActionsCard(
             BankingQuickActionTile(
                 title = transferTitle,
                 icon = Icons.Default.SwapHoriz,
-                accentColor = semanticTransferColor(false),
+                accentColor = semanticTransferColor(isDarkTheme),
                 onClick = onTransfer,
                 testTag = "quick_action_transfer",
                 modifier = Modifier.weight(1f)
@@ -1688,7 +1722,9 @@ fun WeekScreen(
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
-    val rawMax = state.weekDaysSpend.maxOrNull() ?: 100.0
+    val rawSpentMax = state.weekDaysSpend.maxOrNull() ?: 0.0
+    val rawFutureMax = state.weekDaysFutureSpend.maxOrNull() ?: 0.0
+    val rawMax = max(100.0, max(rawSpentMax, rawFutureMax))
     val maxVal = if (rawMax.isNaN() || rawMax.isInfinite()) 100.0 else max(100.0, rawMax)
     val step = listOf(50, 100, 200, 250, 500, 1000, 2000, 5000).firstOrNull { it * 4 >= maxVal }
         ?: (ceil(maxVal / 4000.0).toInt() * 1000).coerceAtLeast(100)
@@ -1826,13 +1862,17 @@ fun WeekScreen(
                             verticalAlignment = Alignment.Bottom
                         ) {
                             state.weekDaysSpend.forEachIndexed { idx, value ->
-                                val rawRatio = (value / ceilVal).toFloat().safeFraction(0.05f, 1f)
+                                val futureVal = state.weekDaysFutureSpend.getOrElse(idx) { 0.0 }
+                                val isFutureOutlined = value <= 0.0 && futureVal > 0.0
+                                val displayVal = if (isFutureOutlined) futureVal else value
+                                val rawRatio = (displayVal / ceilVal).toFloat().safeFraction(0.05f, 1f)
                                 val animatedRatio by animateFloatAsState(
                                     targetValue = rawRatio,
                                     animationSpec = ExpressiveMotion.fluidSpring(),
                                     label = "week_bar_$idx"
                                 )
                                 val isPeak = idx == state.mostExpensiveDayIndex && value > 0
+                                val barShape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 5.dp, bottomEnd = 5.dp)
                                 Column(
                                     modifier = Modifier
                                         .weight(1f)
@@ -1840,13 +1880,17 @@ fun WeekScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Bottom
                                 ) {
-                                    if (value > 0) {
+                                    if (displayVal > 0) {
                                         Text(
-                                            text = if (hide) "••" else value.safeRoundToInt().toString(),
+                                            text = if (hide) "••" else displayVal.safeRoundToInt().toString(),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isPeak) AccentCoral else MaterialTheme.colorScheme.onSurface
+                                            color = when {
+                                                isFutureOutlined -> MaterialTheme.colorScheme.primary
+                                                isPeak -> AccentCoral
+                                                else -> MaterialTheme.colorScheme.onSurface
+                                            }
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                     }
@@ -1854,21 +1898,30 @@ fun WeekScreen(
                                         modifier = Modifier
                                             .width(28.dp)
                                             .fillMaxHeight(animatedRatio * 0.72f)
-                                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 5.dp, bottomEnd = 5.dp))
-                                            .background(
-                                                Brush.verticalGradient(
-                                                    colors = when {
-                                                        value <= 0 -> listOf(
-                                                            MaterialTheme.colorScheme.surfaceContainerHighest,
-                                                            MaterialTheme.colorScheme.surfaceContainerHighest
+                                            .clip(barShape)
+                                            .then(
+                                                if (isFutureOutlined) {
+                                                    Modifier
+                                                        .border(1.75.dp, MaterialTheme.colorScheme.primary, barShape)
+                                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                                                        .testTag("week_future_outlined_bar_$idx")
+                                                } else {
+                                                    Modifier.background(
+                                                        Brush.verticalGradient(
+                                                            colors = when {
+                                                                value <= 0 -> listOf(
+                                                                    MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                                    MaterialTheme.colorScheme.surfaceContainerHighest
+                                                                )
+                                                                isPeak -> listOf(AccentCoral, Color(0xFFDC2626))
+                                                                else -> listOf(
+                                                                    MaterialTheme.colorScheme.primary,
+                                                                    MaterialTheme.colorScheme.primaryContainer
+                                                                )
+                                                            }
                                                         )
-                                                        isPeak -> listOf(AccentCoral, Color(0xFFDC2626))
-                                                        else -> listOf(
-                                                            MaterialTheme.colorScheme.primary,
-                                                            MaterialTheme.colorScheme.primaryContainer
-                                                        )
-                                                    }
-                                                )
+                                                    )
+                                                }
                                             )
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
