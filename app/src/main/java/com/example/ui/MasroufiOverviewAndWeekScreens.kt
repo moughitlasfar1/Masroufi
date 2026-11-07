@@ -98,6 +98,7 @@ import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.ExpressiveSectionHeader
 import com.example.ui.theme.distinctAccountColor
+import com.example.ui.theme.glass3d
 import com.example.ui.theme.heroGradientColors
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
@@ -304,6 +305,11 @@ fun OverviewScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .glass3d(
+                        cornerRadius = 36.dp,
+                        isDark = true,
+                        drawOuterShadows = true
+                    )
                     .clip(heroShape)
                     .background(Brush.linearGradient(colors = heroColors))
                     .border(

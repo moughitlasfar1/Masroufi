@@ -151,6 +151,7 @@ import com.example.ui.theme.ExpressiveGlassBottomDock
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.MasroufiTheme
+import com.example.ui.theme.glass3d
 import com.example.ui.theme.paletteForKey
 import com.example.widget.MasroufiAppWidget
 import com.example.widget.MasroufiWidgetStore
@@ -1738,6 +1739,11 @@ private fun MasroufiTopBar(
                     border = BorderStroke(
                         1.dp,
                         MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f)
+                    ),
+                    modifier = Modifier.glass3d(
+                        cornerRadius = 50.dp,
+                        isDark = isDarkTheme,
+                        drawOuterShadows = true
                     )
                 ) {
                     Row(
@@ -1843,6 +1849,12 @@ private fun MasroufiTopBar(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .glass3d(
+                        cornerRadius = 50.dp,
+                        isDark = isDarkTheme,
+                        accentRimColor = MaterialTheme.colorScheme.primary,
+                        drawOuterShadows = true
+                    )
                     .pointerInput(cycleLabel) {
                         detectHorizontalDragGestures(
                             onHorizontalDrag = { change, dragAmount ->
