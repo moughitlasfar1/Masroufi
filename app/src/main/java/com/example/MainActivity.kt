@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PieChart
@@ -151,6 +153,8 @@ import com.example.ui.theme.ExpressiveGlassBottomDock
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.MasroufiTheme
+import com.example.ui.theme.VyxelOnPeriwinkle
+import com.example.ui.theme.VyxelPeriwinkle
 import com.example.ui.theme.glass3d
 import com.example.ui.theme.paletteForKey
 import com.example.widget.MasroufiAppWidget
@@ -314,7 +318,7 @@ fun AppNavigation(
     val currentUser by resolvedAuth.authStateFlow().collectAsStateWithLifecycle(initialValue = resolvedAuth.currentUser)
     val user = currentUser
     if (user == null) {
-        MasroufiTheme(darkTheme = false, accentPalette = "majorelle") {
+        MasroufiTheme(darkTheme = true, accentPalette = "majorelle") {
             AuthScreen(onAuthSuccess = {})
         }
     } else {
@@ -379,8 +383,8 @@ fun MainFeatureScreen(
     LaunchedEffect(state.isLoading) {
         if (!state.isLoading) {
             val uiPrefs = context.getSharedPreferences("masroufi_ui_prefs", Context.MODE_PRIVATE)
-            if (!uiPrefs.getBoolean("revolut_color_v3_migrated", false)) {
-                uiPrefs.edit().putBoolean("revolut_color_v3_migrated", true).apply()
+            if (!uiPrefs.getBoolean("vyxel_dark_v4_migrated", false)) {
+                uiPrefs.edit().putBoolean("vyxel_dark_v4_migrated", true).apply()
                 viewModel.applyDefaultLightRevolutThemeMigration()
             }
         }
@@ -1615,19 +1619,26 @@ private fun MasroufiTopBar(
     onShiftCycle: (Int) -> Unit
 ) {
     val pal = paletteForKey(accentPalette)
-    val glassSurface = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDarkTheme) 0.96f else 0.99f)
+    val strings = Translations.forLang(language)
+    val topBarBg = if (isDarkTheme) Color(0xFF000000) else MaterialTheme.colorScheme.surface
+    val circleBtnBg = if (isDarkTheme) Color(0xFF161921) else MaterialTheme.colorScheme.surfaceContainerHigh
+    val circleBtnBorder = if (isDarkTheme) Color(0xFF252A36) else MaterialTheme.colorScheme.outlineVariant
+    val activeSegmentBg = if (isDarkTheme) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
+    val activeSegmentFg = if (isDarkTheme) VyxelOnPeriwinkle else Color.White
+
     Surface(
-        color = glassSurface,
-        tonalElevation = if (isDarkTheme) 2.dp else 0.dp,
-        shadowElevation = 2.dp
+        color = topBarBg,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Row 1: Vyxel Apps Header — Circular Logo + Bold Title/Subtitle on left, 3 Labeled Circular Action Buttons on right
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1635,23 +1646,21 @@ private fun MasroufiTopBar(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomEnd = 16.dp, bottomStart = 6.dp))
-                            .background(
-                                Brush.linearGradient(listOf(pal.primaryDark, pal.heroStart))
-                            )
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(circleBtnBg)
                             .clickable { onOpenCustomization() },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.AccountBalanceWallet,
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = if (isDarkTheme) AccentSkyBlue else pal.primaryLight,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -1663,23 +1672,11 @@ private fun MasroufiTopBar(
                             Text(
                                 text = appTitle,
                                 style = MaterialTheme.typography.titleLarge,
+                                fontSize = 22.sp,
                                 fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1
                             )
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
-                            ) {
-                                Text(
-                                    text = currencySymbol,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                )
-                            }
-                            // Sync Status Indicator Pill ("Saved on device, syncing…" / "Synchronisé ✓")
                             Surface(
                                 shape = CircleShape,
                                 color = when {
@@ -1695,7 +1692,7 @@ private fun MasroufiTopBar(
                                 Text(
                                     text = when {
                                         isSyncing -> when (language) {
-                                            "ar" -> "جاري المزامنة…"
+                                            "ar" -> "مزامنة…"
                                             "darija" -> "كيتزامن…"
                                             "en" -> "Syncing…"
                                             else -> "Synchro…"
@@ -1725,135 +1722,141 @@ private fun MasroufiTopBar(
                         Text(
                             text = subTitle,
                             style = MaterialTheme.typography.bodyMedium,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
                         )
                     }
                 }
 
-                // Floating Glass Action Capsule (Language, Privacy Eye, Theme, Palette, Settings)
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f),
-                    border = BorderStroke(
-                        1.dp,
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f)
-                    ),
-                    modifier = Modifier.glass3d(
-                        cornerRadius = 50.dp,
-                        isDark = isDarkTheme,
-                        drawOuterShadows = true
-                    )
+                // 3 Vyxel Circular Header Action Buttons with Labels underneath (Search / Telegram / Profile style)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(0.dp),
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
-                        val langDisplay = when (language) {
-                            "ar" -> "AR"
-                            "darija" -> "دارجة"
-                            "en" -> "EN"
-                            else -> "FR"
-                        }
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.75f),
+                            color = circleBtnBg,
+                            border = BorderStroke(1.dp, circleBtnBorder),
                             modifier = Modifier
+                                .size(40.dp)
                                 .clip(CircleShape)
-                                .clickable { onCycleLanguage() }
-                                .testTag("lang_switcher_pill")
-                        ) {
-                            Text(
-                                text = langDisplay,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = onTogglePrivacy,
-                            modifier = Modifier
-                                .size(34.dp)
+                                .clickable { onTogglePrivacy() }
                                 .testTag("privacy_eye_button")
                         ) {
-                            Icon(
-                                imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                contentDescription = if (hideAmounts) "Show Amounts" else "Hide Amounts",
-                                tint = if (hideAmounts) AccentAmber else MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (hideAmounts) "Show Amounts" else "Hide Amounts",
+                                    tint = if (hideAmounts) AccentAmber else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
+                        Text(
+                            text = when (language) {
+                                "ar" -> "إخفاء"
+                                "darija" -> "خبي"
+                                "en" -> "Privacy"
+                                else -> "Privé"
+                            },
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-                        IconButton(
-                            onClick = onOpenCustomization,
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = circleBtnBg,
+                            border = BorderStroke(1.dp, circleBtnBorder),
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .clickable { onOpenCustomization() }
                                 .testTag("customization_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Palette,
-                                contentDescription = "Customize App",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Palette,
+                                    contentDescription = "Customize App",
+                                    tint = AccentSkyBlue,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
+                        Text(
+                            text = when (language) {
+                                "ar" -> "المظهر"
+                                "darija" -> "الألوان"
+                                "en" -> "Style"
+                                else -> "Style"
+                            },
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
 
-                        IconButton(
-                            onClick = onToggleTheme,
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = circleBtnBg,
+                            border = BorderStroke(1.dp, circleBtnBorder),
                             modifier = Modifier
-                                .size(34.dp)
-                                .testTag("theme_toggle_button")
-                        ) {
-                            Icon(
-                                imageVector = if (isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                                contentDescription = "Toggle Theme",
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = onOpenSettings,
-                            modifier = Modifier
-                                .size(34.dp)
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .clickable { onOpenSettings() }
                                 .testTag("settings_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Tune,
-                                contentDescription = "Settings",
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "Settings",
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
+                        Text(
+                            text = when (language) {
+                                "ar" -> "إعدادات"
+                                "darija" -> "إعدادات"
+                                "en" -> "Profile"
+                                else -> "Profil"
+                            },
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             }
 
-            // Floating Glass Pay-Cycle Month Navigator Pill (Swipe left/right on the month header to change month)
+            // Row 2: Vyxel 3-Part Segmented Pill Bar ([ ◀ Préc. | ✨ Active Cycle Pill in Soft Periwinkle | Suiv. ▶ ])
             var monthPillDragAccumulator by remember { mutableFloatStateOf(0f) }
             val haptics = LocalHapticFeedback.current
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.76f),
+                color = if (isDarkTheme) Color(0xFF13161D) else MaterialTheme.colorScheme.surfaceContainerHigh,
                 border = BorderStroke(
                     width = 1.dp,
-                    brush = Brush.horizontalGradient(
-                        listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f),
-                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
-                        )
-                    )
+                    color = if (isDarkTheme) Color(0xFF262A34) else MaterialTheme.colorScheme.outlineVariant
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .glass3d(
                         cornerRadius = 50.dp,
                         isDark = isDarkTheme,
-                        accentRimColor = MaterialTheme.colorScheme.primary,
-                        drawOuterShadows = true
+                        drawOuterShadows = false
                     )
                     .pointerInput(cycleLabel) {
                         detectHorizontalDragGestures(
@@ -1884,38 +1887,164 @@ private fun MasroufiTopBar(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                        .padding(5.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = { onShiftCycle(-1) },
+                    // Left segment: Previous cycle
+                    Row(
                         modifier = Modifier
-                            .size(32.dp)
-                            .testTag("month_header_prev_btn")
+                            .clip(CircleShape)
+                            .clickable { onShiftCycle(-1) }
+                            .padding(horizontal = 12.dp, vertical = 9.dp)
+                            .testTag("month_header_prev_btn"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                             contentDescription = "Previous Cycle",
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Text(
+                            text = strings.previousShortLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
-                    Text(
-                        text = cycleLabel,
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    IconButton(
-                        onClick = { onShiftCycle(1) },
-                        modifier = Modifier
-                            .size(32.dp)
-                            .testTag("month_header_next_btn")
+
+                    // Center active segment: Soft-Periwinkle capsule (#B8C7FA) with sparkle icon & dark navy label
+                    Surface(
+                        shape = CircleShape,
+                        color = activeSegmentBg,
+                        shadowElevation = 4.dp
                     ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = activeSegmentFg,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = cycleLabel,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = activeSegmentFg,
+                                maxLines = 1
+                            )
+                        }
+                    }
+
+                    // Right segment: Next cycle
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { onShiftCycle(1) }
+                            .padding(horizontal = 12.dp, vertical = 9.dp)
+                            .testTag("month_header_next_btn"),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = strings.currentShortLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold
+                        )
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = "Next Cycle",
-                            tint = MaterialTheme.colorScheme.primary
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                }
+            }
+
+            // Row 3: Vyxel Filter Dropdown Chips ([ 🌐 FR · DH ⌄ ]  [ 🎚️ Quick actions · Dark ⌄ ])
+            val langDisplay = when (language) {
+                "ar" -> "AR"
+                "darija" -> "دارجة"
+                "en" -> "EN"
+                else -> "FR"
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = circleBtnBg,
+                    border = BorderStroke(1.dp, circleBtnBorder),
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { onCycleLanguage() }
+                        .testTag("lang_switcher_pill")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "$langDisplay · $currencySymbol",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = circleBtnBg,
+                    border = BorderStroke(1.dp, circleBtnBorder),
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .clickable { onToggleTheme() }
+                        .testTag("theme_toggle_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
+                            contentDescription = "Toggle Theme",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = when (language) {
+                                "ar" -> if (isDarkTheme) "الوضع الليلي" else "الوضع النهاري"
+                                "darija" -> if (isDarkTheme) "الوضع الليلي" else "الوضع النهاري"
+                                "en" -> if (isDarkTheme) "Dark mode" else "Light mode"
+                                else -> if (isDarkTheme) "Mode Sombre" else "Mode Clair"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }

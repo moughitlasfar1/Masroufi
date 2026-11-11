@@ -103,6 +103,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import android.Manifest
 import android.os.Build
@@ -3349,14 +3350,17 @@ private fun SwipeableTransactionRow(
         }
 
         Surface(
-            shape = RoundedCornerShape(22.dp),
+            shape = RoundedCornerShape(26.dp),
             color = MaterialTheme.colorScheme.surfaceContainer,
-            shadowElevation = 1.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+            shadowElevation = 2.dp,
+            border = BorderStroke(
+                1.dp,
+                if (isDarkTheme) Color(0xFF222630) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+            ),
             modifier = Modifier
                 .fillMaxWidth()
                 .offset { IntOffset(animatedOffsetX.roundToInt(), 0) }
-                .clip(RoundedCornerShape(22.dp))
+                .clip(RoundedCornerShape(26.dp))
                 .pointerInput(tx.id) {
                     detectHorizontalDragGestures(
                         onHorizontalDrag = { change, dragAmount ->
@@ -3388,113 +3392,165 @@ private fun SwipeableTransactionRow(
                 .clickable { onEditTransaction() }
                 .testTag("tx_row_${tx.id}")
         ) {
-            Row(
+            val descDisplay = tx.desc.ifBlank { resolvedCategoryDisplay }.let { rawDesc ->
+                com.example.data.DefaultCategoryResolver.resolveTransactionCategoryDisplay(
+                    rawDesc,
+                    tx.envelopeKey,
+                    envelopes,
+                    lang
+                )
+            }
+            val pillSurfaceColor = if (isDarkTheme) Color(0xFF232731) else MaterialTheme.colorScheme.surfaceContainerHigh
+
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                // Top Row: Vyxel Rounded-Square Icon Badge + Account/Date Metadata + Bold Title + Circular Duplicate Button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(catAccent)
-                        )
-                        val descDisplay = tx.desc.ifBlank { resolvedCategoryDisplay }.let { rawDesc ->
-                            // If the description itself was just the default category name, localize it too
-                            com.example.data.DefaultCategoryResolver.resolveTransactionCategoryDisplay(
-                                rawDesc,
-                                tx.envelopeKey,
-                                envelopes,
-                                lang
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(catAccent.copy(alpha = if (isDarkTheme) 0.24f else 0.16f))
+                                .border(1.dp, catAccent.copy(alpha = 0.48f), RoundedCornerShape(14.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = resolvedCategoryDisplay.take(2).uppercase(),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = catAccent
                             )
                         }
-                        Text(
-                            text = descDisplay,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Icon(
-                            imageVector = Icons.Default.Edit,
-                            contentDescription = editLabel,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(14.dp)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "$accountName — ${tx.isoDate}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = descDisplay,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+
+                    // Circular Bookmark/Duplicate button on top-right (matching Vyxel card top-right circle)
+                    Surface(
+                        shape = CircleShape,
+                        color = pillSurfaceColor,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onDuplicateTransaction)
+                            .testTag("duplicate_tx_${tx.id}")
                     ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = duplicateLabel,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Bottom Row: Category Pill Tag on left + Circular Delete Button & Amount Pill Button on right
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = accountName.take(12),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold
+                        )
                         Surface(
                             shape = CircleShape,
-                            color = catAccent.copy(alpha = 0.14f)
+                            color = if (isDarkTheme) Color(0xFF1A1E26) else catAccent.copy(alpha = 0.12f),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isDarkTheme) Color(0xFF282D39) else catAccent.copy(alpha = 0.30f)
+                            )
                         ) {
                             Text(
                                 text = resolvedCategoryDisplay.take(22),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = catAccent,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
                             )
                         }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Surface(
                             shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                            color = pillSurfaceColor,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onDeleteTransaction)
+                                .testTag("delete_tx_${tx.id}")
                         ) {
-                            Text(
-                                text = accountName.take(14),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                            )
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = deleteLabel,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
                         }
-                        Text(
-                            text = tx.isoDate,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text(
-                        text = if (hideAmounts) "•••• $currencySymbol" else "$prefix${PayCycleEngine.formatDh(tx.amount)} $currencySymbol",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = amountColor,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    IconButton(
-                        onClick = onDuplicateTransaction,
-                        modifier = Modifier.testTag("duplicate_tx_${tx.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = duplicateLabel,
-                            tint = AccentEmerald,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    IconButton(
-                        onClick = onDeleteTransaction,
-                        modifier = Modifier.testTag("delete_tx_${tx.id}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.DeleteOutline,
-                            contentDescription = deleteLabel,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = pillSurfaceColor
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = if (hideAmounts) "•••• $currencySymbol" else "$prefix${PayCycleEngine.formatDh(tx.amount)} $currencySymbol",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = amountColor,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
                     }
                 }
             }

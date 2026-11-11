@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -132,8 +133,8 @@ fun ExpressiveAmbientBackground(
 ) {
     val pal = paletteForKey(accentPalette)
     val bgColor = MaterialTheme.colorScheme.background
-    val primaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.06f) else pal.primaryLight.copy(alpha = 0.035f)
-    val secondaryGlow = if (isDarkTheme) pal.heroMid.copy(alpha = 0.05f) else AccentSkyBlue.copy(alpha = 0.025f)
+    val primaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.035f) else pal.primaryLight.copy(alpha = 0.035f)
+    val secondaryGlow = if (isDarkTheme) AccentEmerald.copy(alpha = 0.025f) else AccentSkyBlue.copy(alpha = 0.025f)
 
     Box(
         modifier = modifier
@@ -146,20 +147,20 @@ fun ExpressiveAmbientBackground(
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(primaryGlow, Color.Transparent),
-                    center = Offset(w * 0.85f, h * 0.06f),
-                    radius = w * 0.65f
+                    center = Offset(w * 0.85f, h * 0.05f),
+                    radius = w * 0.55f
                 ),
-                radius = w * 0.65f,
-                center = Offset(w * 0.85f, h * 0.06f)
+                radius = w * 0.55f,
+                center = Offset(w * 0.85f, h * 0.05f)
             )
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(secondaryGlow, Color.Transparent),
-                    center = Offset(w * 0.12f, h * 0.35f),
-                    radius = w * 0.55f
+                    center = Offset(w * 0.18f, h * 0.92f),
+                    radius = w * 0.50f
                 ),
-                radius = w * 0.55f,
-                center = Offset(w * 0.12f, h * 0.35f)
+                radius = w * 0.50f,
+                center = Offset(w * 0.18f, h * 0.92f)
             )
         }
         content()
@@ -363,18 +364,18 @@ fun ExpressiveGlassCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    // Blend base surface with --color-glass3d while keeping >= 4.5:1 WCAG contrast for onSurface text
+    // Vyxel matte charcoal card surface (#111317) in Dark Mode, crisp white in Light Mode
     val glassFill = if (isDark) {
-        containerColor.copy(alpha = 0.88f)
+        containerColor.copy(alpha = 0.96f)
     } else {
-        containerColor.copy(alpha = 0.94f)
+        containerColor.copy(alpha = 0.96f)
     }
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val haptics = LocalHapticFeedback.current
 
     val animatedRadius by animateDpAsState(
-        targetValue = if (isPressed && onClick != null) (cornerRadius - 6.dp).coerceAtLeast(14.dp) else cornerRadius,
+        targetValue = if (isPressed && onClick != null) (cornerRadius - 4.dp).coerceAtLeast(16.dp) else cornerRadius,
         animationSpec = ExpressiveMotion.bouncySpring(),
         label = "glass_card_radius"
     )
@@ -384,18 +385,18 @@ fun ExpressiveGlassCard(
         label = "glass_card_scale"
     )
 
-    val topRim = accentRimColor?.copy(alpha = if (isDark) 0.55f else 0.45f)
-        ?: Glass3dTokens.InsetHighlight80
-    val bottomRim = accentRimColor?.copy(alpha = 0.18f)
-        ?: Glass3dTokens.ShadowAlpha20
+    val topRim = accentRimColor?.copy(alpha = if (isDark) 0.38f else 0.40f)
+        ?: if (isDark) Color(0xFF262A35) else Glass3dTokens.InsetHighlight80
+    val bottomRim = accentRimColor?.copy(alpha = 0.14f)
+        ?: if (isDark) Color(0xFF1A1D25) else Glass3dTokens.ShadowAlpha20
 
     val shape = RoundedCornerShape(animatedRadius)
 
     Surface(
         shape = shape,
         color = glassFill,
-        tonalElevation = if (isDark) 4.dp else 2.dp,
-        shadowElevation = if (isDark) 8.dp else 5.dp,
+        tonalElevation = if (isDark) 2.dp else 1.dp,
+        shadowElevation = if (isDark) 6.dp else 4.dp,
         border = BorderStroke(
             width = 1.dp,
             brush = Brush.linearGradient(listOf(topRim, bottomRim))
@@ -430,31 +431,31 @@ fun ExpressiveGlassCard(
 }
 
 /**
- * Reusable `.glass3d` inner tile for nested items inside cards, headers, or sheets.
+ * Reusable `.glass3d` inner tile for nested items inside cards, headers, or sheets (Vyxel #1C2027 / #232731 pill surface).
  */
 @Composable
 fun ExpressiveGlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(18.dp),
+    shape: Shape = RoundedCornerShape(20.dp),
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     accentBorderColor: Color? = null,
     onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val fill = containerColor.copy(alpha = if (isDark) 0.88f else 0.94f)
-    val borderColor = accentBorderColor?.copy(alpha = 0.48f)
-        ?: if (isDark) Glass3dTokens.InsetHighlight30 else Glass3dTokens.InsetHighlight80
+    val fill = containerColor.copy(alpha = if (isDark) 0.95f else 0.95f)
+    val borderColor = accentBorderColor?.copy(alpha = 0.36f)
+        ?: if (isDark) Color(0xFF2A2F3B) else Glass3dTokens.InsetHighlight80
     val haptics = LocalHapticFeedback.current
 
     Surface(
         shape = shape,
         color = fill,
-        shadowElevation = if (isDark) 3.dp else 1.5.dp,
+        shadowElevation = if (isDark) 2.dp else 1.dp,
         border = BorderStroke(1.dp, borderColor),
         modifier = modifier
             .glass3d(
-                cornerRadius = 18.dp,
+                cornerRadius = 20.dp,
                 isDark = isDark,
                 accentRimColor = accentBorderColor,
                 drawOuterShadows = false
@@ -678,6 +679,12 @@ fun ExpressivePillChip(
  * Floating Translucent Glass Navigation Dock with spring-animated pill selection
  * and long-press contextual shortcut support.
  */
+/**
+ * Vyxel-Style Floating Translucent Glass Navigation Dock:
+ * - Translucent obsidian-charcoal capsule (`RoundedCornerShape(36.dp)`) with specular top rim
+ * - Active tab features a raised Soft-Periwinkle (`#B8C7FA`) circular badge (`48.dp`) that pops out above
+ *   the top edge of the dock with a subtle emerald/periwinkle ambient halo underneath, matching Vyxel Apps.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ExpressiveGlassBottomDock(
@@ -688,9 +695,11 @@ fun ExpressiveGlassBottomDock(
     modifier: Modifier = Modifier
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val dockFill = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDark) 0.90f else 0.95f)
-    val rimTop = if (isDark) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.85f)
-    val rimBottom = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+    val dockFill = if (isDark) Color(0xFF13161D).copy(alpha = 0.92f) else MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f)
+    val rimTop = if (isDark) Color.White.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.90f)
+    val rimBottom = if (isDark) Color(0xFF252A36) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+    val activeBubbleColor = if (isDark) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
+    val activeBubbleContentColor = if (isDark) VyxelOnPeriwinkle else Color.White
     val haptics = LocalHapticFeedback.current
 
     Box(
@@ -698,22 +707,24 @@ fun ExpressiveGlassBottomDock(
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 12.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.BottomCenter
     ) {
+        // Main glass capsule dock
         Surface(
-            shape = RoundedCornerShape(30.dp),
+            shape = RoundedCornerShape(36.dp),
             color = dockFill,
             tonalElevation = 8.dp,
-            shadowElevation = 12.dp,
+            shadowElevation = 14.dp,
             border = BorderStroke(
                 width = 1.dp,
-                brush = Brush.linearGradient(listOf(rimTop, rimBottom))
+                brush = Brush.verticalGradient(listOf(rimTop, rimBottom))
             ),
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 560.dp)
+                .padding(top = 10.dp)
                 .glass3d(
-                    cornerRadius = 30.dp,
+                    cornerRadius = 36.dp,
                     isDark = isDark,
                     drawOuterShadows = true
                 )
@@ -721,99 +732,81 @@ fun ExpressiveGlassBottomDock(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 tabs.forEachIndexed { pageIdx, (key, label, icon) ->
                     val isSelected = activeTabKey == key
-                    val pillScale by animateFloatAsState(
-                        targetValue = if (isSelected) 1f else 0.94f,
+                    val bubbleLift by animateDpAsState(
+                        targetValue = if (isSelected) (-8).dp else 0.dp,
                         animationSpec = ExpressiveMotion.bouncySpring(),
-                        label = "dock_scale_$key"
+                        label = "dock_lift_$key"
                     )
-                    val pillCorner by animateDpAsState(
-                        targetValue = if (isSelected) 22.dp else 16.dp,
-                        animationSpec = ExpressiveMotion.bouncySpring(),
-                        label = "dock_corner_$key"
-                    )
-                    val pillBg by animateColorAsState(
+                    val labelColor by animateColorAsState(
                         targetValue = if (isSelected) {
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (isDark) 0.85f else 0.95f)
-                        } else {
-                            Color.Transparent
-                        },
-                        animationSpec = ExpressiveMotion.snappySpring(),
-                        label = "dock_bg_$key"
-                    )
-                    val contentColor by animateColorAsState(
-                        targetValue = if (isSelected) {
-                            MaterialTheme.colorScheme.primary
+                            if (isDark) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
                         animationSpec = ExpressiveMotion.snappySpring(),
-                        label = "dock_fg_$key"
+                        label = "dock_label_$key"
                     )
 
-                    Surface(
-                        shape = RoundedCornerShape(pillCorner),
-                        color = pillBg,
-                        border = if (isSelected) {
-                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
-                        } else null,
+                    Column(
                         modifier = Modifier
                             .weight(1f)
-                            .scale(pillScale)
-                            .clip(RoundedCornerShape(pillCorner))
                             .combinedClickable(
-                                onClick = {
-                                    onSelectTab(pageIdx, key)
-                                },
+                                onClick = { onSelectTab(pageIdx, key) },
                                 onLongClick = {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     onLongPressTab(key)
                                 }
                             )
-                            .testTag("nav_tab_$key")
+                            .testTag("nav_tab_$key"),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Column(
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 7.dp, horizontal = 2.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .clip(CircleShape)
-                                    .combinedClickable(
-                                        onClick = { onSelectTab(pageIdx, key) },
-                                        onLongClick = {
-                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            onLongPressTab(key)
-                                        }
-                                    )
-                                    .testTag("nav_icon_$key"),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = icon,
-                                    contentDescription = label,
-                                    tint = contentColor,
-                                    modifier = Modifier.size(if (isSelected) 21.dp else 19.dp)
+                                .offset(y = bubbleLift)
+                                .size(if (isSelected) 46.dp else 32.dp)
+                                .then(
+                                    if (isSelected) {
+                                        Modifier
+                                            .shadow(10.dp, CircleShape)
+                                            .clip(CircleShape)
+                                            .background(activeBubbleColor)
+                                            .border(2.dp, if (isDark) Color(0xFF0A0D13) else Color.White, CircleShape)
+                                    } else {
+                                        Modifier.clip(CircleShape)
+                                    }
                                 )
-                            }
-                            Text(
-                                text = label,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontSize = if (isSelected) 11.sp else 10.5.sp,
-                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
-                                color = contentColor
+                                .combinedClickable(
+                                    onClick = { onSelectTab(pageIdx, key) },
+                                    onLongClick = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onLongPressTab(key)
+                                    }
+                                )
+                                .testTag("nav_icon_$key"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = label,
+                                tint = if (isSelected) activeBubbleContentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(if (isSelected) 23.dp else 21.dp)
                             )
                         }
+                        Text(
+                            text = label,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                            color = labelColor
+                        )
                     }
                 }
             }

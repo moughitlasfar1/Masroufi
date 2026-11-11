@@ -3,22 +3,22 @@ package com.example.ui.theme
 import androidx.compose.ui.graphics.Color
 import kotlin.math.abs
 
-// Dark Palette — Revolut Dark Slate & Deep Obsidian (Zero green tint, high contrast)
-val MasroufiSurfaceDark = Color(0xFF090D16)
-val MasroufiSurfaceContainerDark = Color(0xFF121927)
-val MasroufiSurfaceContainerHighDark = Color(0xFF1B2538)
-val MasroufiSurfaceContainerHighestDark = Color(0xFF26334D)
-val MasroufiOnSurfaceDark = Color(0xFFF8FAFC)
-val MasroufiOnSurfaceVariantDark = Color(0xFFCBD5E1)
-val MasroufiOutlineVariantDark = Color(0xFF29364F)
-val MasroufiPrimaryDark = Color(0xFF60A5FA)
-val MasroufiPrimaryBrightDark = Color(0xFF93C5FD)
-val MasroufiPrimaryContainerDark = Color(0xFF1E3A8A)
-val MasroufiOnPrimaryContainerDark = Color(0xFFDBEAFE)
+// Dark Palette — Vyxel OLED Pitch-Black & Matte Charcoal + Soft Periwinkle (#B8C7FA)
+val MasroufiSurfaceDark = Color(0xFF000000)
+val MasroufiSurfaceContainerDark = Color(0xFF111317)
+val MasroufiSurfaceContainerHighDark = Color(0xFF1B1E26)
+val MasroufiSurfaceContainerHighestDark = Color(0xFF242832)
+val MasroufiOnSurfaceDark = Color(0xFFF5F7FB)
+val MasroufiOnSurfaceVariantDark = Color(0xFFA6B0C2)
+val MasroufiOutlineVariantDark = Color(0xFF232731)
+val MasroufiPrimaryDark = Color(0xFFB8C7FA)
+val MasroufiPrimaryBrightDark = Color(0xFFD4DFFF)
+val MasroufiPrimaryContainerDark = Color(0xFF23293A)
+val MasroufiOnPrimaryContainerDark = Color(0xFFE0E8FF)
 val MasroufiErrorDark = Color(0xFFFB7185)
 val MasroufiErrorContainerDark = Color(0xFF881337)
 
-// Light Palette — Crisp Alabaster & Pure White Cards (High-contrast Fintech Light Mode)
+// Light Palette — Crisp Alabaster & Pure White Cards (High-contrast Light Mode)
 val MasroufiSurfaceLight = Color(0xFFF3F6FA)
 val MasroufiSurfaceContainerLight = Color(0xFFFFFFFF)
 val MasroufiSurfaceContainerHighLight = Color(0xFFF1F5F9)
@@ -26,15 +26,22 @@ val MasroufiSurfaceContainerHighestLight = Color(0xFFE2E8F0)
 val MasroufiOnSurfaceLight = Color(0xFF0B1120)
 val MasroufiOnSurfaceVariantLight = Color(0xFF334155)
 val MasroufiOutlineVariantLight = Color(0xFFCBD5E1)
-val MasroufiPrimaryLight = Color(0xFF2563EB)
-val MasroufiPrimaryContainerLight = Color(0xFFDBEAFE)
-val MasroufiOnPrimaryContainerLight = Color(0xFF1E3A8A)
+val MasroufiPrimaryLight = Color(0xFF284299)
+val MasroufiPrimaryContainerLight = Color(0xFFDCE4FF)
+val MasroufiOnPrimaryContainerLight = Color(0xFF101B42)
 val MasroufiErrorLight = Color(0xFFE11D48)
 val MasroufiErrorContainerLight = Color(0xFFFFE4E6)
 
+// Vyxel Signature Pill & Surface Tokens
+val VyxelPeriwinkle = Color(0xFFB8C7FA)
+val VyxelOnPeriwinkle = Color(0xFF10182E)
+val VyxelCardDark = Color(0xFF111317)
+val VyxelPillDark = Color(0xFF232731)
+val VyxelPillBorderDark = Color(0xFF2C313E)
+
 // Vibrant Semantic Accents (Income, Expense, Transfer, Categories)
-val AccentIndigo = Color(0xFF2563EB)
-val AccentSkyBlue = Color(0xFF0EA5E9)
+val AccentIndigo = Color(0xFFB8C7FA)
+val AccentSkyBlue = Color(0xFF38BDF8)
 val AccentAmber = Color(0xFFF59E0B)
 val AccentEmerald = Color(0xFF10B981)
 val AccentCoral = Color(0xFFF43F5E)
@@ -49,16 +56,16 @@ fun semanticExpenseColor(isDark: Boolean): Color =
     if (isDark) Color(0xFFFB7185) else Color(0xFFE11D48)
 
 fun semanticTransferColor(isDark: Boolean): Color =
-    if (isDark) Color(0xFF38BDF8) else Color(0xFF0284C7)
+    if (isDark) Color(0xFFB8C7FA) else Color(0xFF284299)
 
 fun semanticWarningColor(isDark: Boolean): Color =
     if (isDark) Color(0xFFFBBF24) else Color(0xFFD97706)
 
 private val DistinctEnvelopeColorsLight = listOf(
-    Color(0xFF2563EB), // Royal Indigo
+    Color(0xFF284299), // Vyxel Deep Periwinkle
     Color(0xFFE11D48), // Crimson Rose
     Color(0xFFD97706), // Warm Amber
-    Color(0xFF7C3AED), // Vivid Violet
+    Color(0xFF6D28D9), // Vivid Violet
     Color(0xFF0284C7), // Ocean Cyan
     Color(0xFF059669), // Crisp Emerald
     Color(0xFFDB2777), // Fuchsia Berry
@@ -66,7 +73,7 @@ private val DistinctEnvelopeColorsLight = listOf(
 )
 
 private val DistinctEnvelopeColorsDark = listOf(
-    Color(0xFF60A5FA), // Electric Blue
+    Color(0xFFB8C7FA), // Vyxel Periwinkle Blue
     Color(0xFFFB7185), // Bright Coral Rose
     Color(0xFFFBBF24), // Bright Gold
     Color(0xFFA78BFA), // Bright Violet
@@ -78,7 +85,7 @@ private val DistinctEnvelopeColorsDark = listOf(
 
 /**
  * Returns a distinct, high-contrast semantic color for each budget envelope or category
- * so envelopes are visually differentiated at a glance instead of sharing a single green color.
+ * so envelopes are visually differentiated at a glance.
  */
 fun distinctEnvelopeColor(keyOrName: String, isDark: Boolean = false): Color {
     val clean = keyOrName.trim().lowercase()
@@ -98,8 +105,8 @@ fun distinctEnvelopeColor(keyOrName: String, isDark: Boolean = false): Color {
 
 fun distinctAccountColor(kind: String, isDark: Boolean = false): Color {
     return when (kind.lowercase()) {
-        "bank" -> if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
-        "wallet" -> if (isDark) Color(0xFFA78BFA) else Color(0xFF7C3AED)
+        "bank" -> if (isDark) Color(0xFFB8C7FA) else Color(0xFF284299)
+        "wallet" -> if (isDark) Color(0xFFA78BFA) else Color(0xFF6D28D9)
         else -> if (isDark) Color(0xFF34D399) else Color(0xFF059669)
     }
 }

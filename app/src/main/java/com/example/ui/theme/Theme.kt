@@ -33,9 +33,9 @@ data class AccentPaletteSpec(
             else -> labelFr
         }
         "majorelle" -> when (lang) {
-            "ar" -> "أزرق ماجوريل (ريفولوت)"
-            "darija" -> "زرق ماجوريل (Revolut)"
-            "en" -> "Revolut Indigo Blue"
+            "ar" -> "أزرق فيكسيل الليلي (Vyxel)"
+            "darija" -> "زرق فيكسيل (Vyxel Dark)"
+            "en" -> "Vyxel Periwinkle Dark"
             else -> labelFr
         }
         "amber" -> when (lang) {
@@ -77,25 +77,25 @@ val MasroufiPalettes = listOf(
         primaryLight = Color(0xFF047857),
         primaryContainerLight = Color(0xFFD1FAE5),
         onPrimaryContainerLight = Color(0xFF064E3B),
-        heroStart = Color(0xFF059669),
-        heroMid = Color(0xFF0D9488),
-        heroEnd = Color(0xFF064E3B),
+        heroStart = Color(0xFF10241E),
+        heroMid = Color(0xFF132E26),
+        heroEnd = Color(0xFF0B1613),
         swatchColor = Color(0xFF10B981)
     ),
     AccentPaletteSpec(
         key = "majorelle",
-        labelFr = "Bleu Indigo Revolut",
-        primaryDark = Color(0xFF60A5FA),
-        onPrimaryDark = Color(0xFF082F49),
-        primaryContainerDark = Color(0xFF1E3A8A),
-        onPrimaryContainerDark = Color(0xFFDBEAFE),
-        primaryLight = Color(0xFF1D4ED8),
-        primaryContainerLight = Color(0xFFDBEAFE),
-        onPrimaryContainerLight = Color(0xFF1E3A8A),
-        heroStart = Color(0xFF2563EB),
-        heroMid = Color(0xFF4F46E5),
-        heroEnd = Color(0xFF1E1B4B),
-        swatchColor = Color(0xFF2563EB)
+        labelFr = "Vyxel Periwinkle & Onyx",
+        primaryDark = Color(0xFFB8C7FA),
+        onPrimaryDark = Color(0xFF10182E),
+        primaryContainerDark = Color(0xFF23293A),
+        onPrimaryContainerDark = Color(0xFFE0E8FF),
+        primaryLight = Color(0xFF284299),
+        primaryContainerLight = Color(0xFFDCE4FF),
+        onPrimaryContainerLight = Color(0xFF101B42),
+        heroStart = Color(0xFF141822),
+        heroMid = Color(0xFF1C2333),
+        heroEnd = Color(0xFF0F1219),
+        swatchColor = Color(0xFFB8C7FA)
     ),
     AccentPaletteSpec(
         key = "amber",
@@ -107,9 +107,9 @@ val MasroufiPalettes = listOf(
         primaryLight = Color(0xFF92400E),
         primaryContainerLight = Color(0xFFFEF3C7),
         onPrimaryContainerLight = Color(0xFF451A03),
-        heroStart = Color(0xFFD97706),
-        heroMid = Color(0xFFB45309),
-        heroEnd = Color(0xFF451A03),
+        heroStart = Color(0xFF241B10),
+        heroMid = Color(0xFF302212),
+        heroEnd = Color(0xFF14100B),
         swatchColor = Color(0xFFF59E0B)
     ),
     AccentPaletteSpec(
@@ -122,9 +122,9 @@ val MasroufiPalettes = listOf(
         primaryLight = Color(0xFF6D28D9),
         primaryContainerLight = Color(0xFFEDE9FE),
         onPrimaryContainerLight = Color(0xFF2E1065),
-        heroStart = Color(0xFF7C3AED),
-        heroMid = Color(0xFF6366F1),
-        heroEnd = Color(0xFF2E1065),
+        heroStart = Color(0xFF1B1528),
+        heroMid = Color(0xFF261C38),
+        heroEnd = Color(0xFF110D1A),
         swatchColor = Color(0xFF8B5CF6)
     ),
     AccentPaletteSpec(
@@ -137,9 +137,9 @@ val MasroufiPalettes = listOf(
         primaryLight = Color(0xFFBE123C),
         primaryContainerLight = Color(0xFFFFE4E6),
         onPrimaryContainerLight = Color(0xFF4C0519),
-        heroStart = Color(0xFFE11D48),
-        heroMid = Color(0xFFBE123C),
-        heroEnd = Color(0xFF4C0519),
+        heroStart = Color(0xFF261219),
+        heroMid = Color(0xFF361822),
+        heroEnd = Color(0xFF160B0F),
         swatchColor = Color(0xFFF43F5E)
     ),
     AccentPaletteSpec(
@@ -152,9 +152,9 @@ val MasroufiPalettes = listOf(
         primaryLight = Color(0xFF0369A1),
         primaryContainerLight = Color(0xFFE0F2FE),
         onPrimaryContainerLight = Color(0xFF0C4A6E),
-        heroStart = Color(0xFF0284C7),
-        heroMid = Color(0xFF0D9488),
-        heroEnd = Color(0xFF082F49),
+        heroStart = Color(0xFF101E28),
+        heroMid = Color(0xFF152936),
+        heroEnd = Color(0xFF0B131A),
         swatchColor = Color(0xFF0EA5E9)
     )
 )
@@ -165,7 +165,7 @@ fun paletteForKey(key: String): AccentPaletteSpec {
 
 fun heroGradientColors(accentPalette: String, isOverBudget: Boolean): List<Color> {
     if (isOverBudget) {
-        return listOf(Color(0xFFE11D48), Color(0xFF9F1239), Color(0xFF4C0519))
+        return listOf(Color(0xFF2B1219), Color(0xFF3B1520), Color(0xFF170B0E))
     }
     val spec = paletteForKey(accentPalette)
     return listOf(spec.heroStart, spec.heroMid, spec.heroEnd)
@@ -196,7 +196,7 @@ val ExpressiveShapes = androidx.compose.material3.Shapes(
 
 @Composable
 fun MasroufiTheme(
-    darkTheme: Boolean = false,
+    darkTheme: Boolean = true,
     accentPalette: String = "majorelle",
     content: @Composable () -> Unit
 ) {
@@ -207,10 +207,10 @@ fun MasroufiTheme(
             onPrimary = spec.onPrimaryDark,
             primaryContainer = spec.primaryContainerDark,
             onPrimaryContainer = spec.onPrimaryContainerDark,
-            secondary = AccentSkyBlue,
-            onSecondary = Color(0xFF00263B),
-            secondaryContainer = Color(0xFF1E293B),
-            onSecondaryContainer = Color(0xFFE2E8F0),
+            secondary = VyxelPeriwinkle,
+            onSecondary = VyxelOnPeriwinkle,
+            secondaryContainer = MasroufiSurfaceContainerHighDark,
+            onSecondaryContainer = MasroufiOnSurfaceDark,
             tertiary = AccentAmber,
             onTertiary = Color(0xFF451A03),
             background = MasroufiSurfaceDark,
@@ -219,8 +219,8 @@ fun MasroufiTheme(
             onSurface = MasroufiOnSurfaceDark,
             surfaceVariant = MasroufiSurfaceContainerHighDark,
             onSurfaceVariant = MasroufiOnSurfaceVariantDark,
-            surfaceContainerLowest = Color(0xFF060911),
-            surfaceContainerLow = Color(0xFF0E1420),
+            surfaceContainerLowest = Color(0xFF000000),
+            surfaceContainerLow = Color(0xFF0B0D11),
             surfaceContainer = MasroufiSurfaceContainerDark,
             surfaceContainerHigh = MasroufiSurfaceContainerHighDark,
             surfaceContainerHighest = MasroufiSurfaceContainerHighestDark,
@@ -237,10 +237,10 @@ fun MasroufiTheme(
             onPrimary = Color.White,
             primaryContainer = spec.primaryContainerLight,
             onPrimaryContainer = spec.onPrimaryContainerLight,
-            secondary = Color(0xFF0369A1),
+            secondary = Color(0xFF284299),
             onSecondary = Color.White,
-            secondaryContainer = Color(0xFFE0F2FE),
-            onSecondaryContainer = Color(0xFF0C4A6E),
+            secondaryContainer = Color(0xFFDCE4FF),
+            onSecondaryContainer = Color(0xFF101B42),
             tertiary = Color(0xFFB45309),
             onTertiary = Color.White,
             background = MasroufiSurfaceLight,

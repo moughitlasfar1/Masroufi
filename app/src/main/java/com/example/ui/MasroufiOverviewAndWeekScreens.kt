@@ -97,6 +97,9 @@ import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.ExpressiveSectionHeader
+import com.example.ui.theme.VyxelOnPeriwinkle
+import com.example.ui.theme.VyxelPeriwinkle
+import com.example.ui.theme.VyxelPillDark
 import com.example.ui.theme.distinctAccountColor
 import com.example.ui.theme.glass3d
 import com.example.ui.theme.heroGradientColors
@@ -298,15 +301,15 @@ fun OverviewScreen(
             }
         }
 
-        // 1. Hero Expressive Glass Card (Cycle Spend + Safe to Spend Today + No-Spend Streak + Month-End Forecast + Privacy Eye Button)
+        // 1. Hero Vyxel Dark Card (Cycle Spend + Safe to Spend Today + No-Spend Streak + Month-End Forecast + Privacy Eye Button)
         item(key = "hero_card") {
             val heroColors = heroGradientColors(state.customPrefs.accentPalette, isOverBudget)
-            val heroShape = RoundedCornerShape(topStart = 38.dp, topEnd = 38.dp, bottomEnd = 38.dp, bottomStart = 16.dp)
+            val heroShape = RoundedCornerShape(28.dp)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .glass3d(
-                        cornerRadius = 36.dp,
+                        cornerRadius = 28.dp,
                         isDark = true,
                         drawOuterShadows = true
                     )
@@ -314,15 +317,10 @@ fun OverviewScreen(
                     .background(Brush.linearGradient(colors = heroColors))
                     .border(
                         width = 1.dp,
-                        brush = Brush.linearGradient(
-                            listOf(
-                                Color.White.copy(alpha = 0.28f),
-                                Color.White.copy(alpha = 0.06f)
-                            )
-                        ),
+                        color = Color(0xFF262B37),
                         shape = heroShape
                     )
-                    .padding(22.dp)
+                    .padding(20.dp)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -497,9 +495,9 @@ fun OverviewScreen(
 
                     ExpressiveAnimatedProgressBar(
                         progress = (pct / 100f).safeFraction(),
-                        color = if (isOverBudget) AccentCoral else Color.White,
-                        trackColor = Color.Black.copy(alpha = 0.35f),
-                        height = 11.dp
+                        color = if (isOverBudget) AccentCoral else VyxelPeriwinkle,
+                        trackColor = Color(0xFF232732),
+                        height = 10.dp
                     )
 
                     if (state.spendProjection.showEstimateAlert && state.monthEndForecastMessage.isNotBlank()) {
@@ -559,17 +557,16 @@ fun OverviewScreen(
                                 }
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Surface(
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = Color.White.copy(alpha = 0.22f),
-                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.30f)),
+                                    shape = CircleShape,
+                                    color = VyxelPeriwinkle,
                                     modifier = Modifier.testTag("hero_safe_to_spend_today_badge")
                                 ) {
                                     Text(
                                         text = "${fmt(state.safeToSpendToday)} ${strings.dhPerDay.replace("DH", cur)}",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color.White,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                        color = VyxelOnPeriwinkle,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                                     )
                                 }
                             }
@@ -857,7 +854,7 @@ fun OverviewScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     state.accounts.forEach { accWithBal ->
                                         val icon = when (accWithBal.account.kind) {
@@ -869,53 +866,77 @@ fun OverviewScreen(
                                             accWithBal.account.kind,
                                             state.profile.isDarkTheme
                                         )
-                                        ExpressiveGlassSurface(
-                                            shape = RoundedCornerShape(20.dp),
-                                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                            accentBorderColor = accent,
-                                            onClick = { onOpenAccountModal(accWithBal.account) },
+                                        // Vyxel "Stride / Auralis / Relay" Vertical Squircle Card with centered emblem + bottom pill button
+                                        Surface(
+                                            shape = RoundedCornerShape(26.dp),
+                                            color = if (state.profile.isDarkTheme) Color(0xFF14171E) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (state.profile.isDarkTheme) Color(0xFF232834) else MaterialTheme.colorScheme.outlineVariant
+                                            ),
                                             modifier = Modifier
-                                                .width(172.dp)
+                                                .width(142.dp)
+                                                .clip(RoundedCornerShape(26.dp))
+                                                .clickable { onOpenAccountModal(accWithBal.account) }
                                                 .testTag("account_card_${accWithBal.account.id}")
                                         ) {
-                                            Column(modifier = Modifier.padding(14.dp)) {
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.SpaceBetween
-                                                ) {
-                                                    Row(
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                                        modifier = Modifier.weight(1f)
-                                                    ) {
-                                                        Icon(
-                                                            imageVector = icon,
-                                                            contentDescription = null,
-                                                            tint = accent,
-                                                            modifier = Modifier.size(18.dp)
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 16.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                            ) {
+                                                // Centered Stride-style glowing squircle emblem
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(54.dp)
+                                                        .clip(RoundedCornerShape(16.dp))
+                                                        .background(
+                                                            if (state.profile.isDarkTheme) Color(0xFF0A0D12) else accent.copy(alpha = 0.12f)
                                                         )
+                                                        .border(
+                                                            width = 1.5.dp,
+                                                            color = accent.copy(alpha = 0.65f),
+                                                            shape = RoundedCornerShape(16.dp)
+                                                        ),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        imageVector = icon,
+                                                        contentDescription = null,
+                                                        tint = accent,
+                                                        modifier = Modifier.size(26.dp)
+                                                    )
+                                                }
+                                                Text(
+                                                    text = accWithBal.account.name,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                // Bottom full-width Vyxel pill button inside card ("Download / Google Play" style)
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = if (state.profile.isDarkTheme) VyxelPillDark else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
                                                         Text(
-                                                            text = accWithBal.account.name,
+                                                            text = "${fmt(accWithBal.currentBalance)} $cur",
                                                             style = MaterialTheme.typography.labelLarge,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onSurface,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
                                                     }
-                                                    Icon(
-                                                        imageVector = Icons.Default.Edit,
-                                                        contentDescription = "Edit Account",
-                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                                        modifier = Modifier.size(13.dp)
-                                                    )
                                                 }
-                                                Spacer(modifier = Modifier.height(8.dp))
-                                                Text(
-                                                    text = "${fmt(accWithBal.currentBalance)} $cur",
-                                                    style = MaterialTheme.typography.titleLarge,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = MaterialTheme.colorScheme.onSurface
-                                                )
                                             }
                                         }
                                     }
@@ -1624,22 +1645,34 @@ private fun ModernBankingQuickActionsCard(
         else -> "1-Tap"
     }
 
-    ExpressiveGlassCard(
-        cornerRadius = 28.dp,
-        contentPadding = PaddingValues(12.dp),
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("home_quick_actions_card")
+            .testTag("home_quick_actions_card"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        Text(
+            text = when (lang) {
+                "ar" -> "إجراءات سريعة لـ Masroufi"
+                "darija" -> "عمليات دغيا ديال Masroufi"
+                "en" -> "By Masroufi Quick Actions"
+                else -> "Actions rapides Masroufi"
+            },
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.ExtraBold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 2.dp)
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             BankingQuickActionTile(
                 title = expenseTitle,
                 icon = Icons.Default.ArrowUpward,
                 accentColor = semanticExpenseColor(isDarkTheme),
+                isDarkTheme = isDarkTheme,
                 onClick = onAddExpense,
                 testTag = "quick_action_expense",
                 modifier = Modifier.weight(1f)
@@ -1648,6 +1681,7 @@ private fun ModernBankingQuickActionsCard(
                 title = incomeTitle,
                 icon = Icons.Default.ArrowDownward,
                 accentColor = semanticIncomeColor(isDarkTheme),
+                isDarkTheme = isDarkTheme,
                 onClick = onAddIncome,
                 testTag = "quick_action_income",
                 modifier = Modifier.weight(1f)
@@ -1656,6 +1690,7 @@ private fun ModernBankingQuickActionsCard(
                 title = transferTitle,
                 icon = Icons.Default.SwapHoriz,
                 accentColor = semanticTransferColor(isDarkTheme),
+                isDarkTheme = isDarkTheme,
                 onClick = onTransfer,
                 testTag = "quick_action_transfer",
                 modifier = Modifier.weight(1f)
@@ -1664,6 +1699,7 @@ private fun ModernBankingQuickActionsCard(
                 title = presetTitle,
                 icon = Icons.Default.Bolt,
                 accentColor = AccentAmber,
+                isDarkTheme = isDarkTheme,
                 onClick = onQuickPreset,
                 testTag = "quick_action_preset",
                 modifier = Modifier.weight(1f)
@@ -1677,46 +1713,64 @@ private fun BankingQuickActionTile(
     title: String,
     icon: ImageVector,
     accentColor: Color,
+    isDarkTheme: Boolean = true,
     onClick: () -> Unit,
     testTag: String,
     modifier: Modifier = Modifier
 ) {
-    ExpressiveGlassSurface(
-        shape = RoundedCornerShape(20.dp),
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        accentBorderColor = accentColor,
-        onClick = onClick,
-        modifier = modifier.testTag(testTag)
+    Surface(
+        shape = RoundedCornerShape(24.dp),
+        color = if (isDarkTheme) Color(0xFF111317) else MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(
+            1.dp,
+            if (isDarkTheme) Color(0xFF21252F) else MaterialTheme.colorScheme.outlineVariant
+        ),
+        modifier = modifier
+            .clip(RoundedCornerShape(24.dp))
+            .clickable(onClick = onClick)
+            .testTag(testTag)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 10.dp),
+                .padding(horizontal = 8.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(13.dp))
-                    .background(accentColor.copy(alpha = 0.18f)),
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(if (isDarkTheme) Color(0xFF0A0C10) else accentColor.copy(alpha = 0.14f))
+                    .border(1.5.dp, accentColor.copy(alpha = 0.65f), RoundedCornerShape(15.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = title,
                     tint = accentColor,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(22.dp)
                 )
             }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Surface(
+                shape = CircleShape,
+                color = if (isDarkTheme) VyxelPillDark else MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
         }
     }
 }

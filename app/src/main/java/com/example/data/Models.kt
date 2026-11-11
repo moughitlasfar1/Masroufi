@@ -196,7 +196,7 @@ data class UserProfile(
     val rolloverEnabled: Boolean = true,
     val language: String = "fr",
     @get:PropertyName("isDarkTheme")
-    val isDarkTheme: Boolean = false,
+    val isDarkTheme: Boolean = true,
     val seeded: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null

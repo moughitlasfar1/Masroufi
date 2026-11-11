@@ -1024,10 +1024,10 @@ class MasroufiViewModel(
 
     fun applyDefaultLightRevolutThemeMigration() {
         val curProfile = uiState.value.profile
-        if (curProfile.isDarkTheme) {
-            val updatedProfile = curProfile.copy(isDarkTheme = false)
+        if (!curProfile.isDarkTheme) {
+            val updatedProfile = curProfile.copy(isDarkTheme = true)
             _optimisticProfile.value = updatedProfile
-            safeLaunch("migrateLightMode") {
+            safeLaunch("migrateVyxelDarkMode") {
                 repository.saveProfile(updatedProfile)
             }
         }
