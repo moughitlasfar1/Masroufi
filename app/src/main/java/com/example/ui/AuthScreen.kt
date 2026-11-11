@@ -29,6 +29,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -69,6 +70,40 @@ import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+
+const val LOCAL_DEVICE_USER_ID = "local_device_user"
+private const val UI_PREFS_NAME = "masroufi_ui_prefs"
+private const val KEY_LOCAL_MODE_ENABLED = "local_mode_enabled"
+private const val KEY_MORE_FEATURES_ENABLED = "more_features_enabled"
+
+fun isLocalModeEnabled(context: Context): Boolean =
+    context.applicationContext
+        .getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+        .getBoolean(KEY_LOCAL_MODE_ENABLED, false)
+
+fun setLocalModeEnabled(context: Context, enabled: Boolean) {
+    context.applicationContext
+        .getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(KEY_LOCAL_MODE_ENABLED, enabled)
+        .apply()
+}
+
+fun isMoreFeaturesEnabled(context: Context, hasExistingData: Boolean = false): Boolean {
+    val prefs = context.applicationContext.getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+    if (prefs.contains(KEY_MORE_FEATURES_ENABLED)) {
+        return prefs.getBoolean(KEY_MORE_FEATURES_ENABLED, false)
+    }
+    return hasExistingData
+}
+
+fun setMoreFeaturesEnabled(context: Context, enabled: Boolean) {
+    context.applicationContext
+        .getSharedPreferences(UI_PREFS_NAME, Context.MODE_PRIVATE)
+        .edit()
+        .putBoolean(KEY_MORE_FEATURES_ENABLED, enabled)
+        .apply()
+}
 
 fun attemptAutoSignIn(
     context: Context,
@@ -120,8 +155,17 @@ fun attemptAutoSignIn(
     }
 }
 
-private fun fallbackWebClientId(): String =
-    listOf("1046667497606-", "bvh8lkngc0r4s789thbj9g0i1s9l19jj", ".apps.googleusercontent.com").joinToString("")
+private fun fallbackWebClientId(context: Context): String {
+    val prefix = runCatching { context.getString(R.string.oauth_web_client_prefix).trim() }
+        .getOrNull()
+        .orEmpty()
+        .ifBlank { "1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj" }
+    val domain = runCatching { context.getString(R.string.oauth_web_client_domain).trim() }
+        .getOrNull()
+        .orEmpty()
+        .ifBlank { "googleusercontent.com" }
+    return "$prefix.apps.$domain"
+}
 
 internal fun resolveDefaultWebClientId(context: Context): String {
     val fromRes = runCatching {
@@ -135,7 +179,7 @@ internal fun resolveDefaultWebClientId(context: Context): String {
         }
         null
     }.getOrNull()
-    return if (!fromRes.isNullOrBlank()) fromRes else fallbackWebClientId()
+    return if (!fromRes.isNullOrBlank()) fromRes else fallbackWebClientId(context)
 }
 
 fun onGoogleSignInClicked(
@@ -166,6 +210,7 @@ fun onGoogleSignInClicked(
                 Firebase.auth.signInWithCredential(authCredential).await()
                 // SEC-02: Complete PIN recovery only after interactive Google re-authentication succeeds
                 AppSecurityManager.completePinRecoveryAfterInteractiveSignIn(context)
+                setLocalModeEnabled(context, false)
                 onAuthSuccess()
             } else {
                 onAuthError("Unexpected credential type")
@@ -189,6 +234,7 @@ fun signOutUser(
 ) {
     val credentialManager = CredentialManager.create(context)
     AppSecurityManager.clearSensitiveClipboard(context)
+    setLocalModeEnabled(context, false)
     if (isPinRecovery) {
         AppSecurityManager.beginPinRecoverySignOut(context)
     }
@@ -216,7 +262,8 @@ fun signOutUser(
 
 @Composable
 fun AuthScreen(
-    onAuthSuccess: () -> Unit
+    onAuthSuccess: () -> Unit,
+    onContinueLocal: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -287,7 +334,7 @@ fun AuthScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "Masroufi 2.0",
+                            text = "Masroufi",
                             style = MaterialTheme.typography.headlineMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -307,7 +354,7 @@ fun AuthScreen(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Suivi intelligent de vos dépenses, enveloppes budgétaires, comptes & Daret en Dirhams",
+                        text = "Suivi simple de vos dépenses, budget & comptes en Dirhams",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -316,10 +363,10 @@ fun AuthScreen(
                     Spacer(modifier = Modifier.height(22.dp))
 
                     val highlights = listOf(
-                        "Multi-comptes (Cash, Banque, Wallet) & transferts",
+                        "Disponible aujourd'hui (Safe to spend) en un coup d'œil",
+                        "Ajout rapide d'une dépense en 3 gestes",
                         "Mois calés sur votre jour de salaire (ex: le 25)",
-                        "Enveloppes personnalisables, report & Daret marocaine",
-                        "Synchronisation Cloud sécurisée + Export JSON / CSV"
+                        "Mode local immédiat ou synchronisation Google Cloud"
                     )
                     Column(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -392,7 +439,7 @@ fun AuthScreen(
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(56.dp)
+                            .height(54.dp)
                             .testTag("google_sign_in_button")
                     ) {
                         if (isLoading) {
@@ -407,6 +454,26 @@ fun AuthScreen(
                             text = "Sign in with Google",
                             fontSize = 15.sp,
                             fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    FilledTonalButton(
+                        onClick = {
+                            setLocalModeEnabled(context, true)
+                            onContinueLocal()
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("continue_without_account_button")
+                    ) {
+                        Text(
+                            text = "Continuer sans compte (lier Google plus tard)",
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }

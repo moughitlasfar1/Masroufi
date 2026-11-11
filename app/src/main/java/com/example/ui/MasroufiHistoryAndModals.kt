@@ -1037,12 +1037,7 @@ fun TransactionEditorSheet(
                     fontWeight = FontWeight.ExtraBold
                 )
                 ExpressivePillChip(
-                    label = when (lang) {
-                        "ar" -> if (showAdvancedFields) "إخفاء الخيارات" else "خيارات متقدمة"
-                        "darija" -> if (showAdvancedFields) "خبي التفاصيل" else "خيارات متقدمة"
-                        "en" -> if (showAdvancedFields) "Less Options" else "Advanced Options"
-                        else -> if (showAdvancedFields) "Moins d'options" else "Options avancées"
-                    },
+                    label = strings.moreOptionsLabel,
                     selected = showAdvancedFields,
                     onClick = { showAdvancedFields = !showAdvancedFields },
                     icon = Icons.Default.Tune,
@@ -1051,6 +1046,9 @@ fun TransactionEditorSheet(
             }
 
             // Expressive Glass Type Switcher (Expense, Income, Transfer)
+            val isDark = state.profile.isDarkTheme
+            val expColor = semanticExpenseColor(isDark)
+            val incColor = semanticIncomeColor(isDark)
             ExpressiveGlassSurface(
                 shape = CircleShape,
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1063,9 +1061,9 @@ fun TransactionEditorSheet(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(
-                        Triple("expense", strings.expenseTab, AccentCoral),
-                        Triple("income", strings.incomeTab, AccentEmerald),
-                        Triple("transfer", strings.transferTab, AccentSkyBlue)
+                        Triple("expense", strings.expenseTab, expColor),
+                        Triple("income", strings.incomeTab, incColor),
+                        Triple("transfer", strings.transferTab, MaterialTheme.colorScheme.primary)
                     ).forEach { (typeKey, label, accent) ->
                         val isSelected = txType == typeKey
                         Surface(
@@ -1093,24 +1091,7 @@ fun TransactionEditorSheet(
                 }
             }
 
-            // 1. Voice Entry in Darija / AR / FR / EN ("9ahwa 15" / "coffee 15" / "قهوة 15")
-            VoiceDarijaEntrySection(
-                state = state,
-                autoLaunchVoice = autoLaunchVoice,
-                onVoiceParsed = { parsed ->
-                    txType = parsed.txType
-                    amountText = if (parsed.amount % 1.0 == 0.0) {
-                        parsed.amount.toInt().toString()
-                    } else {
-                        parsed.amount.toString()
-                    }
-                    desc = parsed.description
-                    selectedEnvelopeKey = parsed.envelopeKey
-                    customCategory = parsed.categoryName
-                }
-            )
-
-            // 2. Large Numeric Keypad + 3 Most Recent Categories (2-Tap Entry)
+            // Phase 3 Step 1: Amount First (Large Numeric Keypad + recent category shortcuts)
             LargeNumericKeypadSection(
                 amountText = amountText,
                 currencySymbol = if (entryCurrency == baseCurrencyCode) cur else entryCurrency,
@@ -1135,6 +1116,69 @@ fun TransactionEditorSheet(
                 }
             )
 
+            // Phase 3 Step 2: Category Chips (or Transfer target account chips)
+            if (txType == "transfer") {
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "${strings.sourceAccountFieldLabel} → ${strings.accountFieldLabel}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            state.accounts.forEach { acc ->
+                                FilterChip(
+                                    selected = toAccountId == acc.account.id,
+                                    onClick = { toAccountId = acc.account.id },
+                                    label = { Text(acc.account.name) }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .testTag("tx_category_chips_row"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.envelopes.forEach { env ->
+                        val catLabel = env.config.localizedName(state.profile.language)
+                        FilterChip(
+                            selected = selectedEnvelopeKey == env.config.key,
+                            onClick = {
+                                selectedEnvelopeKey = env.config.key
+                                customCategory = catLabel
+                                duplicateWarningTx = null
+                                if (twoTapInstantSave && (amountText.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0.0) {
+                                    tryCommitTransaction(
+                                        overrideCategory = catLabel,
+                                        overrideEnvKey = env.config.key
+                                    )
+                                }
+                            },
+                            label = { Text(catLabel.take(22)) },
+                            modifier = Modifier.testTag("tx_cat_chip_${env.config.key}")
+                        )
+                    }
+                }
+            }
+
             // Duplicate Warning Banner
             if (duplicateWarningTx != null) {
                 Surface(
@@ -1150,7 +1194,7 @@ fun TransactionEditorSheet(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "⚠️ Doublon détecté : ${PayCycleEngine.formatDh(duplicateWarningTx!!.amount)} $cur dans '${duplicateWarningTx!!.category}' a déjà été ajouté il y a quelques instants.",
+                            text = "⚠️ Doublon détecté : ${PayCycleEngine.formatDh(duplicateWarningTx!!.amount)} $cur dans '${duplicateWarningTx!!.category}'",
                             style = MaterialTheme.typography.bodySmall,
                             color = AccentAmber,
                             fontWeight = FontWeight.Bold
@@ -1169,248 +1213,6 @@ fun TransactionEditorSheet(
                 }
             }
 
-            // Source Account & Envelope Quick Pills
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(22.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = if (txType == "transfer") strings.sourceAccountFieldLabel else strings.accountFieldLabel,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        state.accounts.forEach { acc ->
-                            FilterChip(
-                                selected = selectedAccountId == acc.account.id,
-                                onClick = { selectedAccountId = acc.account.id },
-                                label = { Text(acc.account.name) }
-                            )
-                        }
-                    }
-
-                    if (txType == "transfer") {
-                        Text(
-                            text = "Vers le compte :",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            state.accounts.forEach { acc ->
-                                FilterChip(
-                                    selected = toAccountId == acc.account.id,
-                                    onClick = { toAccountId = acc.account.id },
-                                    label = { Text(acc.account.name) }
-                                )
-                            }
-                        }
-                    } else if (txType == "expense") {
-                        Text(
-                            text = "Toutes les Enveloppes / Catégories :",
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            state.envelopes.forEach { env ->
-                                val catLabel = env.config.localizedName(state.profile.language)
-                                FilterChip(
-                                    selected = selectedEnvelopeKey == env.config.key,
-                                    onClick = {
-                                        selectedEnvelopeKey = env.config.key
-                                        customCategory = catLabel
-                                        duplicateWarningTx = null
-                                        if (twoTapInstantSave) {
-                                            tryCommitTransaction(
-                                                overrideCategory = catLabel,
-                                                overrideEnvKey = env.config.key
-                                            )
-                                        }
-                                    },
-                                    label = { Text(catLabel.take(22)) }
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = desc,
-                        onValueChange = { newDesc ->
-                            desc = newDesc
-                            if (existingTx == null && newDesc.trim().length >= 2) {
-                                val guessed = PayCycleEngine.inferSmartDefaults(
-                                    description = newDesc,
-                                    allTransactions = state.allTransactions,
-                                    envelopes = state.envelopes.map { it.config },
-                                    accounts = state.accounts.map { it.account },
-                                    lang = lang
-                                )
-                                selectedEnvelopeKey = guessed.envelopeKey
-                                customCategory = guessed.categoryName
-                                selectedAccountId = guessed.accountId
-                                smartDefaultHint = "✨ Catégorie & compte suggérés : ${guessed.categoryName}"
-                            } else {
-                                smartDefaultHint = null
-                            }
-                        },
-                        label = { Text("Description / Note (Smart Default auto)") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("tx_desc_input")
-                    )
-
-                    if (!smartDefaultHint.isNullOrBlank()) {
-                        Text(
-                            text = smartDefaultHint!!,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = AccentEmerald,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.testTag("smart_default_hint_text")
-                        )
-                    }
-                }
-            }
-
-            // 2B. Multi-Currency Selector (MAD / EUR / USD for MRE users & trips)
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(18.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                accentBorderColor = AccentSkyBlue,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("multi_currency_bar")
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "🌍 Multi-devises (MAD / EUR / USD) :",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf("MAD", "EUR", "USD").forEach { code ->
-                                FilterChip(
-                                    selected = entryCurrency == code,
-                                    onClick = { entryCurrency = code },
-                                    label = { Text(code, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                                    modifier = Modifier.testTag("currency_chip_$code")
-                                )
-                            }
-                        }
-                    }
-                    if (entryCurrency != baseCurrencyCode) {
-                        val isEur = entryCurrency == "EUR"
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = if (isEur) eurRateText else usdRateText,
-                                onValueChange = { if (isEur) eurRateText = it else usdRateText = it },
-                                label = { Text("Taux 1 $entryCurrency → MAD") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("fx_rate_input")
-                            )
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer
-                            ) {
-                                Text(
-                                    text = "= ${PayCycleEngine.formatDh(computeConvertedAmount())} $cur",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    modifier = Modifier
-                                        .padding(horizontal = 12.dp, vertical = 10.dp)
-                                        .testTag("fx_converted_preview_text")
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Collapsible Advanced Details (Manual Amount Field, Custom Category Name & Date)
-            AnimatedVisibility(visible = showAdvancedFields || !dateError.isNullOrBlank()) {
-                ExpressiveGlassSurface(
-                    shape = RoundedCornerShape(20.dp),
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = amountText,
-                            onValueChange = {
-                                amountText = it
-                                duplicateWarningTx = null
-                            },
-                            label = { Text("${strings.amountLabel} (${if (entryCurrency == baseCurrencyCode) cur else entryCurrency})") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("tx_amount_input")
-                        )
-
-                        OutlinedTextField(
-                            value = customCategory,
-                            onValueChange = { customCategory = it },
-                            label = { Text(strings.categoryNameLabel) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        OutlinedTextField(
-                            value = isoDate,
-                            onValueChange = { isoDate = it },
-                            label = { Text("Date (YYYY-MM-DD)") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-            }
-
             if (!dateError.isNullOrBlank()) {
                 Text(
                     text = dateError!!,
@@ -1420,6 +1222,7 @@ fun TransactionEditorSheet(
                 )
             }
 
+            // Phase 3 Step 3: Primary Save Button (3 taps or fewer: FAB -> amount -> category/Save)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1453,6 +1256,195 @@ fun TransactionEditorSheet(
                     Text(strings.saveBtn, fontWeight = FontWeight.ExtraBold)
                 }
             }
+
+            // Phase 3 Step 4: Notes, Account, Date, Voice & Multi-Currency under "More options"
+            AnimatedVisibility(visible = showAdvancedFields || autoLaunchVoice || !dateError.isNullOrBlank()) {
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("tx_more_options_panel")
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = desc,
+                            onValueChange = { newDesc ->
+                                desc = newDesc
+                                if (existingTx == null && newDesc.trim().length >= 2) {
+                                    val guessed = PayCycleEngine.inferSmartDefaults(
+                                        description = newDesc,
+                                        allTransactions = state.allTransactions,
+                                        envelopes = state.envelopes.map { it.config },
+                                        accounts = state.accounts.map { it.account },
+                                        lang = lang
+                                    )
+                                    selectedEnvelopeKey = guessed.envelopeKey
+                                    customCategory = guessed.categoryName
+                                    selectedAccountId = guessed.accountId
+                                    smartDefaultHint = "✨ ${guessed.categoryName}"
+                                } else {
+                                    smartDefaultHint = null
+                                }
+                            },
+                            label = { Text("Note / Description") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("tx_desc_input")
+                        )
+
+                        if (!smartDefaultHint.isNullOrBlank()) {
+                            Text(
+                                text = smartDefaultHint!!,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = incColor,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.testTag("smart_default_hint_text")
+                            )
+                        }
+
+                        Text(
+                            text = if (txType == "transfer") strings.sourceAccountFieldLabel else strings.accountFieldLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            state.accounts.forEach { acc ->
+                                FilterChip(
+                                    selected = selectedAccountId == acc.account.id,
+                                    onClick = { selectedAccountId = acc.account.id },
+                                    label = { Text(acc.account.name) }
+                                )
+                            }
+                        }
+
+                        OutlinedTextField(
+                            value = isoDate,
+                            onValueChange = { isoDate = it },
+                            label = { Text("Date (YYYY-MM-DD)") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = amountText,
+                            onValueChange = {
+                                amountText = it
+                                duplicateWarningTx = null
+                            },
+                            label = { Text("${strings.amountLabel} (${if (entryCurrency == baseCurrencyCode) cur else entryCurrency})") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("tx_amount_input")
+                        )
+
+                        OutlinedTextField(
+                            value = customCategory,
+                            onValueChange = { customCategory = it },
+                            label = { Text(strings.categoryNameLabel) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        // Voice Entry in Darija / AR / FR / EN
+                        VoiceDarijaEntrySection(
+                            state = state,
+                            autoLaunchVoice = autoLaunchVoice,
+                            onVoiceParsed = { parsed ->
+                                txType = parsed.txType
+                                amountText = if (parsed.amount % 1.0 == 0.0) {
+                                    parsed.amount.toInt().toString()
+                                } else {
+                                    parsed.amount.toString()
+                                }
+                                desc = parsed.description
+                                selectedEnvelopeKey = parsed.envelopeKey
+                                customCategory = parsed.categoryName
+                            }
+                        )
+
+                        // Multi-Currency Selector (MAD / EUR / USD)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("multi_currency_bar"),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "MAD / EUR / USD",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    listOf("MAD", "EUR", "USD").forEach { code ->
+                                        FilterChip(
+                                            selected = entryCurrency == code,
+                                            onClick = { entryCurrency = code },
+                                            label = { Text(code, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                            modifier = Modifier.testTag("currency_chip_$code")
+                                        )
+                                    }
+                                }
+                            }
+                            if (entryCurrency != baseCurrencyCode) {
+                                val isEur = entryCurrency == "EUR"
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = if (isEur) eurRateText else usdRateText,
+                                        onValueChange = { if (isEur) eurRateText = it else usdRateText = it },
+                                        label = { Text("1 $entryCurrency → MAD") },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("fx_rate_input")
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                    ) {
+                                        Text(
+                                            text = "= ${PayCycleEngine.formatDh(computeConvertedAmount())} $cur",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier
+                                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                                                .testTag("fx_converted_preview_text")
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
@@ -1463,6 +1455,10 @@ fun TransactionEditorSheet(
 fun SettingsBottomSheet(
     state: DashboardState,
     strings: AppStrings,
+    moreFeaturesEnabled: Boolean = true,
+    onMoreFeaturesChanged: (Boolean) -> Unit = {},
+    isLocalMode: Boolean = false,
+    onLinkGoogleAccount: () -> Unit = {},
     onDismiss: () -> Unit,
     onSaveSettings: (Double, Int, Boolean) -> Unit,
     onOpenCustomizationStudio: () -> Unit,
@@ -1479,6 +1475,7 @@ fun SettingsBottomSheet(
     var budgetText by remember { mutableStateOf(state.profile.baseBudget.safeRoundToInt().toString()) }
     var payDayText by remember { mutableStateOf(state.profile.payCycleDay.toString()) }
     var rolloverEnabled by remember { mutableStateOf(state.profile.rolloverEnabled) }
+    var localMoreFeatures by remember(moreFeaturesEnabled) { mutableStateOf(moreFeaturesEnabled) }
 
     var flagSecureEnabled by remember { mutableStateOf(AppSecurityManager.isFlagSecureEnabled(context)) }
     var appLockEnabled by remember { mutableStateOf(AppSecurityManager.isAppLockEnabled(context)) }
@@ -1499,10 +1496,10 @@ fun SettingsBottomSheet(
         if (granted) {
             MasroufiNotificationManager.triggerImmediateCheck(context)
             notifFeedback = when (lang) {
-                "ar" -> "تم تفعيل الإشعارات وإرسال فحص فوري!"
-                "darija" -> "تفعلو الإشعارات وتصيفط التذكير دابا!"
-                "en" -> "Notifications enabled & immediate check scheduled!"
-                else -> "Notifications activées et vérification lancée !"
+                "ar" -> "تم تفعيل الإشعارات!"
+                "darija" -> "تفعلو الإشعارات!"
+                "en" -> "Notifications enabled!"
+                else -> "Notifications activées !"
             }
         }
     }
@@ -1516,6 +1513,93 @@ fun SettingsBottomSheet(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(text = strings.settingsTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+
+            // Phase 0: Link Google Account button when running in local/optional sign-in mode
+            if (isLocalMode) {
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    accentBorderColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = strings.linkGoogleBtn,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "مزامنة سحابية لحسابك عبر Google"
+                                    "darija" -> "ربط مع Google باش تزامن حسابك"
+                                    "en" -> "Enable cloud backup & sync with Google"
+                                    else -> "Activer la sauvegarde et synchronisation Google"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                onDismiss()
+                                onLinkGoogleAccount()
+                            },
+                            modifier = Modifier.testTag("settings_link_google_account_btn")
+                        ) {
+                            Text(strings.linkGoogleBtn, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
+            }
+
+            // Phase 5: "More features" toggle (Daret, Sellef, What-If, Seasonal, AI Insights, Theme Studio)
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_more_features_card")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.moreFeaturesTitle,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = strings.moreFeaturesSub,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Switch(
+                        checked = localMoreFeatures,
+                        onCheckedChange = { enabled ->
+                            localMoreFeatures = enabled
+                            onMoreFeaturesChanged(enabled)
+                        },
+                        modifier = Modifier.testTag("settings_more_features_switch")
+                    )
+                }
+            }
 
             ExpressiveGlassSurface(
                 shape = RoundedCornerShape(20.dp),
@@ -1590,9 +1674,9 @@ fun SettingsBottomSheet(
                         )
                         Text(
                             text = when (lang) {
-                                "ar" -> "الأمان والخصوصية (حماية البيانات المالية)"
-                                "darija" -> "الأمان والخصوصية (حماية الفلوس والبيانات)"
-                                "en" -> "Security & Privacy Protection"
+                                "ar" -> "الأمان والخصوصية"
+                                "darija" -> "الأمان والخصوصية"
+                                "en" -> "Security & Privacy"
                                 else -> "Sécurité & Confidentialité"
                             },
                             style = MaterialTheme.typography.labelLarge,
@@ -1610,23 +1694,13 @@ fun SettingsBottomSheet(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = when (lang) {
-                                    "ar" -> "منع تصوير وتسجيل الشاشة (FLAG_SECURE)"
-                                    "darija" -> "منع السكرين شوت وتصوير الشاشة (FLAG_SECURE)"
-                                    "en" -> "Block Screenshots & Screen Recording"
-                                    else -> "Bloquer Captures d'écran (FLAG_SECURE)"
+                                    "ar" -> "منع تصوير الشاشة (FLAG_SECURE)"
+                                    "darija" -> "منع السكرين شوت (FLAG_SECURE)"
+                                    "en" -> "Block Screenshots"
+                                    else -> "Bloquer Captures d'écran"
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = when (lang) {
-                                    "ar" -> "يخفي الأرقام المالية في التطبيقات الحديثة ويمنع التجسس المرئي"
-                                    "darija" -> "كيخبي الأرقام فـ التطبيقات المفتوحة وكيمنع التصوير"
-                                    "en" -> "Hides financial balances in recent apps and blocks screen capture"
-                                    else -> "Masque l'aperçu dans les applications récentes"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -1654,32 +1728,13 @@ fun SettingsBottomSheet(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = when (lang) {
-                                    "ar" -> "قفل التطبيق المحلي (PIN / بصمة الجهاز)"
-                                    "darija" -> "قفل التطبيق بـ كود PIN أو بصمة التليفون"
-                                    "en" -> "Local App Lock (PIN / Device Biometrics)"
-                                    else -> "Verrouillage de l'application (PIN / Biométrie)"
+                                    "ar" -> "قفل التطبيق (PIN / بصمة)"
+                                    "darija" -> "قفل التطبيق (PIN / بصمة)"
+                                    "en" -> "App Lock (PIN / Biometrics)"
+                                    else -> "Verrouillage (PIN / Biométrie)"
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = if (hasPinConfigured) {
-                                    when (lang) {
-                                        "ar" -> "محمي باشتقاق PBKDF2-HMAC-SHA256 (600,000 تكرار + Salt + Android Keystore)"
-                                        "darija" -> "محمي بـ PBKDF2-HMAC-SHA256 (600,000 تكرار + Salt + Android Keystore)"
-                                        "en" -> "Protected via PBKDF2-HMAC-SHA256 key derivation (600,000 iter + salt + Keystore)"
-                                        else -> "Protégé par dérivation PBKDF2-HMAC-SHA256 (600 000 itér. + sel + Keystore)"
-                                    }
-                                } else {
-                                    when (lang) {
-                                        "ar" -> "قم بتعيين رمز PIN من 6 إلى 8 أرقام مع قفل تدريجي"
-                                        "darija" -> "دير كود PIN من 6 حتى 8 أرقام لتفعيل القفل"
-                                        "en" -> "Set a 6 to 8 digit PIN below with progressive rate-limiting"
-                                        else -> "Définissez un PIN de 6 à 8 chiffres ci-dessous avec anti-brute-force"
-                                    }
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (hasPinConfigured) AccentEmerald else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -1688,10 +1743,10 @@ fun SettingsBottomSheet(
                             onCheckedChange = { enabled ->
                                 if (enabled && !hasPinConfigured && !AppSecurityManager.isDeviceSecure(context)) {
                                     pinFeedback = when (lang) {
-                                        "ar" -> "يرجى إدخال وحفظ رمز PIN (6 إلى 8 أرقام) أولاً"
-                                        "darija" -> "دخل بعدا كود PIN (6 حتى 8 أرقام) لتحت"
-                                        "en" -> "Please set a 6 to 8 digit PIN first"
-                                        else -> "Veuillez d'abord définir un code PIN (6 à 8 chiffres)"
+                                        "ar" -> "يرجى إدخال رمز PIN (6-8 أرقام) أولاً"
+                                        "darija" -> "دخل كود PIN (6-8 أرقام) بعدا"
+                                        "en" -> "Please set a 6-8 digit PIN first"
+                                        else -> "Définissez d'abord un PIN (6-8 chiffres)"
                                     }
                                 } else {
                                     appLockEnabled = enabled
@@ -1719,10 +1774,10 @@ fun SettingsBottomSheet(
                             label = {
                                 Text(
                                     when (lang) {
-                                        "ar" -> "رمز PIN جديد (6 إلى 8 أرقام)"
-                                        "darija" -> "كود PIN جديد (6 حتى 8 أرقام)"
-                                        "en" -> "New PIN (6 to 8 digits)"
-                                        else -> "Nouveau PIN (6 à 8 chiffres)"
+                                        "ar" -> "رمز PIN (6-8 أرقام)"
+                                        "darija" -> "كود PIN (6-8 أرقام)"
+                                        "en" -> "PIN (6-8 digits)"
+                                        else -> "PIN (6-8 chiffres)"
                                     },
                                     fontSize = 12.sp
                                 )
@@ -1742,21 +1797,10 @@ fun SettingsBottomSheet(
                                     appLockEnabled = true
                                     AppSecurityManager.setAppLockEnabled(context, true)
                                     onAppLockChanged(true)
-                                    val len = newPinInput.trim().length
                                     newPinInput = ""
-                                    pinFeedback = when (lang) {
-                                        "ar" -> "تم اشتقاق وحفظ رمز PIN ($len أرقام) عبر PBKDF2-HMAC-SHA256 (600k)!"
-                                        "darija" -> "تم تسجيل كود PIN ($len أرقام) بـ PBKDF2-HMAC-SHA256 (600k)!"
-                                        "en" -> "$len-digit PIN hashed via PBKDF2-HMAC-SHA256 (600k) & App Lock enabled!"
-                                        else -> "PIN ($len chiffres) haché via PBKDF2-HMAC-SHA256 (600k) et activé !"
-                                    }
+                                    pinFeedback = "✓ PIN"
                                 } else {
-                                    pinFeedback = when (lang) {
-                                        "ar" -> "يجب أن يتكون الرمز من 6 إلى 8 أرقام"
-                                        "darija" -> "خاص الكود يكون ما بين 6 و 8 أرقام"
-                                        "en" -> "PIN must be 6 to 8 digits"
-                                        else -> "Le PIN doit contenir 6 à 8 chiffres"
-                                    }
+                                    pinFeedback = "6-8 digits"
                                 }
                             },
                             modifier = Modifier.testTag("settings_save_pin_btn")
@@ -1764,12 +1808,7 @@ fun SettingsBottomSheet(
                             Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = when (lang) {
-                                    "ar" -> "حفظ PIN"
-                                    "darija" -> "سجل PIN"
-                                    "en" -> "Set PIN"
-                                    else -> "Définir PIN"
-                                },
+                                text = "PIN",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -1780,12 +1819,11 @@ fun SettingsBottomSheet(
                         Text(
                             text = pinFeedback!!,
                             style = MaterialTheme.typography.labelSmall,
-                            color = AccentEmerald,
+                            color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
-                    // Device Credential / Biometric fallback toggle
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1793,10 +1831,10 @@ fun SettingsBottomSheet(
                     ) {
                         Text(
                             text = when (lang) {
-                                "ar" -> "السماح بالفتح عبر بصمة / قفل شاشة الجهاز"
-                                "darija" -> "فتح القفل ببصمة التليفون"
-                                "en" -> "Allow Device Biometrics / Screen Lock"
-                                else -> "Autoriser Biométrie / Verrouillage appareil"
+                                "ar" -> "فتح عبر بصمة الجهاز"
+                                "darija" -> "فتح ببصمة التليفون"
+                                "en" -> "Allow Biometrics"
+                                else -> "Autoriser Biométrie"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.weight(1f)
@@ -1811,35 +1849,22 @@ fun SettingsBottomSheet(
                         )
                     }
 
-                    // 3. Clear Local Offline Cache on Sign-Out (F-06)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = when (lang) {
-                                    "ar" -> "مسح التخزين المحلي المؤقت (Cache) عند تسجيل الخروج"
-                                    "darija" -> "مسح الكاش المحلي من التليفون ملي تخرج من الحساب"
-                                    "en" -> "Wipe Local Offline Cache on Sign-Out"
-                                    else -> "Effacer le cache local hors-ligne à la déconnexion"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = when (lang) {
-                                    "ar" -> "تحذير: قد تفقد العمليات المسجلة بدون إنترنت التي لم تتم مزامنتها بعد"
-                                    "darija" -> "رد بالك: العمليات اللي تقيدو بلا كونيكسيون ومازال ما تزامنوش غادي يتمسحو"
-                                    "en" -> "Warning: Unsynced offline changes will be lost when signing out"
-                                    else -> "Attention : les opérations hors-ligne non synchronisées seront perdues"
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                fontSize = 10.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            text = when (lang) {
+                                "ar" -> "مسح الكاش عند الخروج"
+                                "darija" -> "مسح الكاش ملي تخرج"
+                                "en" -> "Wipe Cache on Sign-Out"
+                                else -> "Effacer le cache à la déconnexion"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                         Switch(
                             checked = clearCacheOnSignOut,
@@ -1853,11 +1878,10 @@ fun SettingsBottomSheet(
                 }
             }
 
-            // WorkManager Notifications Card (Bills, Daret, 80% Budget, Evening Reminder)
+            // WorkManager Notifications Card
             ExpressiveGlassSurface(
                 shape = RoundedCornerShape(20.dp),
                 containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                accentBorderColor = AccentAmber,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("settings_notifications_card")
@@ -1873,18 +1897,18 @@ fun SettingsBottomSheet(
                         Icon(
                             imageVector = Icons.Default.NotificationsActive,
                             contentDescription = null,
-                            tint = AccentAmber,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
                             text = when (lang) {
-                                "ar" -> "إشعارات وتنبيهات ذكية (WorkManager)"
-                                "darija" -> "إشعارات وتذكيرات ذكية (الفواتير، دارت، 80%)"
-                                "en" -> "Smart Alerts & Reminders (WorkManager)"
-                                else -> "Alertes & Rappels Intelligents (WorkManager)"
+                                "ar" -> "التنبيهات والإشعارات"
+                                "darija" -> "الإشعارات والتذكيرات"
+                                "en" -> "Alerts & Reminders"
+                                else -> "Alertes & Rappels"
                             },
                             style = MaterialTheme.typography.labelLarge,
-                            color = AccentAmber,
+                            color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.ExtraBold
                         )
                     }
@@ -1895,12 +1919,7 @@ fun SettingsBottomSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = when (lang) {
-                                "ar" -> "الفواتير القادمة والاشتراكات"
-                                "darija" -> "الفواتير اللي قربو يتخلصو"
-                                "en" -> "Upcoming Bills & Subscriptions"
-                                else -> "Factures & abonnements à venir"
-                            },
+                            text = strings.billsTitle,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
@@ -1921,12 +1940,7 @@ fun SettingsBottomSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = when (lang) {
-                                "ar" -> "جولات دارت (القرعة الشهرية)"
-                                "darija" -> "نوبة ومساهمة دارت"
-                                "en" -> "Daret Turns & Contributions"
-                                else -> "Tours & cotisations Daret"
-                            },
+                            text = strings.daretTitle,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
@@ -1947,12 +1961,7 @@ fun SettingsBottomSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = when (lang) {
-                                "ar" -> "تنبيه استهلاك 80% من الميزانية أو الأظرفة"
-                                "darija" -> "تنبيه ملي توصل 80% من الميزانية"
-                                "en" -> "80% Budget & Envelope Threshold Alert"
-                                else -> "Alerte seuil 80% du budget / enveloppes"
-                            },
+                            text = "80% ${strings.budgetLabel}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
@@ -1974,10 +1983,10 @@ fun SettingsBottomSheet(
                     ) {
                         Text(
                             text = when (lang) {
-                                "ar" -> "تذكير مسائي لتسجيل مصاريف اليوم"
-                                "darija" -> "تذكير فـ العشية باش تقيد مصاريف النهار"
-                                "en" -> "Evening Daily Expense Reminder"
-                                else -> "Rappel du soir pour noter vos dépenses"
+                                "ar" -> "تذكير مسائي"
+                                "darija" -> "تذكير العشية"
+                                "en" -> "Evening Reminder"
+                                else -> "Rappel du soir"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
@@ -1999,12 +2008,7 @@ fun SettingsBottomSheet(
                                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                             } else {
                                 MasroufiNotificationManager.triggerImmediateCheck(context)
-                                notifFeedback = when (lang) {
-                                    "ar" -> "تم جدولة فحص الإشعارات الآن!"
-                                    "darija" -> "تبرمج فحص الإشعارات دابا!"
-                                    "en" -> "Immediate alert check scheduled!"
-                                    else -> "Vérification des alertes programmée !"
-                                }
+                                notifFeedback = "✓"
                             }
                         },
                         modifier = Modifier
@@ -2015,10 +2019,10 @@ fun SettingsBottomSheet(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = when (lang) {
-                                "ar" -> "تفعيل واختبار الإشعارات الآن"
-                                "darija" -> "فعل وجرب الإشعارات دابا"
-                                "en" -> "Enable & Check Alerts Now"
-                                else -> "Activer & Vérifier les alertes maintenant"
+                                "ar" -> "اختبار الإشعارات"
+                                "darija" -> "جرب الإشعارات"
+                                "en" -> "Test Alerts"
+                                else -> "Tester les alertes"
                             },
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -2029,29 +2033,12 @@ fun SettingsBottomSheet(
                         Text(
                             text = notifFeedback!!,
                             style = MaterialTheme.typography.labelSmall,
-                            color = AccentEmerald,
+                            color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
             }
-
-            // Household or Partner Account via Invite
-            HouseholdInviteSectionCard(
-                userId = state.profile.userId.ifBlank { "masroufi_user" },
-                lang = lang,
-                onShareInvite = { inviteText ->
-                    val sendIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(android.content.Intent.EXTRA_TEXT, inviteText)
-                    }
-                    runCatching {
-                        context.startActivity(
-                            android.content.Intent.createChooser(sendIntent, "Inviter un partenaire")
-                        )
-                    }
-                }
-            )
 
             FilledTonalButton(
                 onClick = {
@@ -2062,29 +2049,34 @@ fun SettingsBottomSheet(
                     .fillMaxWidth()
                     .testTag("settings_open_30s_onboarding_btn")
             ) {
-                Icon(Icons.Default.Bolt, contentDescription = null, tint = AccentAmber, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Bolt, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = when (lang) {
-                        "ar" -> "إعداد سريع 30 ثانية (الراتب، اليوم و 3 أظرفة)"
-                        "darija" -> "إعداد دغيا فـ 30 ثانية (المانضة، النهار و 3 أظرفة)"
-                        "en" -> "30-Second Quick Setup (Salary, Pay Day & 3 Envelopes)"
-                        else -> "Config Express 30s (Salaire, Jour & 3 Enveloppes)"
+                        "ar" -> "إعداد سريع 30 ثانية"
+                        "darija" -> "إعداد دغيا 30 ثانية"
+                        "en" -> "30-Second Quick Setup"
+                        else -> "Config Express 30s"
                     },
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            FilledTonalButton(
-                onClick = {
-                    onDismiss()
-                    onOpenCustomizationStudio()
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(strings.customizationStudioFullBtn, fontWeight = FontWeight.Bold)
+            // Phase 5: Theme Customization Studio button only shown when `localMoreFeatures` is on
+            if (localMoreFeatures) {
+                FilledTonalButton(
+                    onClick = {
+                        onDismiss()
+                        onOpenCustomizationStudio()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_open_customization_studio_btn")
+                ) {
+                    Icon(Icons.Default.Palette, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(strings.customizationStudioFullBtn, fontWeight = FontWeight.Bold)
+                }
             }
 
             // Clean Account vs Optional Demo Data Mode

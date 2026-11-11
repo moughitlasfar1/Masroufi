@@ -113,6 +113,20 @@ jobs:
             echo "NOTICE: Removing malformed app/google-services.json so MissingGoogleServicesStrategy.WARN applies."
             rm -f app/google-services.json
           fi
+          if [ ! -f "app/google-services.json" ]; then
+            echo "Generating fallback default_web_client_id resource for GitHub Actions build..."
+            cat << 'EOF' > app/src/main/res/values/google_services_ci.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="default_web_client_id" translatable="false">1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj.apps.googleusercontent.com</string>
+              <string name="gcm_defaultSenderId" translatable="false">1046667497606</string>
+              <string name="google_storage_bucket" translatable="false">gen-lang-client-0849522300.firebasestorage.app</string>
+              <string name="project_id" translatable="false">gen-lang-client-0849522300</string>
+              <string name="google_app_id" translatable="false">1:1046667497606:android:08ac099a9ee6c94eac0107</string>
+          </resources>
+          EOF
+            sed -i 's/^          //' app/src/main/res/values/google_services_ci.xml
+          fi
           gradle :app:assembleDebug --stacktrace --no-daemon
 
       - name: Verify debug APK

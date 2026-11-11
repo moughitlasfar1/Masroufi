@@ -1,8 +1,11 @@
 package com.example.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,78 +25,93 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallSplit
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Handshake
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.AccountItem
 import com.example.data.FinancialItem
 import com.example.domain.AppStrings
+import com.example.domain.DetectedSubscription
 import com.example.domain.EnvelopeStatus
 import com.example.domain.PayCycleEngine
+import com.example.domain.SmartReminder
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.AccentViolet
-import kotlin.math.abs
-import kotlin.math.max
-
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.material.icons.filled.Swipe
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalHapticFeedback
 import com.example.ui.theme.ExpressiveAnimatedProgressBar
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveSectionHeader
+import com.example.ui.theme.VyxelPillDark
+import com.example.ui.theme.distinctAccountColor
 import com.example.ui.theme.distinctEnvelopeColor
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
+import kotlin.math.abs
+import kotlin.math.max
 
 @Composable
 fun MonthScreen(
     state: DashboardState,
     strings: AppStrings,
+    moreFeaturesEnabled: Boolean = true,
     onUpdateWhatIf: (String, Int) -> Unit,
     onContributeSeasonal: (FinancialItem) -> Unit,
     onOpenNewSeasonal: (FinancialItem?) -> Unit,
     onDeleteItem: (String) -> Unit,
     onShiftCycle: (Int) -> Unit = {},
-    onQuickCreateSeasonalTemplate: (String, Double, String) -> Unit = { _, _, _ -> }
+    onQuickCreateSeasonalTemplate: (String, Double, String) -> Unit = { _, _, _ -> },
+    onConvertSubscriptionToBill: (DetectedSubscription) -> Unit = {},
+    onDismissDetectedSubscription: (DetectedSubscription) -> Unit = {},
+    onShareText: (String) -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
@@ -131,7 +149,7 @@ fun MonthScreen(
         item {
             ExpressiveGlassCard(
                 cornerRadius = 28.dp,
-                accentRimColor = if (isOver) AccentCoral else AccentEmerald,
+                accentRimColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .fillMaxWidth()
                     .pointerInput(state.activeWindow.cycleKey) {
@@ -250,7 +268,7 @@ fun MonthScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "${if (isOver && !hide) "-" else ""}${fmt(abs(state.remainingBudget))} $cur",
+                    text = "${if (isOver && !hide) "-" else "+"}${fmt(abs(state.remainingBudget))} $cur",
                     style = MaterialTheme.typography.displayMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = if (isOver) expColor else incColor
@@ -275,30 +293,160 @@ fun MonthScreen(
             }
         }
 
+        // 1B. Monthly Review Card (moved from Home in Phase 2)
+        item(key = "insights_monthly_review") {
+            val vsLastMonthDiff = if (state.previousCycleExpenses > 0.0) {
+                (((state.cycleExpenses - state.previousCycleExpenses) / state.previousCycleExpenses) * 100.0).safeRoundToInt()
+            } else 0
+            val vsLastMonthText = if (state.previousCycleExpenses > 0.0) {
+                val sign = if (vsLastMonthDiff > 0) "+" else ""
+                "$sign$vsLastMonthDiff% ${strings.vsLastMonthSuffix}"
+            } else {
+                strings.firstTrackedCycleLabel
+            }
+            val topCatName = state.topEnvelopeStatus?.config?.localizedName(lang) ?: "—"
+            val topCatPct = state.topEnvelopeStatus?.usagePercent ?: 0
+            val biggestDayLabel = if (state.biggestSpendingDayIso.isNotBlank()) {
+                "${state.biggestSpendingDayIso} (${fmt(state.biggestSpendingDayAmount)} $cur)"
+            } else "—"
+
+            ExpressiveGlassCard(
+                cornerRadius = 28.dp,
+                accentRimColor = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("monthly_recap_card")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(13.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lightbulb,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "${strings.monthlyReviewTitle} • $vsLastMonthText",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = if (state.remainingBudget >= 0) {
+                                    "${strings.remainingLabel} ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j)"
+                                } else {
+                                    "${strings.overrunLabel} ${fmt(-state.remainingBudget)} $cur"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            val sharePayload = buildString {
+                                appendLine("📊 ${strings.monthlyReviewTitle} (${state.activeWindow.cycleKey})")
+                                appendLine("• ${strings.budgetLabel} : $pct% (•••• $cur)")
+                                appendLine("• ${strings.topCategoryPrefix} $topCatName ($topCatPct%)")
+                                appendLine("• ${strings.biggestDayPrefix} ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
+                                appendLine("• $vsLastMonthText")
+                            }
+                            onShareText(sharePayload)
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("btn_share_monthly_recap")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = strings.shareReviewDesc,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(strings.shareBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${strings.topCategoryPrefix} $topCatName",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${strings.biggestDayPrefix} $biggestDayLabel",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = vsLastMonthText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
         // 2. Advanced Analytics Card (Month-over-Month Comparison & Trends)
         item {
             ExpressiveGlassCard(
                 cornerRadius = 28.dp,
-                accentRimColor = AccentViolet,
+                accentRimColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("advanced_analytics_card")
             ) {
+                val isDark = state.profile.isDarkTheme
+                val incColor = semanticIncomeColor(isDark)
+                val expColor = semanticExpenseColor(isDark)
                 val projectedDelta = state.totalAvailableBudget - state.projectedCycleSpend
                 ExpressiveSectionHeader(
                     title = when (state.profile.language) {
-                        "darija" -> "تحليلات متقدمة ومقارنة الشهر"
-                        "ar" -> "تحليلات متقدمة ومقارنة الأشهر"
-                        "en" -> "Advanced Analytics & Month Comparison"
-                        else -> "Analytique Avancée & Comparaison Mensuelle"
+                        "darija" -> "مقارنة الشهر"
+                        "ar" -> "مقارنة الأشهر"
+                        "en" -> "Month Comparison"
+                        else -> "Comparaison Mensuelle"
                     },
                     subtitle = if (projectedDelta >= 0) {
-                        "Projection fin de cycle : Excédent estimé de +${fmt(projectedDelta)} $cur"
+                        "Projection : +${fmt(projectedDelta)} $cur"
                     } else {
-                        "Projection fin de cycle : Déficit estimé de -${fmt(abs(projectedDelta))} $cur"
+                        "Projection : -${fmt(abs(projectedDelta))} $cur"
                     },
                     icon = Icons.Default.Analytics,
-                    accentColor = AccentViolet
+                    accentColor = MaterialTheme.colorScheme.primary
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -308,16 +456,15 @@ fun MonthScreen(
                     val prevSpent = env.previousSpent
                     val diff = curSpent - prevSpent
                     val badgeText = when {
-                        prevSpent <= 0.0 && curSpent <= 0.0 -> "Stable (0 $cur)"
-                        prevSpent <= 0.0 -> "${strings.newLabel} (${fmt(curSpent)} $cur)"
+                        prevSpent <= 0.0 && curSpent <= 0.0 -> "0 $cur"
+                        prevSpent <= 0.0 -> "${strings.newLabel} (-${fmt(curSpent)} $cur)"
                         diff <= 0.0 -> "-${fmt(abs(diff))} $cur ${strings.vsLastMonthSuffix}"
                         else -> "+${fmt(diff)} $cur ${strings.vsLastMonthSuffix}"
                     }
-                    val badgeColor = if (diff <= 0.0) AccentEmerald else AccentCoral
+                    val badgeColor = if (diff <= 0.0) incColor else expColor
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(16.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = badgeColor,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp)
@@ -354,254 +501,391 @@ fun MonthScreen(
             }
         }
 
-        // 3. "What-If" Savings Simulator Card with Goal Months-Sooner Impact
-        item {
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                accentRimColor = AccentSkyBlue,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                ExpressiveSectionHeader(
-                    title = strings.whatIfTitle,
-                    subtitle = strings.whatIfSub,
-                    icon = Icons.Default.Tune,
-                    accentColor = AccentSkyBlue
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
+        // Phase 5: AI / Smart Insights & Recurring Subscription Detector (only when moreFeaturesEnabled is on)
+        if (moreFeaturesEnabled && (state.smartInsights.isNotEmpty() || state.detectedSubscriptions.isNotEmpty())) {
+            item(key = "insights_smart_assistant") {
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    accentRimColor = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .testTag("smart_assistant_card")
                 ) {
-                    state.envelopes.forEach { env ->
-                        FilterChip(
-                            selected = env.config.key == (selectedEnv?.config?.key ?: ""),
-                            onClick = {
-                                onUpdateWhatIf(env.config.key, state.whatIfState.cutPercentage)
-                            },
-                            label = {
+                    ExpressiveSectionHeader(
+                        title = when (lang) {
+                            "darija" -> "المستشار الذكي"
+                            "ar" -> "المساعد الذكي"
+                            "en" -> "Smart Insights"
+                            else -> "Assistant Intelligent"
+                        },
+                        icon = Icons.Default.AutoAwesome,
+                        accentColor = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    state.smartInsights.forEach { insight ->
+                        ExpressiveGlassSurface(
+                            shape = RoundedCornerShape(18.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
                                 Text(
-                                    text = env.config.localizedName(state.profile.language).take(22),
-                                    maxLines = 1
+                                    text = insight.title,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = insight.body,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        )
+                        }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Slider(
-                    value = state.whatIfState.cutPercentage.toFloat().coerceIn(5f, 70f),
-                    onValueChange = { newVal ->
-                        onUpdateWhatIf(
-                            selectedEnv?.config?.key ?: "cafe",
-                            newVal.safeRoundToInt().coerceIn(5, 70)
-                        )
-                    },
-                    valueRange = 5f..70f,
-                    modifier = Modifier.testTag("what_if_slider")
-                )
-
-                ExpressiveGlassSurface(
-                    shape = RoundedCornerShape(18.dp),
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    accentBorderColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(
-                            text = strings.whatIfResult
-                                .replace("{pct}", state.whatIfState.cutPercentage.toString())
-                                .replace("{m1}", PayCycleEngine.formatDh(monthlySaved))
-                                .replace("{m12}", PayCycleEngine.formatDh(yearlySaved)),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        if (goalImpactText.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = goalImpactText,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.testTag("what_if_goal_impact_text")
-                            )
+                    if (state.detectedSubscriptions.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        ExpressiveGlassSurface(
+                            shape = RoundedCornerShape(18.dp),
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                            accentBorderColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("detected_subscriptions_section")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = when (lang) {
+                                        "ar" -> "اشتراكات متكررة مكتشفة"
+                                        "darija" -> "اشتراكات كتعاود"
+                                        "en" -> "Recurring Charges Detected"
+                                        else -> "Abonnements détectés"
+                                    },
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                state.detectedSubscriptions.forEach { sub ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = sub.name,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "-${fmt(sub.amount)} $cur • ${sub.occurrences}x (~le ${sub.typicalDayOfMonth})",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            TextButton(
+                                                onClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    onDismissDetectedSubscription(sub)
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier.testTag("btn_dismiss_sub_${sub.name.take(10)}")
+                                            ) {
+                                                Text(
+                                                    text = strings.notABillBtn,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    onConvertSubscriptionToBill(sub)
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                                modifier = Modifier.testTag("btn_convert_sub_${sub.name.take(10)}")
+                                            ) {
+                                                Text(strings.addBillBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        // 4. Seasonal & Yearly Planners (Ramadan, Aïd al-Adha sheep fund, Rentrée Scolaire) with Countdown & Suggested Monthly Saving
-        item {
-            val seasonalTemplates = remember { PayCycleEngine.moroccanSeasonalTemplates() }
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                accentRimColor = AccentAmber,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("seasonal_envelopes_card")
-            ) {
-                ExpressiveSectionHeader(
-                    title = strings.seasonalTitle,
-                    subtitle = strings.seasonalSub,
-                    icon = Icons.Default.Event,
-                    accentColor = AccentAmber,
-                    trailingContent = {
-                        FilledTonalButton(
-                            onClick = { onOpenNewSeasonal(null) },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("btn_add_seasonal")
-                        ) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // 1-Tap Moroccan Seasonal Envelope Templates
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // 3. "What-If" Savings Simulator Card (Phase 5: only when moreFeaturesEnabled is on)
+        if (moreFeaturesEnabled) {
+            item(key = "what_if_card") {
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    accentRimColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    seasonalTemplates.forEach { tpl ->
-                        ExpressiveGlassSurface(
-                            shape = CircleShape,
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            accentBorderColor = AccentAmber,
-                            onClick = {
-                                onQuickCreateSeasonalTemplate(
-                                    "${tpl.emoji} ${tpl.name}",
-                                    tpl.targetAmount,
-                                    tpl.targetIsoDate
-                                )
-                            },
-                            modifier = Modifier.testTag("seasonal_tpl_${tpl.key}")
-                        ) {
-                            Text(
-                                text = "+ ${tpl.emoji} ${tpl.name}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                state.seasonals.forEach { item ->
-                    val prog = if (item.amount > 0) (item.secondaryAmount / item.amount).toFloat().safeFraction() else 0f
-                    val countdown = PayCycleEngine.computeSeasonalCountdown(
-                        targetIso = item.dateOrCycle,
-                        targetAmount = item.amount,
-                        savedAmount = item.secondaryAmount
+                    ExpressiveSectionHeader(
+                        title = strings.whatIfTitle,
+                        subtitle = strings.whatIfSub,
+                        icon = Icons.Default.Tune,
+                        accentColor = MaterialTheme.colorScheme.primary
                     )
-                    ExpressiveGlassSurface(
-                        shape = RoundedCornerShape(20.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = AccentAmber,
-                        onClick = { onOpenNewSeasonal(item) },
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 5.dp)
-                            .testTag("seasonal_item_${item.id}")
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        state.envelopes.forEach { env ->
+                            FilterChip(
+                                selected = env.config.key == (selectedEnv?.config?.key ?: ""),
+                                onClick = {
+                                    onUpdateWhatIf(env.config.key, state.whatIfState.cutPercentage)
+                                },
+                                label = {
+                                    Text(
+                                        text = env.config.localizedName(state.profile.language).take(22),
+                                        maxLines = 1
+                                    )
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Slider(
+                        value = state.whatIfState.cutPercentage.toFloat().coerceIn(5f, 70f),
+                        onValueChange = { newVal ->
+                            onUpdateWhatIf(
+                                selectedEnv?.config?.key ?: "cafe",
+                                newVal.safeRoundToInt().coerceIn(5, 70)
+                            )
+                        },
+                        valueRange = 5f..70f,
+                        modifier = Modifier.testTag("what_if_slider")
+                    )
+
+                    ExpressiveGlassSurface(
+                        shape = RoundedCornerShape(18.dp),
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        accentBorderColor = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(text = item.name, style = MaterialTheme.typography.labelLarge)
-                                        Icon(
-                                            imageVector = Icons.Default.Edit,
-                                            contentDescription = "Edit",
-                                            modifier = Modifier.size(13.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Text(
-                                        text = "${fmt(item.secondaryAmount)} / ${fmt(item.amount)} $cur · Échéance: ${item.dateOrCycle}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = AccentAmber.copy(alpha = 0.16f)
-                                        ) {
-                                            Text(
-                                                text = "⏳ J-${countdown.daysRemaining} (${countdown.monthsRemaining}m)",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = AccentAmber,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                        if (countdown.suggestedMonthlySaving > 0.0) {
-                                            Text(
-                                                text = "💡 ${fmt(countdown.suggestedMonthlySaving)} $cur/mois",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = AccentEmerald,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    FilledTonalButton(
-                                        onClick = { onContributeSeasonal(item) },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                    ) {
-                                        Text("+ 200 $cur", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    IconButton(onClick = { onDeleteItem(item.id) }) {
-                                        Icon(
-                                            imageVector = Icons.Default.DeleteOutline,
-                                            contentDescription = "Delete",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            ExpressiveAnimatedProgressBar(
-                                progress = prog,
-                                color = AccentAmber,
-                                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                height = 8.dp
+                            Text(
+                                text = strings.whatIfResult
+                                    .replace("{pct}", state.whatIfState.cutPercentage.toString())
+                                    .replace("{m1}", PayCycleEngine.formatDh(monthlySaved))
+                                    .replace("{m12}", PayCycleEngine.formatDh(yearlySaved)),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
+                            if (goalImpactText.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = goalImpactText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.testTag("what_if_goal_impact_text")
+                                )
+                            }
                         }
                     }
                 }
             }
+
+            // 4. Seasonal & Yearly Planners (Phase 5: only when moreFeaturesEnabled is on)
+            item(key = "seasonal_card") {
+                val seasonalTemplates = remember { PayCycleEngine.moroccanSeasonalTemplates() }
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    accentRimColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("seasonal_envelopes_card")
+                ) {
+                    ExpressiveSectionHeader(
+                        title = strings.seasonalTitle,
+                        subtitle = strings.seasonalSub,
+                        icon = Icons.Default.Event,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        trailingContent = {
+                            FilledTonalButton(
+                                onClick = { onOpenNewSeasonal(null) },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("btn_add_seasonal")
+                            ) {
+                                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        seasonalTemplates.forEach { tpl ->
+                            ExpressiveGlassSurface(
+                                shape = CircleShape,
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                accentBorderColor = MaterialTheme.colorScheme.primary,
+                                onClick = {
+                                    onQuickCreateSeasonalTemplate(
+                                        "${tpl.emoji} ${tpl.name}",
+                                        tpl.targetAmount,
+                                        tpl.targetIsoDate
+                                    )
+                                },
+                                modifier = Modifier.testTag("seasonal_tpl_${tpl.key}")
+                            ) {
+                                Text(
+                                    text = "+ ${tpl.emoji} ${tpl.name}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    state.seasonals.forEach { item ->
+                        val prog = if (item.amount > 0) (item.secondaryAmount / item.amount).toFloat().safeFraction() else 0f
+                        val countdown = PayCycleEngine.computeSeasonalCountdown(
+                            targetIso = item.dateOrCycle,
+                            targetAmount = item.amount,
+                            savedAmount = item.secondaryAmount
+                        )
+                        ExpressiveGlassSurface(
+                            shape = RoundedCornerShape(20.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            onClick = { onOpenNewSeasonal(item) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                                .testTag("seasonal_item_${item.id}")
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(text = item.name, style = MaterialTheme.typography.labelLarge)
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            text = "${fmt(item.secondaryAmount)} / ${fmt(item.amount)} $cur · ${item.dateOrCycle}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                            ) {
+                                                Text(
+                                                    text = "⏳ J-${countdown.daysRemaining} (${countdown.monthsRemaining}m)",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            if (countdown.suggestedMonthlySaving > 0.0) {
+                                                Text(
+                                                    text = "+${fmt(countdown.suggestedMonthlySaving)} $cur/m",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = semanticIncomeColor(state.profile.isDarkTheme),
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        FilledTonalButton(
+                                            onClick = { onContributeSeasonal(item) },
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("+ 200 $cur", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        IconButton(onClick = { onDeleteItem(item.id) }) {
+                                            Icon(
+                                                imageVector = Icons.Default.DeleteOutline,
+                                                contentDescription = "Delete",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                ExpressiveAnimatedProgressBar(
+                                    progress = prog,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    height = 8.dp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
             Spacer(modifier = Modifier.height(88.dp))
         }
     }
 }
 
+/**
+ * Phase 4 & Phase 5: Plan Tab (`BudgetAndDaretScreen`)
+ * - Combines Envelopes, Accounts & Presets (moved off Home in Phase 2), Smart Reminders, Goals & Bills.
+ * - Daret and Sellef only show when `moreFeaturesEnabled` is true (Phase 5).
+ */
 @Composable
 fun BudgetAndDaretScreen(
     state: DashboardState,
     strings: AppStrings,
+    moreFeaturesEnabled: Boolean = true,
     onOpenCustomizeEnvelopes: () -> Unit,
     onPayDaretRound: (FinancialItem) -> Unit,
     onOpenNewDaret: (FinancialItem?) -> Unit,
@@ -615,12 +899,21 @@ fun BudgetAndDaretScreen(
     onPartialRepayDebt: (FinancialItem, Double) -> Unit = { _, _ -> },
     onSendWhatsAppReminder: (String) -> Unit = {},
     onOpenSplitBillModal: () -> Unit = {},
-    onQuickCreateBillTemplate: (String, Double, Int) -> Unit = { _, _, _ -> }
+    onQuickCreateBillTemplate: (String, Double, Int) -> Unit = { _, _, _ -> },
+    onOpenAccountModal: (AccountItem?) -> Unit = {},
+    onOpenTransferModal: () -> Unit = {},
+    onQuickPresetTap: (FinancialItem) -> Unit = {},
+    onAddPresetModal: (FinancialItem?) -> Unit = {},
+    onDeletePreset: (String) -> Unit = {},
+    onTriggerReminderAction: (SmartReminder) -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
     val haptics = LocalHapticFeedback.current
+    val lang = state.profile.language
+    var editPresetsMode by remember { mutableStateOf(false) }
     fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -628,8 +921,280 @@ fun BudgetAndDaretScreen(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // 0A. Accounts & Balances Card (moved from Home in Phase 2)
+        item(key = "plan_accounts") {
+            ExpressiveGlassCard(
+                cornerRadius = 28.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("plan_accounts_card")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = strings.accountsTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${strings.totalNetWorth}: ${fmt(state.totalNetWorth)} $cur",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = onOpenTransferModal,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("btn_transfer_accounts")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SwapHoriz,
+                                contentDescription = strings.transferAction,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(text = strings.transferAction, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                        FilledTonalButton(
+                            onClick = { onOpenAccountModal(null) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("btn_add_account")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add Account",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    state.accounts.forEach { accWithBal ->
+                        val icon = when (accWithBal.account.kind) {
+                            "bank" -> Icons.Default.AccountBalance
+                            "wallet" -> Icons.Default.Smartphone
+                            else -> Icons.Default.Payments
+                        }
+                        val accent = distinctAccountColor(
+                            accWithBal.account.kind,
+                            state.profile.isDarkTheme
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = if (state.profile.isDarkTheme) Color(0xFF14171E) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(
+                                1.dp,
+                                if (state.profile.isDarkTheme) Color(0xFF232834) else MaterialTheme.colorScheme.outlineVariant
+                            ),
+                            modifier = Modifier
+                                .width(140.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .clickable { onOpenAccountModal(accWithBal.account) }
+                                .testTag("account_card_${accWithBal.account.id}")
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 14.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(46.dp)
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(accent.copy(alpha = 0.14f))
+                                        .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(14.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = icon,
+                                        contentDescription = null,
+                                        tint = accent,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                                Text(
+                                    text = accWithBal.account.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (state.profile.isDarkTheme) VyxelPillDark else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Box(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "${fmt(accWithBal.currentBalance)} $cur",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 0B. 1-Tap Quick Presets Card (moved from Home in Phase 2)
+        item(key = "plan_presets") {
+            ExpressiveGlassCard(
+                cornerRadius = 28.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("plan_presets_card")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = strings.quickPresetsTitle,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Surface(
+                            shape = CircleShape,
+                            color = if (editPresetsMode) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { editPresetsMode = !editPresetsMode }
+                        ) {
+                            Text(
+                                text = if (editPresetsMode) strings.doneBtn else strings.editBtn,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (editPresetsMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onAddPresetModal(null) }
+                        ) {
+                            Text(
+                                text = strings.addPresetBtn,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.presets.forEach { preset ->
+                        ExpressiveGlassSurface(
+                            shape = CircleShape,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            onClick = {
+                                if (editPresetsMode) {
+                                    onAddPresetModal(preset)
+                                } else {
+                                    onQuickPresetTap(preset)
+                                }
+                            },
+                            modifier = Modifier.testTag("preset_${preset.id}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (editPresetsMode) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit preset",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                Text(
+                                    text = preset.name,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "-${fmt(preset.amount)} $cur",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = semanticExpenseColor(state.profile.isDarkTheme),
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                                if (editPresetsMode) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Delete preset",
+                                        tint = AccentCoral,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clickable { onDeletePreset(preset.id) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 1. Category Donut Chart + Customizable Envelopes
-        item {
+        item(key = "plan_envelopes") {
             ExpressiveGlassCard(
                 cornerRadius = 28.dp,
                 accentRimColor = MaterialTheme.colorScheme.primary,
@@ -664,7 +1229,6 @@ fun BudgetAndDaretScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Interactive Category Donut Chart
                 CategoryDonutChart(
                     envelopes = state.envelopes,
                     totalSpent = state.cycleExpenses,
@@ -687,7 +1251,6 @@ fun BudgetAndDaretScreen(
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(22.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = activeAccent,
                         onClick = { onOpenCustomizeEnvelopes() },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -706,7 +1269,7 @@ fun BudgetAndDaretScreen(
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(12.dp)
+                                            .size(10.dp)
                                             .clip(CircleShape)
                                             .background(envColor)
                                     )
@@ -739,7 +1302,7 @@ fun BudgetAndDaretScreen(
                                 Text(
                                     text = strings.rolloverBadge.replace("{amt}", fmt(envStatus.rolloverAmount)),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = AccentAmber
+                                    color = semanticIncomeColor(isDark)
                                 )
                             }
 
@@ -751,7 +1314,7 @@ fun BudgetAndDaretScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "${strings.expenses}: -${fmt(envStatus.spent)} $cur",
+                                    text = "-${fmt(envStatus.spent)} $cur",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = if (envStatus.spent > 0) expColor else MaterialTheme.colorScheme.onSurfaceVariant
@@ -778,314 +1341,71 @@ fun BudgetAndDaretScreen(
             }
         }
 
-        // 2. Moroccan Daret/Jam3iya Tracker Card (Members, Monthly Contribution, Whose Turn, Payout Date, WhatsApp Reminder)
-        item {
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                accentRimColor = AccentViolet,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("daret_tracker_card")
-            ) {
-                ExpressiveSectionHeader(
-                    title = strings.daretTitle,
-                    subtitle = strings.daretSub,
-                    icon = Icons.Default.Groups,
-                    accentColor = AccentViolet,
-                    trailingContent = {
-                        FilledTonalButton(
-                            onClick = { onOpenNewDaret(null) },
-                            modifier = Modifier.testTag("btn_add_daret")
+        // Smart Reminders Card (moved from Home in Phase 2)
+        if (state.smartReminders.isNotEmpty()) {
+            item(key = "plan_smart_reminders") {
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("smart_reminders_card")
+                ) {
+                    ExpressiveSectionHeader(
+                        title = when (lang) {
+                            "darija" -> "تذكيرات الفواتير"
+                            "ar" -> "تذكيرات الفواتير"
+                            "en" -> "Bill Reminders"
+                            else -> "Rappels & Échéances"
+                        },
+                        icon = Icons.Default.NotificationsActive,
+                        accentColor = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    state.smartReminders.take(5).forEach { rem ->
+                        ExpressiveGlassSurface(
+                            shape = RoundedCornerShape(16.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
                         ) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                state.darets.forEach { daret ->
-                    val totalMembers = daret.secondaryAmount.safeRoundToInt().coerceAtLeast(1)
-                    val totalPot = daret.amount * totalMembers
-                    val progress = (daret.extraInt.toFloat() / totalMembers.toFloat()).safeFraction()
-                    val whoseTurn = daret.subtitle.ifBlank { "Membre #${(daret.extraInt + 1).coerceAtMost(totalMembers)}" }
-                    ExpressiveGlassSurface(
-                        shape = RoundedCornerShape(20.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = AccentViolet,
-                        onClick = { onOpenNewDaret(daret) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 5.dp)
-                            .testTag("daret_item_${daret.id}")
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(text = daret.name, style = MaterialTheme.typography.labelLarge)
-                                        Icon(
-                                            imageVector = Icons.Default.Edit,
-                                            contentDescription = "Edit",
-                                            modifier = Modifier.size(13.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
                                     Text(
-                                        text = strings.daretTurnLabel
-                                            .replace("{turn}", daret.dayOrTurn.toString())
-                                            .replace("{total}", totalMembers.toString())
-                                            .replace("{pot}", fmt(totalPot)),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = rem.title,
+                                        style = MaterialTheme.typography.labelLarge
                                     )
                                     Text(
-                                        text = "${fmt(daret.amount)} $cur/mois · Payé: ${daret.extraInt}/$totalMembers · Réception: ${daret.dateOrCycle}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontSize = 11.5.sp,
-                                        color = AccentViolet
-                                    )
-                                    Text(
-                                        text = "👤 Tour en cours : $whoseTurn",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = AccentAmber,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    FilledTonalButton(
-                                        onClick = { onPayDaretRound(daret) },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
-                                    ) {
-                                        Text(text = strings.daretPayRound, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            val msg = "Salam l-khout! Rappel Daret '${daret.name}' : cotisation ${daret.amount.toInt()} $cur (Tour actuel: $whoseTurn, réception prévue: ${daret.dateOrCycle}). Lah yssakher 🙏"
-                                            onSendWhatsAppReminder(msg)
-                                        },
-                                        modifier = Modifier.testTag("btn_whatsapp_daret_${daret.id}")
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Share,
-                                            contentDescription = "Rappel WhatsApp Daret",
-                                            tint = AccentEmerald
-                                        )
-                                    }
-                                    IconButton(onClick = { onDeleteItem(daret.id) }) {
-                                        Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete")
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            ExpressiveAnimatedProgressBar(
-                                progress = progress,
-                                color = AccentViolet,
-                                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                height = 8.dp
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Sellef Tracker (Crédits & Dettes) with Partial Repayments, WhatsApp Reminder & Bill Splitting
-        item {
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                accentRimColor = AccentSkyBlue,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("sellef_tracker_card")
-            ) {
-                ExpressiveSectionHeader(
-                    title = "${strings.debtsTitle} (Sellef)",
-                    subtitle = "Suivez qui vous doit & vos remboursements partiels",
-                    icon = Icons.Default.Handshake,
-                    accentColor = AccentSkyBlue,
-                    trailingContent = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            FilledTonalButton(
-                                onClick = onOpenSplitBillModal,
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("btn_open_split_bill")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.CallSplit,
-                                    contentDescription = strings.splitBillDesc,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(strings.splitBillBtnLabel, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                            }
-                            FilledTonalButton(
-                                onClick = { onOpenNewDebt(null) },
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("btn_add_sellef")
-                            ) {
-                                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                state.debts.forEach { debt ->
-                    val isLent = debt.dateOrCycle != "borrowed"
-                    val remDebt = max(0.0, debt.amount - debt.secondaryAmount)
-                    val prog = if (debt.amount > 0) (debt.secondaryAmount / debt.amount).toFloat().safeFraction() else 0f
-                    ExpressiveGlassSurface(
-                        shape = RoundedCornerShape(20.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = if (isLent) AccentEmerald else AccentCoral,
-                        onClick = { onOpenNewDebt(debt) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 5.dp)
-                            .testTag("sellef_item_${debt.id}")
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Text(
-                                            text = "${debt.name} (${if (isLent) strings.debtsLent else strings.debtsBorrowed})",
-                                            style = MaterialTheme.typography.labelLarge
-                                        )
-                                        Icon(
-                                            imageVector = Icons.Default.Edit,
-                                            contentDescription = "Edit",
-                                            modifier = Modifier.size(13.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    if (debt.subtitle.isNotBlank()) {
-                                        Text(
-                                            text = debt.subtitle,
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    Text(
-                                        text = "${strings.remainingLabel}: ${fmt(remDebt)} $cur / ${fmt(debt.amount)} $cur",
+                                        text = if (hide) "•••• $cur" else rem.subtitle,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (remDebt > 0) {
-                                        IconButton(
-                                            onClick = {
-                                                val waMsg = if (isLent) {
-                                                    "Salam ${debt.name} ! Petit rappel sympa pour le sellef (${debt.subtitle.ifBlank { "avance" }}) : il reste ${remDebt.toInt()} $cur sur ${debt.amount.toInt()} $cur. Lah yhfdek 🙏"
-                                                } else {
-                                                    "Salam ${debt.name} ! Je te confirme qu'il me reste ${remDebt.toInt()} $cur à te régler sur ${debt.amount.toInt()} $cur. Merci 🙏"
-                                                }
-                                                onSendWhatsAppReminder(waMsg)
-                                            },
-                                            modifier = Modifier.testTag("btn_whatsapp_sellef_${debt.id}")
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Share,
-                                                contentDescription = "Rappel WhatsApp Sellef",
-                                                tint = AccentEmerald
-                                            )
-                                        }
-                                    }
-                                    IconButton(onClick = { onDeleteItem(debt.id) }) {
-                                        Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete")
-                                    }
-                                }
-                            }
-
-                            // Partial Repayment Chips (+50, +100, +200, Tout)
-                            if (remDebt > 0) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Spacer(modifier = Modifier.width(8.dp))
+                                FilledTonalButton(
+                                    onClick = { onTriggerReminderAction(rem) },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
-                                    listOf(50.0, 100.0, 200.0).filter { it < remDebt }.forEach { stepAmt ->
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = MaterialTheme.colorScheme.secondaryContainer,
-                                            modifier = Modifier
-                                                .clip(CircleShape)
-                                                .clickable {
-                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                    onPartialRepayDebt(debt, stepAmt)
-                                                }
-                                                .testTag("btn_sellef_partial_${debt.id}_${stepAmt.toInt()}")
-                                        ) {
-                                            Text(
-                                                text = "+${stepAmt.toInt()} $cur",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                            )
-                                        }
-                                    }
-                                    Surface(
-                                        shape = CircleShape,
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        modifier = Modifier
-                                            .clip(CircleShape)
-                                            .clickable {
-                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                onSettleDebt(debt)
-                                            }
-                                            .testTag("btn_sellef_settle_${debt.id}")
-                                    ) {
-                                        Text(
-                                            text = "${strings.recordRepayment} (${fmt(remDebt)} $cur)",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                        )
-                                    }
+                                    Text(text = rem.actionLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-                            ExpressiveAnimatedProgressBar(
-                                progress = prog,
-                                color = if (isLent) AccentEmerald else AccentCoral,
-                                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                height = 8.dp
-                            )
                         }
                     }
                 }
             }
         }
 
-        // 4. Savings Goals & Recurring Moroccan Bills Management (Lydec/Redal/Amendis, ONEE, IAM, Inwi, Orange, Loyer)
-        item {
+        // 2. Savings Goals & Recurring Bills Management
+        item(key = "plan_goals_and_bills") {
             val billTemplates = remember { PayCycleEngine.moroccanBillTemplates() }
             ExpressiveGlassCard(
                 cornerRadius = 28.dp,
-                accentRimColor = AccentEmerald,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("goals_and_bills_card")
@@ -1096,7 +1416,7 @@ fun BudgetAndDaretScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(imageVector = Icons.Default.Savings, contentDescription = null, tint = AccentEmerald)
+                        Icon(imageVector = Icons.Default.Savings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Text(text = strings.goalsTitle, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1114,7 +1434,6 @@ fun BudgetAndDaretScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // 1-Tap Moroccan Bill Templates Bar (Lydec, Redal, Amendis, ONEE, IAM, Inwi, Orange, Rent)
                 Text(
                     text = strings.moroccoTemplatesTitle,
                     style = MaterialTheme.typography.labelSmall,
@@ -1131,7 +1450,6 @@ fun BudgetAndDaretScreen(
                         ExpressiveGlassSurface(
                             shape = CircleShape,
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            accentBorderColor = AccentEmerald,
                             onClick = {
                                 onQuickCreateBillTemplate(
                                     "${tpl.emoji} ${tpl.name}",
@@ -1154,13 +1472,16 @@ fun BudgetAndDaretScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                val isDark = state.profile.isDarkTheme
+                val incColor = semanticIncomeColor(isDark)
+                val expColor = semanticExpenseColor(isDark)
+
                 // Recurring Bills List
                 state.bills.forEach { bill ->
                     val isPaid = PayCycleEngine.isBillPaidInCycle(bill, state.activeWindow.cycleKey)
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(18.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = if (isPaid) AccentEmerald else AccentAmber,
                         onClick = { onOpenNewBill(bill) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1179,10 +1500,10 @@ fun BudgetAndDaretScreen(
                                     style = MaterialTheme.typography.labelLarge
                                 )
                                 Text(
-                                    text = "${fmt(bill.amount)} $cur · Échéance le ${bill.dayOrTurn} du mois",
+                                    text = "-${fmt(bill.amount)} $cur · J${bill.dayOrTurn}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontSize = 11.5.sp,
-                                    color = if (isPaid) AccentEmerald else MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (isPaid) incColor else expColor
                                 )
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1197,7 +1518,7 @@ fun BudgetAndDaretScreen(
                                     Text(
                                         text = strings.paidBadgeLabel,
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = AccentEmerald,
+                                        color = incColor,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 8.dp)
                                     )
@@ -1215,7 +1536,6 @@ fun BudgetAndDaretScreen(
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(20.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        accentBorderColor = AccentEmerald,
                         onClick = { onOpenNewGoal(goal) },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1241,9 +1561,9 @@ fun BudgetAndDaretScreen(
                                         )
                                     }
                                     Text(
-                                        text = "${fmt(goal.secondaryAmount)} / ${fmt(goal.amount)} $cur (${(prog * 100f).safeRoundToInt()}%)",
+                                        text = "+${fmt(goal.secondaryAmount)} / ${fmt(goal.amount)} $cur (${(prog * 100f).safeRoundToInt()}%)",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = incColor
                                     )
                                 }
                                 FilledTonalButton(
@@ -1259,7 +1579,7 @@ fun BudgetAndDaretScreen(
                             Spacer(modifier = Modifier.height(8.dp))
                             ExpressiveAnimatedProgressBar(
                                 progress = prog,
-                                color = AccentEmerald,
+                                color = MaterialTheme.colorScheme.primary,
                                 trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                                 height = 8.dp
                             )
@@ -1267,6 +1587,315 @@ fun BudgetAndDaretScreen(
                     }
                 }
             }
+        }
+
+        // Phase 5: Daret & Sellef only appear when `moreFeaturesEnabled` is true
+        if (moreFeaturesEnabled) {
+            // 3. Moroccan Daret/Jam3iya Tracker Card
+            item(key = "plan_daret") {
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("daret_tracker_card")
+                ) {
+                    ExpressiveSectionHeader(
+                        title = strings.daretTitle,
+                        subtitle = strings.daretSub,
+                        icon = Icons.Default.Groups,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        trailingContent = {
+                            FilledTonalButton(
+                                onClick = { onOpenNewDaret(null) },
+                                modifier = Modifier.testTag("btn_add_daret")
+                            ) {
+                                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    state.darets.forEach { daret ->
+                        val totalMembers = daret.secondaryAmount.safeRoundToInt().coerceAtLeast(1)
+                        val totalPot = daret.amount * totalMembers
+                        val progress = (daret.extraInt.toFloat() / totalMembers.toFloat()).safeFraction()
+                        val whoseTurn = daret.subtitle.ifBlank { "Membre #${(daret.extraInt + 1).coerceAtMost(totalMembers)}" }
+                        ExpressiveGlassSurface(
+                            shape = RoundedCornerShape(20.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            onClick = { onOpenNewDaret(daret) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                                .testTag("daret_item_${daret.id}")
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(text = daret.name, style = MaterialTheme.typography.labelLarge)
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            text = strings.daretTurnLabel
+                                                .replace("{turn}", daret.dayOrTurn.toString())
+                                                .replace("{total}", totalMembers.toString())
+                                                .replace("{pot}", fmt(totalPot)),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "-${fmt(daret.amount)} $cur/m · ${daret.extraInt}/$totalMembers · ${daret.dateOrCycle}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "👤 $whoseTurn",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        FilledTonalButton(
+                                            onClick = { onPayDaretRound(daret) },
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                        ) {
+                                            Text(text = strings.daretPayRound, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        IconButton(
+                                            onClick = {
+                                                val msg = "Salam l-khout! Rappel Daret '${daret.name}' : cotisation ${daret.amount.toInt()} $cur (Tour actuel: $whoseTurn, réception prévue: ${daret.dateOrCycle}). Lah yssakher 🙏"
+                                                onSendWhatsAppReminder(msg)
+                                            },
+                                            modifier = Modifier.testTag("btn_whatsapp_daret_${daret.id}")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Share,
+                                                contentDescription = "Rappel WhatsApp Daret",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        IconButton(onClick = { onDeleteItem(daret.id) }) {
+                                            Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete")
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                ExpressiveAnimatedProgressBar(
+                                    progress = progress,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    height = 8.dp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. Sellef Tracker (Crédits & Dettes)
+            item(key = "plan_sellef") {
+                val isDark = state.profile.isDarkTheme
+                val incColor = semanticIncomeColor(isDark)
+                val expColor = semanticExpenseColor(isDark)
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("sellef_tracker_card")
+                ) {
+                    ExpressiveSectionHeader(
+                        title = strings.debtsTitle,
+                        subtitle = strings.debtsLent + " / " + strings.debtsBorrowed,
+                        icon = Icons.Default.Handshake,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        trailingContent = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilledTonalButton(
+                                    onClick = onOpenSplitBillModal,
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("btn_open_split_bill")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.CallSplit,
+                                        contentDescription = strings.splitBillDesc,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(strings.splitBillBtnLabel, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                                FilledTonalButton(
+                                    onClick = { onOpenNewDebt(null) },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("btn_add_sellef")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    state.debts.forEach { debt ->
+                        val isLent = debt.dateOrCycle != "borrowed"
+                        val remDebt = max(0.0, debt.amount - debt.secondaryAmount)
+                        val prog = if (debt.amount > 0) (debt.secondaryAmount / debt.amount).toFloat().safeFraction() else 0f
+                        val amtSign = if (isLent) "+" else "-"
+                        val amtColor = if (isLent) incColor else expColor
+                        ExpressiveGlassSurface(
+                            shape = RoundedCornerShape(20.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            onClick = { onOpenNewDebt(debt) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                                .testTag("sellef_item_${debt.id}")
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "${debt.name} (${if (isLent) strings.debtsLent else strings.debtsBorrowed})",
+                                                style = MaterialTheme.typography.labelLarge
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        if (debt.subtitle.isNotBlank()) {
+                                            Text(
+                                                text = debt.subtitle,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Text(
+                                            text = "${strings.remainingLabel}: $amtSign${fmt(remDebt)} $cur / ${fmt(debt.amount)} $cur",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = amtColor
+                                        )
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (remDebt > 0) {
+                                            IconButton(
+                                                onClick = {
+                                                    val waMsg = if (isLent) {
+                                                        "Salam ${debt.name} ! Petit rappel sympa pour le sellef (${debt.subtitle.ifBlank { "avance" }}) : il reste ${remDebt.toInt()} $cur sur ${debt.amount.toInt()} $cur. Lah yhfdek 🙏"
+                                                    } else {
+                                                        "Salam ${debt.name} ! Je te confirme qu'il me reste ${remDebt.toInt()} $cur à te régler sur ${debt.amount.toInt()} $cur. Merci 🙏"
+                                                    }
+                                                    onSendWhatsAppReminder(waMsg)
+                                                },
+                                                modifier = Modifier.testTag("btn_whatsapp_sellef_${debt.id}")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Share,
+                                                    contentDescription = "Rappel WhatsApp Sellef",
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                        IconButton(onClick = { onDeleteItem(debt.id) }) {
+                                            Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete")
+                                        }
+                                    }
+                                }
+
+                                if (remDebt > 0) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        listOf(50.0, 100.0, 200.0).filter { it < remDebt }.forEach { stepAmt ->
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                                modifier = Modifier
+                                                    .clip(CircleShape)
+                                                    .clickable {
+                                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        onPartialRepayDebt(debt, stepAmt)
+                                                    }
+                                                    .testTag("btn_sellef_partial_${debt.id}_${stepAmt.toInt()}")
+                                            ) {
+                                                Text(
+                                                    text = "+${stepAmt.toInt()} $cur",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .clickable {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    onSettleDebt(debt)
+                                                }
+                                                .testTag("btn_sellef_settle_${debt.id}")
+                                        ) {
+                                            Text(
+                                                text = "${strings.recordRepayment} (${fmt(remDebt)} $cur)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                ExpressiveAnimatedProgressBar(
+                                    progress = prog,
+                                    color = amtColor,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    height = 8.dp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
             Spacer(modifier = Modifier.height(88.dp))
         }
     }
@@ -1312,7 +1941,7 @@ fun CategoryDonutChart(
                             val sweep = ((env.spent / totalSpent) * 360.0).toFloat()
                             if (sweep.isFinite() && sweep > 0f) {
                                 drawArc(
-                                    color = envColors[index],
+                                    color = envColors[index].copy(alpha = (1f - (index * 0.12f)).coerceIn(0.35f, 1f)),
                                     startAngle = startAngle,
                                     sweepAngle = sweep,
                                     useCenter = false,
@@ -1344,7 +1973,7 @@ fun CategoryDonutChart(
         ) {
             envelopes.forEachIndexed { index, env ->
                 val sharePct = if (totalSpent > 0) ((env.spent / totalSpent) * 100.0).safeRoundToInt() else 0
-                val dotColor = envColors[index]
+                val dotColor = envColors[index].copy(alpha = (1f - (index * 0.12f)).coerceIn(0.45f, 1f))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1367,7 +1996,7 @@ fun CategoryDonutChart(
                         text = "$sharePct%",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        color = dotColor
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

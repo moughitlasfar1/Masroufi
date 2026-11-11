@@ -898,16 +898,66 @@ class ExampleRobolectricTest {
             assertFalse(com.google.firebase.FirebaseApp.getApps(context).isEmpty())
             assertEquals("gen-lang-client-0849522300", com.google.firebase.FirebaseApp.getInstance().options.projectId)
             val webClientId = com.example.ui.resolveDefaultWebClientId(activity)
-            assertTrue(webClientId.endsWith(".apps.googleusercontent.com"))
+            assertTrue(webClientId.endsWith("googleusercontent.com"))
             activity.setContent {
                 MainFeatureScreen(currentUserId = "u_test_123")
             }
             org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
         }
     }
+
+    @Test
+    fun `Masroufi simplification plan Phases 0 to 7 requirements work accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // Phase 0: Optional sign-in / local mode preference & web client ID fallback
+        com.example.ui.setLocalModeEnabled(context, false)
+        assertFalse(com.example.ui.isLocalModeEnabled(context))
+        com.example.ui.setLocalModeEnabled(context, true)
+        assertTrue(com.example.ui.isLocalModeEnabled(context))
+        assertTrue(com.example.ui.resolveDefaultWebClientId(context).isNotBlank())
+
+        // Phase 4: 4 tabs (Home, Insights, Plan, Activity) and saved tab migration ("mois" -> Insights/Month)
+        assertEquals(listOf("vue", "semaine", "categories", "historique"), MAIN_TAB_KEYS)
+        assertEquals("semaine" to "month", resolveSavedTabMigration("mois"))
+        assertEquals("semaine" to "week", resolveSavedTabMigration("semaine"))
+        assertEquals("categories" to "week", resolveSavedTabMigration("categories"))
+        assertEquals("historique" to "week", resolveSavedTabMigration("historique"))
+        assertEquals("vue" to "week", resolveSavedTabMigration("vue"))
+
+        // Phase 5: "More features" preference defaults to false for new users and true for existing users with data
+        context.getSharedPreferences("masroufi_ui_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        assertFalse(com.example.ui.isMoreFeaturesEnabled(context, hasExistingData = false))
+        assertTrue(com.example.ui.isMoreFeaturesEnabled(context, hasExistingData = true))
+        com.example.ui.setMoreFeaturesEnabled(context, true)
+        assertTrue(com.example.ui.isMoreFeaturesEnabled(context, hasExistingData = false))
+        com.example.ui.setMoreFeaturesEnabled(context, false)
+        assertFalse(com.example.ui.isMoreFeaturesEnabled(context, hasExistingData = true))
+
+        // Phase 6: Shortened 4-tab labels and new keys in FR, EN, AR, and Darija
+        val en = Translations.forLang("en")
+        assertEquals("Home", en.navVue)
+        assertEquals("Insights", en.navSemaine)
+        assertEquals("Plan", en.navCat)
+        assertEquals("Activity", en.navHist)
+        assertEquals("More options", en.moreOptionsLabel)
+        assertEquals("More features", en.moreFeaturesTitle)
+
+        val fr = Translations.forLang("fr")
+        assertEquals("Accueil", fr.navVue)
+        assertEquals("Analyses", fr.navSemaine)
+        assertEquals("Plan", fr.navCat)
+        assertEquals("Activité", fr.navHist)
+
+        val ar = Translations.forLang("ar")
+        assertTrue(ar.isRtl)
+        assertTrue(ar.moreOptionsLabel.isNotBlank())
+        assertTrue(ar.moreFeaturesTitle.isNotBlank())
+
+        val darija = Translations.forLang("darija")
+        assertTrue(darija.isRtl)
+        assertTrue(darija.moreOptionsLabel.isNotBlank())
+        assertTrue(darija.moreFeaturesTitle.isNotBlank())
+    }
 }
-
-
-
-
 

@@ -84,29 +84,14 @@ private val DistinctEnvelopeColorsDark = listOf(
 )
 
 /**
- * Returns a distinct, high-contrast semantic color for each budget envelope or category
- * so envelopes are visually differentiated at a glance.
+ * Phase 6 — Calm the look:
+ * Uses one primary accent color across UI elements so color is reserved for +/- amounts.
  */
 fun distinctEnvelopeColor(keyOrName: String, isDark: Boolean = false): Color {
-    val clean = keyOrName.trim().lowercase()
-    val palette = if (isDark) DistinctEnvelopeColorsDark else DistinctEnvelopeColorsLight
-    return when {
-        clean.contains("marche") || clean.contains("marché") || clean.contains("course") || clean.contains("تقدية") || clean.contains("سوق") -> palette[0]
-        clean.contains("cafe") || clean.contains("café") || clean.contains("sortie") || clean.contains("resto") || clean.contains("قهوة") -> palette[2]
-        clean.contains("transport") || clean.contains("carburant") || clean.contains("taxi") || clean.contains("طاكسي") || clean.contains("بنزين") -> palette[4]
-        clean.contains("charge") || clean.contains("loyer") || clean.contains("logement") || clean.contains("facture") || clean.contains("كراء") || clean.contains("فواتير") -> palette[3]
-        clean.contains("sante") || clean.contains("santé") || clean.contains("pharma") || clean.contains("صحة") || clean.contains("دواء") -> palette[1]
-        clean.contains("epargne") || clean.contains("épargne") || clean.contains("tawfir") || clean.contains("توفير") -> palette[5]
-        clean.contains("shop") || clean.contains("vetement") || clean.contains("loisir") -> palette[6]
-        clean.contains("autre") || clean.contains("imprevu") || clean.contains("أخرى") -> palette[7]
-        else -> palette[abs(clean.hashCode()) % palette.size]
-    }
+    return if (isDark) VyxelPeriwinkle else MasroufiPrimaryLight
 }
 
 fun distinctAccountColor(kind: String, isDark: Boolean = false): Color {
-    return when (kind.lowercase()) {
-        "bank" -> if (isDark) Color(0xFFB8C7FA) else Color(0xFF284299)
-        "wallet" -> if (isDark) Color(0xFFA78BFA) else Color(0xFF6D28D9)
-        else -> if (isDark) Color(0xFF34D399) else Color(0xFF059669)
-    }
+    return if (isDark) VyxelPeriwinkle else MasroufiPrimaryLight
 }
+

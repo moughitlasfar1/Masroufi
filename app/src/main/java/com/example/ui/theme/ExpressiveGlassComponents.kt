@@ -133,8 +133,8 @@ fun ExpressiveAmbientBackground(
 ) {
     val pal = paletteForKey(accentPalette)
     val bgColor = MaterialTheme.colorScheme.background
-    val primaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.035f) else pal.primaryLight.copy(alpha = 0.035f)
-    val secondaryGlow = if (isDarkTheme) AccentEmerald.copy(alpha = 0.025f) else AccentSkyBlue.copy(alpha = 0.025f)
+    val primaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.015f) else pal.primaryLight.copy(alpha = 0.015f)
+    val secondaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.01f) else pal.primaryLight.copy(alpha = 0.01f)
 
     Box(
         modifier = modifier
@@ -176,21 +176,21 @@ fun ExpressiveAmbientBackground(
  * - 5-stage 3D inset specular highlight `box-shadow` using `hsl(205 20% 90% / 0.8, 0.3, 0.15, 0.03)` (`#E0E6EB`)
  */
 object Glass3dTokens {
-    // hsl(189 80% 10% / 0.20)
-    val ColorGlass3d = Color(0xFF05292E).copy(alpha = 0.20f)
-    val ColorGlass3dLightOverlay = Color(0xFF05292E).copy(alpha = 0.08f)
+    // Toned-down .glass3d tokens (Phase 6: Calm the look)
+    val ColorGlass3d = Color(0xFF05292E).copy(alpha = 0.10f)
+    val ColorGlass3dLightOverlay = Color(0xFF05292E).copy(alpha = 0.04f)
 
     // hsl(205 20% 10%) -> #141A1F
     val ShadowBase = Color(0xFF141A1F)
-    val ShadowAlpha20 = ShadowBase.copy(alpha = 0.20f)
-    val ShadowAlpha10 = ShadowBase.copy(alpha = 0.10f)
+    val ShadowAlpha20 = ShadowBase.copy(alpha = 0.12f)
+    val ShadowAlpha10 = ShadowBase.copy(alpha = 0.06f)
 
     // hsl(205 20% 90%) -> #E0E6EB
     val InsetHighlightBase = Color(0xFFE0E6EB)
-    val InsetHighlight80 = InsetHighlightBase.copy(alpha = 0.80f)
-    val InsetHighlight30 = InsetHighlightBase.copy(alpha = 0.30f)
-    val InsetHighlight15 = InsetHighlightBase.copy(alpha = 0.15f)
-    val InsetHighlight03 = InsetHighlightBase.copy(alpha = 0.03f)
+    val InsetHighlight80 = InsetHighlightBase.copy(alpha = 0.32f)
+    val InsetHighlight30 = InsetHighlightBase.copy(alpha = 0.14f)
+    val InsetHighlight15 = InsetHighlightBase.copy(alpha = 0.08f)
+    val InsetHighlight03 = InsetHighlightBase.copy(alpha = 0.02f)
 
     // Cached 100x100 procedural egg-shell micro-texture tile matching background-size: 100px; background-repeat: repeat
     val eggShellNoiseBrush: androidx.compose.ui.graphics.ShaderBrush by lazy {
@@ -273,7 +273,7 @@ fun Modifier.glass3d(
         Glass3dTokens.ColorGlass3dLightOverlay
     }
 
-    val accentGlow = accentRimColor?.copy(alpha = if (isDark) 0.42f else 0.34f)
+    val accentGlow = accentRimColor?.copy(alpha = if (isDark) 0.20f else 0.16f)
 
     onDrawWithContent {
         // 1. Multi-stage directional outer shadows (.glass3d box-shadow)
@@ -385,10 +385,10 @@ fun ExpressiveGlassCard(
         label = "glass_card_scale"
     )
 
-    val topRim = accentRimColor?.copy(alpha = if (isDark) 0.38f else 0.40f)
-        ?: if (isDark) Color(0xFF262A35) else Glass3dTokens.InsetHighlight80
-    val bottomRim = accentRimColor?.copy(alpha = 0.14f)
-        ?: if (isDark) Color(0xFF1A1D25) else Glass3dTokens.ShadowAlpha20
+    val topRim = accentRimColor?.copy(alpha = if (isDark) 0.22f else 0.24f)
+        ?: if (isDark) Color(0xFF222630) else Glass3dTokens.InsetHighlight80
+    val bottomRim = accentRimColor?.copy(alpha = 0.08f)
+        ?: if (isDark) Color(0xFF181B22) else Glass3dTokens.ShadowAlpha20
 
     val shape = RoundedCornerShape(animatedRadius)
 
@@ -444,8 +444,8 @@ fun ExpressiveGlassSurface(
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val fill = containerColor.copy(alpha = if (isDark) 0.95f else 0.95f)
-    val borderColor = accentBorderColor?.copy(alpha = 0.36f)
-        ?: if (isDark) Color(0xFF2A2F3B) else Glass3dTokens.InsetHighlight80
+    val borderColor = accentBorderColor?.copy(alpha = 0.22f)
+        ?: if (isDark) Color(0xFF242833) else Glass3dTokens.InsetHighlight80
     val haptics = LocalHapticFeedback.current
 
     Surface(
@@ -691,7 +691,7 @@ fun ExpressiveGlassBottomDock(
     tabs: List<Triple<String, String, ImageVector>>,
     activeTabKey: String,
     onSelectTab: (Int, String) -> Unit,
-    onLongPressTab: (String) -> Unit,
+    onLongPressTab: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f

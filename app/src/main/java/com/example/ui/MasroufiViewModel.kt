@@ -647,13 +647,59 @@ class MasroufiViewModel(
     val lastDeletedItem: StateFlow<FinancialItem?> = _lastDeletedItem.asStateFlow()
     private val _pendingWritesCount = MutableStateFlow(0)
 
-    // Instant optimistic local overrides so UI never lags or reverts on rapid clicks
+    // Instant optimistic local overrides so UI never lags or reverts on rapid clicks (and works in local mode)
+    private val isLocalOnlyUser = currentUserId == LOCAL_DEVICE_USER_ID
     private val _optimisticProfile = MutableStateFlow<UserProfile?>(null)
     private val _optimisticCustomPrefs = MutableStateFlow<CustomizationPrefs?>(null)
+    private val _localTransactions = MutableStateFlow<List<TransactionItem>?>(null)
+    private val _localAccounts = MutableStateFlow<List<AccountItem>?>(
+        if (isLocalOnlyUser) {
+            listOf(
+                AccountItem(id = "acc_cash", userId = currentUserId, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981"),
+                AccountItem(id = "acc_bank", userId = currentUserId, name = "Compte Bancaire", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8"),
+                AccountItem(id = "acc_wallet", userId = currentUserId, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#F59E0B")
+            )
+        } else null
+    )
+    private val _localEnvelopes = MutableStateFlow<List<EnvelopeConfig>?>(
+        if (isLocalOnlyUser) {
+            listOf("charges", "marche", "transport", "cafe", "epargne", "autre").mapIndexed { idx, key ->
+                EnvelopeConfig(
+                    id = "env_$key",
+                    userId = currentUserId,
+                    key = key,
+                    nameFr = DefaultCategoryResolver.localizedDefaultName(key, "fr") ?: "Marché",
+                    nameAr = DefaultCategoryResolver.localizedDefaultName(key, "ar") ?: "السوق",
+                    nameDarija = DefaultCategoryResolver.localizedDefaultName(key, "darija") ?: "التقدية",
+                    nameEn = DefaultCategoryResolver.localizedDefaultName(key, "en") ?: "Groceries",
+                    percentage = when (key) {
+                        "charges" -> 35.0
+                        "marche" -> 25.0
+                        "transport" -> 15.0
+                        "cafe" -> 10.0
+                        "epargne" -> 10.0
+                        else -> 5.0
+                    },
+                    hasCap = key != "autre",
+                    colorHex = listOf("#284299", "#059669", "#0284C7", "#D97706", "#6D28D9", "#E11D48")[idx % 6]
+                )
+            }
+        } else null
+    )
+    private val _localItems = MutableStateFlow<List<FinancialItem>?>(
+        if (isLocalOnlyUser) {
+            listOf(
+                FinancialItem(id = "preset_cafe", userId = currentUserId, itemType = "preset", name = "Café", subtitle = "cafe", amount = 15.0, dateOrCycle = "acc_cash"),
+                FinancialItem(id = "preset_ pain", userId = currentUserId, itemType = "preset", name = "Courses", subtitle = "marche", amount = 50.0, dateOrCycle = "acc_cash"),
+                FinancialItem(id = "preset_taxi", userId = currentUserId, itemType = "preset", name = "Taxi", subtitle = "transport", amount = 20.0, dateOrCycle = "acc_cash")
+            )
+        } else null
+    )
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _customPrefsItemCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
 
     private fun safeLaunch(tag: String, block: suspend () -> Unit) {
+        if (isLocalOnlyUser) return
         viewModelScope.launch {
             _pendingWritesCount.value = _pendingWritesCount.value + 1
             try {
@@ -684,34 +730,46 @@ class MasroufiViewModel(
     private val profileFlow = repository.observeProfile(currentUserId)
         .catch { e ->
             Log.w("MasroufiVM", "Error observing profile", e)
-            _errorMessage.value = "Connexion cloud momentanément indisponible. Mode cache actif."
+            if (!isLocalOnlyUser) {
+                _errorMessage.value = "Connexion cloud momentanément indisponible. Mode cache actif."
+            }
             emit(UserProfile(userId = currentUserId))
         }
 
-    private val transactionsFlow = repository.observeTransactions(currentUserId)
-        .catch { e ->
+    private val transactionsFlow = combine(
+        repository.observeTransactions(currentUserId).catch { e ->
             Log.w("MasroufiVM", "Error observing transactions", e)
-            _errorMessage.value = "Impossible de charger les transactions en direct. Vérifiez votre connexion."
+            if (!isLocalOnlyUser) {
+                _errorMessage.value = "Impossible de charger les transactions en direct. Vérifiez votre connexion."
+            }
             emit(emptyList())
-        }
+        },
+        _localTransactions
+    ) { remote, local -> local ?: remote }
 
-    private val accountsFlow = repository.observeAccounts(currentUserId)
-        .catch { e ->
+    private val accountsFlow = combine(
+        repository.observeAccounts(currentUserId).catch { e ->
             Log.w("MasroufiVM", "Error observing accounts", e)
             emit(emptyList())
-        }
+        },
+        _localAccounts
+    ) { remote, local -> local ?: remote }
 
-    private val envelopesFlow = repository.observeEnvelopes(currentUserId)
-        .catch { e ->
+    private val envelopesFlow = combine(
+        repository.observeEnvelopes(currentUserId).catch { e ->
             Log.w("MasroufiVM", "Error observing envelopes", e)
             emit(emptyList())
-        }
+        },
+        _localEnvelopes
+    ) { remote, local -> local ?: remote }
 
-    private val itemsFlow = repository.observeFinancialItems(currentUserId)
-        .catch { e ->
+    private val itemsFlow = combine(
+        repository.observeFinancialItems(currentUserId).catch { e ->
             Log.w("MasroufiVM", "Error observing financial items", e)
             emit(emptyList())
-        }
+        },
+        _localItems
+    ) { remote, local -> local ?: remote }
 
     val uiState: StateFlow<DashboardState> = combine(
         combine(profileFlow, _optimisticProfile, transactionsFlow) { p, optP, t -> Triple(optP ?: p, t, Unit) },
@@ -1161,22 +1219,26 @@ class MasroufiViewModel(
             PayCycleEngine.resolveEnvelopeKey(category, desc, uiState.value.envelopes.map { it.config })
         }
         val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(category, resolvedEnvKey)
+        val newTx = TransactionItem(
+            id = existingId.ifBlank { "tx_${System.currentTimeMillis()}" },
+            userId = currentUserId,
+            type = type,
+            amount = amount,
+            category = normalizedCat,
+            envelopeKey = resolvedEnvKey,
+            accountId = accountId.ifBlank { "acc_cash" },
+            toAccountId = if (type == "transfer") toAccountId else "",
+            desc = desc.ifBlank { category.ifBlank { "Opération" } },
+            isoDate = validatedDate,
+            createdAt = existing?.createdAt
+        )
+        if (isLocalOnlyUser) {
+            val curList = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == newTx.id }
+            _localTransactions.value = listOf(newTx) + curList
+            return
+        }
         safeLaunch("saveTransaction") {
-            repository.upsertTransaction(
-                TransactionItem(
-                    id = existingId,
-                    userId = currentUserId,
-                    type = type,
-                    amount = amount,
-                    category = normalizedCat,
-                    envelopeKey = resolvedEnvKey,
-                    accountId = accountId.ifBlank { "acc_cash" },
-                    toAccountId = if (type == "transfer") toAccountId else "",
-                    desc = desc.ifBlank { category.ifBlank { "Opération" } },
-                    isoDate = validatedDate,
-                    createdAt = existing?.createdAt
-                )
-            )
+            repository.upsertTransaction(newTx.copy(id = existingId))
         }
     }
 
@@ -1199,6 +1261,11 @@ class MasroufiViewModel(
         )
         _lastDeletedTx.value = tx
         onAdded(tx)
+        if (isLocalOnlyUser) {
+            val curList = _localTransactions.value ?: uiState.value.allTransactions
+            _localTransactions.value = listOf(tx) + curList
+            return
+        }
         safeLaunch("quickAddPreset") {
             repository.upsertTransaction(tx)
         }
@@ -1212,6 +1279,11 @@ class MasroufiViewModel(
             updatedAt = null
         )
         onDuplicated(duplicated)
+        if (isLocalOnlyUser) {
+            val curList = _localTransactions.value ?: uiState.value.allTransactions
+            _localTransactions.value = listOf(duplicated) + curList
+            return
+        }
         safeLaunch("duplicateTransaction") {
             repository.upsertTransaction(duplicated)
         }
@@ -1253,6 +1325,14 @@ class MasroufiViewModel(
             )
         }
 
+        if (isLocalOnlyUser) {
+            if (updatedEnvelopes.isNotEmpty()) {
+                _localEnvelopes.value = updatedEnvelopes
+            }
+            onDone()
+            return
+        }
+
         safeLaunch("completeQuickOnboarding") {
             repository.saveProfile(updatedProfile)
             if (updatedEnvelopes.isNotEmpty()) {
@@ -1264,6 +1344,10 @@ class MasroufiViewModel(
 
     fun deleteTransactionWithUndo(tx: TransactionItem) {
         _lastDeletedTx.value = tx
+        if (isLocalOnlyUser) {
+            _localTransactions.value = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
+            return
+        }
         safeLaunch("deleteTransactionWithUndo") {
             repository.deleteTransaction(tx.id)
         }
@@ -1272,6 +1356,10 @@ class MasroufiViewModel(
     fun undoDeleteTransaction() {
         val tx = _lastDeletedTx.value ?: return
         _lastDeletedTx.value = null
+        if (isLocalOnlyUser) {
+            _localTransactions.value = listOf(tx) + (_localTransactions.value ?: uiState.value.allTransactions)
+            return
+        }
         safeLaunch("undoDeleteTransaction") {
             repository.upsertTransaction(tx.copy(createdAt = null, updatedAt = null))
         }
