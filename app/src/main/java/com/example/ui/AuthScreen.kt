@@ -216,10 +216,14 @@ fun onGoogleSignInClicked(
                 onAuthError("Unexpected credential type")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w("Auth", "Google Sign-In cancelled or dismissed: ${e.message}", e)
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w("Auth", "Google Sign-In cancelled or dismissed: ${e.message}", e)
+            }
             onAuthCancelled()
         } catch (e: Exception) {
-            Log.e("Auth", "Google Sign-In failed", e)
+            if (com.example.BuildConfig.DEBUG) {
+                Log.e("Auth", "Google Sign-In failed", e)
+            }
             onAuthError(e.localizedMessage ?: "Sign in failed")
         }
     }
@@ -247,13 +251,17 @@ fun signOutUser(
                 db.terminate().await()
                 db.clearPersistence().await()
             }.onFailure { e ->
-                Log.w("Auth", "Could not clear Firestore local persistence on sign-out: ${e.message}")
+                if (com.example.BuildConfig.DEBUG) {
+                    Log.w("Auth", "Could not clear Firestore local persistence on sign-out: ${e.message}")
+                }
             }
         }
         try {
             credentialManager.clearCredentialState(ClearCredentialStateRequest())
         } catch (e: Exception) {
-            Log.e("Auth", "Failed to clear credential state", e)
+            if (com.example.BuildConfig.DEBUG) {
+                Log.e("Auth", "Failed to clear credential state", e)
+            }
         } finally {
             onSignOutComplete()
         }

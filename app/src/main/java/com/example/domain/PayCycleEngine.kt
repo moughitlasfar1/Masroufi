@@ -372,8 +372,6 @@ object PayCycleEngine {
             val remaining = if (env.hasCap) totalAvailable - spentCurrent else 0.0
             val usagePct = if (env.hasCap && totalAvailable > 0.0) {
                 ((spentCurrent / totalAvailable) * 100.0).roundToLong().toInt()
-            } else if (!env.hasCap && totalCurExp > 0.0) {
-                ((spentCurrent / totalCurExp) * 100.0).roundToLong().toInt()
             } else {
                 0
             }
@@ -401,7 +399,8 @@ object PayCycleEngine {
         previousCycleExpenses: Double,
         safeToSpendToday: Double,
         dailyAverageSpend: Double,
-        envelopes: List<EnvelopeStatus>
+        envelopes: List<EnvelopeStatus>,
+        projectedCycleSpend: Double = dailyAverageSpend * window.totalDays
     ): List<SmartInsight> {
         val insights = mutableListOf<SmartInsight>()
         val timeProgressPct = ((window.daysElapsed.toDouble() / max(1, window.totalDays)) * 100.0).roundToInt()
@@ -409,7 +408,7 @@ object PayCycleEngine {
             ((cycleExpenses / totalAvailableBudget) * 100.0).roundToInt()
         } else 0
 
-        // 1. Pace vs Cycle Time Insight
+        // 1. Pace vs Cycle Time Insight (uses unified projectedCycleSpend from state.spendProjection)
         if (cycleExpenses <= 0.0) {
             insights.add(
                 SmartInsight(
@@ -432,8 +431,8 @@ object PayCycleEngine {
             return insights
         }
 
-        if (budgetProgressPct > timeProgressPct + 12) {
-            val projectedDiff = max(0.0, (dailyAverageSpend * window.totalDays) - totalAvailableBudget)
+        if (budgetProgressPct > timeProgressPct + 12 || projectedCycleSpend > totalAvailableBudget) {
+            val projectedDiff = max(0.0, projectedCycleSpend - totalAvailableBudget)
             insights.add(
                 SmartInsight(
                     id = "pace_fast",
@@ -453,7 +452,7 @@ object PayCycleEngine {
                 )
             )
         } else {
-            val potentialSave = max(0.0, totalAvailableBudget - (dailyAverageSpend * window.totalDays))
+            val potentialSave = max(0.0, totalAvailableBudget - projectedCycleSpend)
             insights.add(
                 SmartInsight(
                     id = "pace_good",
@@ -640,14 +639,7 @@ object PayCycleEngine {
             .mapValues { (_, list) -> list.sumOf { it.amount } }
 
         val elapsedCount = max(1, window.daysElapsed)
-        val rawDailySamples: List<Double> = if (dailyByDate.isEmpty()) {
-            emptyList()
-        } else if (dailyByDate.size * 2 >= elapsedCount) {
-            val zerosCount = (elapsedCount - dailyByDate.size).coerceAtLeast(0)
-            (List(zerosCount) { 0.0 } + dailyByDate.values).sorted()
-        } else {
-            dailyByDate.values.sorted()
-        }
+        val rawDailySamples: List<Double> = dailyByDate.values.sorted()
 
         val initialMedian = computePercentile(rawDailySamples, 0.50)
         val filteredSamples = if (initialMedian > 0.0) {
@@ -665,15 +657,27 @@ object PayCycleEngine {
             0
         }
 
-        val projectedTotal = if (window.isCurrentCycle) {
-            spentSoFar + scheduledBills + (cleanMedian * daysLeft)
+        // Unified pace projection: if there are no separate outlier spikes, pace = spentSoFar / elapsedCount.
+        // If there are single-day >3x outliers filtered out, use cleanMedian; otherwise use pace so 5 276 DH in 16/31d -> ~10 222 DH.
+        val hasFilteredOutliers = filteredSamples.size < rawDailySamples.size
+        val paceDailyRate = spentSoFar / elapsedCount
+        val effectiveDailyRate = if (hasFilteredOutliers && cleanMedian > 0.0) {
+            cleanMedian
+        } else if (paceDailyRate > 0.0) {
+            paceDailyRate
         } else {
-            spentSoFar
+            cleanMedian
+        }
+
+        val projectedTotal = if (window.isCurrentCycle) {
+            roundMoney(spentSoFar + scheduledBills + (effectiveDailyRate * daysLeft))
+        } else {
+            roundMoney(spentSoFar)
         }
         val optimisticTotal = if (window.isCurrentCycle) {
-            spentSoFar + scheduledBills + (lowerQuartile * daysLeft)
+            roundMoney(spentSoFar + scheduledBills + (lowerQuartile * daysLeft))
         } else {
-            spentSoFar
+            roundMoney(spentSoFar)
         }
 
         val eligibleForAlert = window.isCurrentCycle && window.daysElapsed >= 7 && txCount >= 10
@@ -860,8 +864,32 @@ object PayCycleEngine {
         }
     }
 
+    private val learnedCategoryMap = mutableMapOf<String, String>()
+
+    fun learnCategoryForDescription(description: String, envelopeKey: String) {
+        val cleanDesc = description.trim().lowercase(Locale.ROOT)
+        val cleanKey = envelopeKey.trim().lowercase(Locale.ROOT)
+        if (cleanDesc.length >= 2 && cleanKey.isNotBlank()) {
+            learnedCategoryMap[cleanDesc] = cleanKey
+        }
+    }
+
+    fun getLearnedCategoryForDescription(description: String): String? {
+        val cleanDesc = description.trim().lowercase(Locale.ROOT)
+        if (cleanDesc.length < 2) return null
+        learnedCategoryMap[cleanDesc]?.let { return it }
+        return learnedCategoryMap.entries.firstOrNull { (k, _) ->
+            cleanDesc.contains(k) || k.contains(cleanDesc)
+        }?.value
+    }
+
+    fun clearLearnedCategories() {
+        learnedCategoryMap.clear()
+    }
+
     /**
-     * Smart defaults: guesses the category/envelope and account from the description or the last-used one.
+     * Smart defaults: guesses the category/envelope and account from learned mappings,
+     * historical transactions, or Darija/Arabic/FR/EN keywords, or defaults to the last-used one.
      */
     fun inferSmartDefaults(
         description: String,
@@ -879,6 +907,21 @@ object PayCycleEngine {
 
         val cleanDesc = description.trim().lowercase(Locale.ROOT)
         if (cleanDesc.length >= 2) {
+            // 0. Check explicitly learned description -> category mappings
+            val learnedKey = getLearnedCategoryForDescription(cleanDesc)
+            if (learnedKey != null) {
+                val envConfig = envelopes.find { it.key == learnedKey }
+                val accountForEnv = sortedRecent.firstOrNull { it.envelopeKey == learnedKey }?.accountId
+                    ?: lastUsedAccount
+                return SmartDefaultGuess(
+                    envelopeKey = envConfig?.key ?: learnedKey,
+                    categoryName = envConfig?.localizedName(lang)
+                        ?: DefaultCategoryResolver.localizedDefaultName(learnedKey, lang)
+                        ?: learnedKey,
+                    accountId = accountForEnv
+                )
+            }
+
             // 1. Check historical transactions with matching description
             val histMatch = sortedRecent.firstOrNull {
                 val d = it.desc.trim().lowercase(Locale.ROOT)
@@ -888,19 +931,20 @@ object PayCycleEngine {
                 val envConfig = envelopes.find { it.key == histMatch.envelopeKey }
                 return SmartDefaultGuess(
                     envelopeKey = envConfig?.key ?: histMatch.envelopeKey.ifBlank { "cafe" },
-                    categoryName = envConfig?.localizedName(lang) ?: histMatch.category.ifBlank { "Général" },
+                    categoryName = envConfig?.localizedName(lang) ?: histMatch.category.ifBlank { "Autre" },
                     accountId = histMatch.accountId.ifBlank { lastUsedAccount }
                 )
             }
 
-            // 2. Check Darija/Arabic/FR/EN keyword parser
-            val parsed = VoiceDarijaParser.parse("$description 10", envelopes, lang)
-            if (parsed != null && parsed.envelopeKey != "autre") {
-                val accountForEnv = sortedRecent.firstOrNull { it.envelopeKey == parsed.envelopeKey }?.accountId
+            // 2. Check Darija/Arabic/FR/EN keyword parser (including gheda, echa, dwa, khobz, etc.)
+            val kwMatch = VoiceDarijaParser.inferKeywordCategory(description, envelopes, lang)
+            if (kwMatch != null) {
+                val (envKey, catName) = kwMatch
+                val accountForEnv = sortedRecent.firstOrNull { it.envelopeKey == envKey }?.accountId
                     ?: lastUsedAccount
                 return SmartDefaultGuess(
-                    envelopeKey = parsed.envelopeKey,
-                    categoryName = parsed.categoryName,
+                    envelopeKey = envKey,
+                    categoryName = catName,
                     accountId = accountForEnv
                 )
             }
@@ -1225,6 +1269,18 @@ object PayCycleEngine {
         return cal.timeInMillis / 86_400_000L
     }
 
+    fun epochDaysToIso(epochDays: Long): String {
+        val cal = Calendar.getInstance(UTC_TZ).apply {
+            clear()
+            timeInMillis = epochDays * 86_400_000L
+        }
+        return formatIso(
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH) + 1,
+            cal.get(Calendar.DAY_OF_MONTH)
+        )
+    }
+
     /**
      * Computes Monday epoch day and formatted Monday->Sunday range label using UTC so DST
      * transitions never shift day-of-week buckets.
@@ -1248,6 +1304,55 @@ object PayCycleEngine {
         cal.add(Calendar.DAY_OF_MONTH, 6)
         val sunStr = "%02d/%02d".format(Locale.US, cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.MONTH) + 1)
         return mondayEpochDay to "$monStr → $sunStr"
+    }
+
+    fun roundMoney(amount: Double): Double {
+        if (amount.isNaN() || amount.isInfinite()) return 0.0
+        return kotlin.math.round(amount * 100.0) / 100.0
+    }
+
+    private val MONTHS_SHORT_FR = arrayOf("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.")
+    private val MONTHS_SHORT_EN = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    private val MONTHS_SHORT_AR = arrayOf("يناير", "فبراير", "مارس", "أبريل", "ماي", "يونيو", "يوليوز", "غشت", "شتنبر", "أكتوبر", "نونبر", "دجنبر")
+
+    fun formatFriendlyDate(isoDate: String, lang: String = "fr", todayIso: String = todayIso()): String {
+        val clean = isoDate.trim()
+        if (clean == todayIso) {
+            return when (lang) {
+                "ar", "darija" -> "اليوم"
+                "en" -> "Today"
+                else -> "Aujourd'hui"
+            }
+        }
+        val diff = parseEpochDays(todayIso) - parseEpochDays(clean)
+        if (diff == 1L) {
+            return when (lang) {
+                "ar" -> "أمس"
+                "darija" -> "البارح"
+                "en" -> "Yesterday"
+                else -> "Hier"
+            }
+        }
+        return formatShortDayMonth(clean, lang)
+    }
+
+    fun formatShortDayMonth(isoDate: String, lang: String = "fr"): String {
+        val parts = isoDate.trim().split("-")
+        if (parts.size < 3) return isoDate
+        val monthIdx = (parts[1].toIntOrNull() ?: 1).coerceIn(1, 12) - 1
+        val dayNum = parts[2].toIntOrNull() ?: 1
+        val monthName = when (lang) {
+            "ar", "darija" -> MONTHS_SHORT_AR[monthIdx]
+            "en" -> MONTHS_SHORT_EN[monthIdx]
+            else -> MONTHS_SHORT_FR[monthIdx]
+        }
+        return "$dayNum $monthName"
+    }
+
+    fun formatCycleRangeFriendly(startIso: String, endIso: String, lang: String = "fr"): String {
+        val s = formatShortDayMonth(startIso, lang).removeSuffix(".")
+        val e = formatShortDayMonth(endIso, lang).removeSuffix(".")
+        return "$s → $e"
     }
 
     fun formatDh(value: Double): String {

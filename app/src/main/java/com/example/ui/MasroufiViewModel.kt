@@ -618,6 +618,8 @@ data class DashboardState(
     val biggestSpendingDayIso: String = "",
     val biggestSpendingDayAmount: Double = 0.0,
     val detectedSubscriptions: List<DetectedSubscription> = emptyList(),
+    val cycleSavings: Double = 0.0,
+    val isOfflineMode: Boolean = false,
     val isSyncing: Boolean = false,
     val isCleanFreshAccount: Boolean = false,
     val hideAmounts: Boolean = false,
@@ -701,17 +703,27 @@ class MasroufiViewModel(
     private fun safeLaunch(tag: String, block: suspend () -> Unit) {
         if (isLocalOnlyUser) return
         viewModelScope.launch {
-            _pendingWritesCount.value = _pendingWritesCount.value + 1
+            var markedSlowSync = false
+            val slowSyncJob = launch {
+                kotlinx.coroutines.delay(3000L)
+                markedSlowSync = true
+                _pendingWritesCount.value = _pendingWritesCount.value + 1
+            }
             try {
                 block()
                 _errorMessage.value = null
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
-                Log.w("MasroufiVM", "Non-fatal error in $tag: ${e.message}", e)
-                _errorMessage.value = "Synchronisation hors-ligne ou erreur réseau (${e.localizedMessage?.take(60) ?: tag}). Vos modifications seront resynchronisées."
+                if (com.example.BuildConfig.DEBUG) {
+                    Log.w("MasroufiVM", "Non-fatal error in $tag")
+                }
+                _errorMessage.value = "Synchronisation hors-ligne ou erreur réseau ($tag). Vos modifications seront resynchronisées."
             } finally {
-                _pendingWritesCount.value = (_pendingWritesCount.value - 1).coerceAtLeast(0)
+                slowSyncJob.cancel()
+                if (markedSlowSync) {
+                    _pendingWritesCount.value = (_pendingWritesCount.value - 1).coerceAtLeast(0)
+                }
             }
         }
     }
@@ -729,7 +741,7 @@ class MasroufiViewModel(
 
     private val profileFlow = repository.observeProfile(currentUserId)
         .catch { e ->
-            Log.w("MasroufiVM", "Error observing profile", e)
+            if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing profile")
             if (!isLocalOnlyUser) {
                 _errorMessage.value = "Connexion cloud momentanément indisponible. Mode cache actif."
             }
@@ -738,7 +750,7 @@ class MasroufiViewModel(
 
     private val transactionsFlow = combine(
         repository.observeTransactions(currentUserId).catch { e ->
-            Log.w("MasroufiVM", "Error observing transactions", e)
+            if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing transactions")
             if (!isLocalOnlyUser) {
                 _errorMessage.value = "Impossible de charger les transactions en direct. Vérifiez votre connexion."
             }
@@ -749,7 +761,7 @@ class MasroufiViewModel(
 
     private val accountsFlow = combine(
         repository.observeAccounts(currentUserId).catch { e ->
-            Log.w("MasroufiVM", "Error observing accounts", e)
+            if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing accounts")
             emit(emptyList())
         },
         _localAccounts
@@ -757,7 +769,7 @@ class MasroufiViewModel(
 
     private val envelopesFlow = combine(
         repository.observeEnvelopes(currentUserId).catch { e ->
-            Log.w("MasroufiVM", "Error observing envelopes", e)
+            if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing envelopes")
             emit(emptyList())
         },
         _localEnvelopes
@@ -765,7 +777,7 @@ class MasroufiViewModel(
 
     private val itemsFlow = combine(
         repository.observeFinancialItems(currentUserId).catch { e ->
-            Log.w("MasroufiVM", "Error observing financial items", e)
+            if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing financial items")
             emit(emptyList())
         },
         _localItems
@@ -830,6 +842,12 @@ class MasroufiViewModel(
         val futureCycleExpenses = cycleTxs.filter { it.type == "expense" && it.isoDate > todayIso }.sumOf { it.amount }
 
         val cycleExpenses = pastOrTodayCycleTxs.filter { it.type == "expense" }.sumOf { it.amount }
+        val cycleSavings = pastOrTodayCycleTxs.filter {
+            it.type == "expense" && (
+                it.envelopeKey.equals("epargne", ignoreCase = true) ||
+                    DefaultCategoryResolver.canonicalDefaultId(it.category) == "epargne"
+                )
+        }.sumOf { it.amount }
         val cycleIncomes = pastOrTodayCycleTxs.filter { it.type == "income" }.sumOf { it.amount }
         val prevCycleExpenses = txs.filter {
             it.type == "expense" && PayCycleEngine.isInWindow(it.isoDate, prevWindow) && it.isoDate <= todayIso
@@ -881,24 +899,34 @@ class MasroufiViewModel(
         val worstEnv = cappedEnvs.maxByOrNull { it.usagePercent }
         val topEnv = envelopeStatuses.filter { it.spent > 0 }.maxByOrNull { it.spent }
 
+        val earliestTxIso = txs.minByOrNull { it.isoDate }?.isoDate
+        val historySpanDays = if (earliestTxIso != null) {
+            PayCycleEngine.daysBetweenInclusive(earliestTxIso, todayIso)
+        } else 0
+        val hasAtLeast14DaysData = window.daysElapsed >= 14 || historySpanDays >= 14
+
         val baseInsights = PayCycleEngine.computeSmartInsights(
             lang = profile.language,
             currency = curSymbol,
             window = window,
             totalAvailableBudget = totalAvailable,
             cycleExpenses = cycleExpenses,
-            previousCycleExpenses = prevCycleExpenses,
+            previousCycleExpenses = if (hasAtLeast14DaysData) prevCycleExpenses else 0.0,
             safeToSpendToday = safeToday,
             dailyAverageSpend = dailyAvg,
-            envelopes = envelopeStatuses
+            envelopes = envelopeStatuses,
+            projectedCycleSpend = projectedSpend
         )
-        val anomalyInsights = PayCycleEngine.computeAnomalyNudges(
-            allTransactions = txs.filter { it.isoDate <= todayIso },
-            envelopes = sortedEnvelopes,
-            lang = profile.language,
-            nowIso = anchorIso
-        )
-        val smartInsights = (anomalyInsights + baseInsights).take(4)
+        val anomalyInsights = if (hasAtLeast14DaysData) {
+            PayCycleEngine.computeAnomalyNudges(
+                allTransactions = txs.filter { it.isoDate <= todayIso },
+                envelopes = sortedEnvelopes,
+                lang = profile.language,
+                nowIso = anchorIso
+            )
+        } else emptyList()
+        // Phase 4: Cap the Assistant at the 2 most useful insights
+        val smartInsights = (anomalyInsights + baseInsights).take(2)
 
         val noSpendStreak = PayCycleEngine.computeNoSpendStreakDays(
             cycleTransactions = pastOrTodayCycleTxs,
@@ -926,7 +954,7 @@ class MasroufiViewModel(
             currency = curSymbol,
             bills = bills,
             darets = darets,
-            debts = debts
+            debts = emptyList() // Deduplicated: debts appear once in Sellef
         )
 
         fun matchesFilter(tx: TransactionItem): Boolean {
@@ -1000,6 +1028,8 @@ class MasroufiViewModel(
             biggestSpendingDayIso = biggestDayIso,
             biggestSpendingDayAmount = biggestDayAmt,
             detectedSubscriptions = detectedSubs,
+            cycleSavings = cycleSavings,
+            isOfflineMode = isLocalOnlyUser,
             isSyncing = isSyncingNow,
             isCleanFreshAccount = txs.isEmpty() && netWorth == 0.0,
             hideAmounts = hideAmounts,
@@ -1081,16 +1111,8 @@ class MasroufiViewModel(
     }
 
     fun applyDefaultLightRevolutThemeMigration() {
-        val curProfile = uiState.value.profile
-        if (!curProfile.isDarkTheme) {
-            val updatedProfile = curProfile.copy(isDarkTheme = true)
-            _optimisticProfile.value = updatedProfile
-            safeLaunch("migrateVyxelDarkMode") {
-                repository.saveProfile(updatedProfile)
-            }
-        }
         val curPrefs = uiState.value.customPrefs
-        if (curPrefs.accentPalette == "emerald" || curPrefs.accentPalette.isBlank()) {
+        if (curPrefs.accentPalette.isBlank()) {
             saveCustomizationPrefs(curPrefs.copy(accentPalette = "majorelle"))
         }
     }
@@ -1098,7 +1120,7 @@ class MasroufiViewModel(
     fun saveBudgetSettings(baseBudget: Double, payCycleDay: Int, rolloverEnabled: Boolean) {
         val cur = uiState.value.profile
         val updated = cur.copy(
-            baseBudget = baseBudget.coerceAtLeast(100.0),
+            baseBudget = PayCycleEngine.roundMoney(baseBudget).coerceAtLeast(100.0),
             payCycleDay = payCycleDay.coerceIn(1, 28),
             rolloverEnabled = rolloverEnabled
         )
@@ -1207,7 +1229,8 @@ class MasroufiViewModel(
         desc: String,
         isoDate: String
     ) {
-        if (amount <= 0.0 || amount.isNaN() || amount.isInfinite()) return
+        val roundedAmount = PayCycleEngine.roundMoney(amount)
+        if (roundedAmount <= 0.0) return
         val validatedDate = try {
             PayCycleEngine.requireOrNormalizeIsoDate(isoDate)
         } catch (e: IllegalArgumentException) {
@@ -1218,12 +1241,15 @@ class MasroufiViewModel(
         val resolvedEnvKey = envelopeKey.ifBlank {
             PayCycleEngine.resolveEnvelopeKey(category, desc, uiState.value.envelopes.map { it.config })
         }
+        if (type == "expense" && desc.isNotBlank() && resolvedEnvKey.isNotBlank()) {
+            PayCycleEngine.learnCategoryForDescription(desc, resolvedEnvKey)
+        }
         val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(category, resolvedEnvKey)
         val newTx = TransactionItem(
             id = existingId.ifBlank { "tx_${System.currentTimeMillis()}" },
             userId = currentUserId,
             type = type,
-            amount = amount,
+            amount = roundedAmount,
             category = normalizedCat,
             envelopeKey = resolvedEnvKey,
             accountId = accountId.ifBlank { "acc_cash" },
@@ -1251,7 +1277,7 @@ class MasroufiViewModel(
             id = "tx_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = "expense",
-            amount = preset.amount.coerceAtLeast(1.0),
+            amount = PayCycleEngine.roundMoney(preset.amount).coerceAtLeast(1.0),
             category = normalizedCat,
             envelopeKey = envKey,
             accountId = preset.dateOrCycle.ifBlank { "acc_cash" },
@@ -1374,7 +1400,7 @@ class MasroufiViewModel(
                     userId = currentUserId,
                     name = name.ifBlank { "Compte" },
                     kind = if (kind in listOf("cash", "bank", "wallet")) kind else "cash",
-                    initialBalance = if (initialBalance.isNaN() || initialBalance.isInfinite()) 0.0 else initialBalance,
+                    initialBalance = PayCycleEngine.roundMoney(initialBalance),
                     colorHex = colorHex.ifBlank { "#10B981" },
                     createdAt = existing?.createdAt
                 )
@@ -1440,6 +1466,8 @@ class MasroufiViewModel(
             repository.upsertFinancialItem(
                 item.copy(
                     userId = currentUserId,
+                    amount = PayCycleEngine.roundMoney(item.amount),
+                    secondaryAmount = PayCycleEngine.roundMoney(item.secondaryAmount),
                     createdAt = item.createdAt ?: existing?.createdAt
                 )
             )
@@ -1571,13 +1599,14 @@ class MasroufiViewModel(
     }
 
     fun contributeToGoalOrSeasonal(item: FinancialItem, addAmount: Double) {
-        if (addAmount <= 0.0 || addAmount.isNaN()) return
-        val updatedItem = item.copy(secondaryAmount = item.secondaryAmount + addAmount)
+        val roundedAdd = PayCycleEngine.roundMoney(addAmount)
+        if (roundedAdd <= 0.0) return
+        val updatedItem = item.copy(secondaryAmount = PayCycleEngine.roundMoney(item.secondaryAmount + roundedAdd))
         val tx = TransactionItem(
             id = "tx_contrib_${item.id}_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = "expense",
-            amount = addAmount,
+            amount = roundedAdd,
             category = "epargne",
             envelopeKey = "epargne",
             accountId = "acc_bank",
@@ -1599,7 +1628,7 @@ class MasroufiViewModel(
             id = txId,
             userId = currentUserId,
             type = "expense",
-            amount = daret.amount.coerceAtLeast(1.0),
+            amount = PayCycleEngine.roundMoney(daret.amount).coerceAtLeast(1.0),
             category = "epargne",
             envelopeKey = "epargne",
             accountId = "acc_bank",
@@ -1613,15 +1642,16 @@ class MasroufiViewModel(
     }
 
     fun settleDebt(debt: FinancialItem, payment: Double) {
-        if (payment <= 0.0 || payment.isNaN()) return
-        val newPaid = (debt.secondaryAmount + payment).coerceAtMost(debt.amount)
+        val roundedPayment = PayCycleEngine.roundMoney(payment)
+        if (roundedPayment <= 0.0) return
+        val newPaid = PayCycleEngine.roundMoney(debt.secondaryAmount + roundedPayment).coerceAtMost(debt.amount)
         val isLent = debt.dateOrCycle != "borrowed"
         val updatedDebt = debt.copy(secondaryAmount = newPaid)
         val tx = TransactionItem(
             id = "tx_debt_${debt.id}_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = if (isLent) "income" else "expense",
-            amount = payment,
+            amount = roundedPayment,
             category = "autre",
             envelopeKey = "autre",
             accountId = "acc_cash",
@@ -1723,7 +1753,9 @@ class MasroufiViewModel(
                     fallbackProfile = currentState.profile
                 )
             } catch (e: Exception) {
-                Log.w("MasroufiVM", "Phase 1 backup validation failed: ${e.message}")
+                if (com.example.BuildConfig.DEBUG) {
+                    Log.w("MasroufiVM", "Phase 1 backup validation failed: ${e.message}")
+                }
                 val msg = e.localizedMessage ?: "Format invalide ou mot de passe erroné."
                 _errorMessage.value = "Erreur lors de la validation : $msg"
                 onResult(false, msg)
@@ -1797,7 +1829,9 @@ class MasroufiViewModel(
                     "Restauration réussie (${parsed.transactions.size} op., $finalChunks lot(s) synchronisé(s)) !"
                 )
             } catch (e: Exception) {
-                Log.e("MasroufiVM", "Phase 2 restore failed; attempting automatic rollback", e)
+                if (com.example.BuildConfig.DEBUG) {
+                    Log.e("MasroufiVM", "Phase 2 restore failed; attempting automatic rollback", e)
+                }
                 // Automatic rollback replay if a multi-chunk restore failed mid-stream (SEC-07)
                 if (!isRollbackReplay && !rollbackSnapshot.isNullOrBlank()) {
                     runCatching {

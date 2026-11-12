@@ -27,40 +27,22 @@ data class AccentPaletteSpec(
 ) {
     fun localizedLabel(lang: String): String = when (key) {
         "emerald" -> when (lang) {
-            "ar" -> "زمردي فينتك"
-            "darija" -> "خضر زمردي"
-            "en" -> "Fintech Emerald"
-            else -> labelFr
+            "ar" -> "زمردي"
+            "darija" -> "زمردي"
+            "en" -> "Emerald"
+            else -> "Émeraude"
         }
         "majorelle" -> when (lang) {
-            "ar" -> "أزرق فيكسيل الليلي (Vyxel)"
-            "darija" -> "زرق فيكسيل (Vyxel Dark)"
-            "en" -> "Vyxel Periwinkle Dark"
-            else -> labelFr
+            "ar" -> "نيلي (Indigo)"
+            "darija" -> "نيلي (Indigo)"
+            "en" -> "Indigo"
+            else -> "Indigo"
         }
         "amber" -> when (lang) {
-            "ar" -> "ذهبي وعنبري فاخر"
-            "darija" -> "ذهبي ملكي"
-            "en" -> "Luxury Gold & Amber"
-            else -> labelFr
-        }
-        "amethyst" -> when (lang) {
-            "ar" -> "بنفسجي ملكي"
-            "darija" -> "موف ملكي"
-            "en" -> "Royal Amethyst"
-            else -> labelFr
-        }
-        "terracotta" -> when (lang) {
-            "ar" -> "ياقوتي مراكشي"
-            "darija" -> "أحمر ياقوتي"
-            "en" -> "Vibrant Ruby Rose"
-            else -> labelFr
-        }
-        "ocean" -> when (lang) {
-            "ar" -> "أزرق المحيط"
-            "darija" -> "زرق البحر"
-            "en" -> "Pacific Cyan"
-            else -> labelFr
+            "ar" -> "ذهبي"
+            "darija" -> "ذهبي"
+            "en" -> "Gold"
+            else -> "Or"
         }
         else -> labelFr
     }
@@ -69,7 +51,7 @@ data class AccentPaletteSpec(
 val MasroufiPalettes = listOf(
     AccentPaletteSpec(
         key = "emerald",
-        labelFr = "Émeraude Fintech",
+        labelFr = "Émeraude",
         primaryDark = Color(0xFF34D399),
         onPrimaryDark = Color(0xFF022C22),
         primaryContainerDark = Color(0xFF064E3B),
@@ -77,29 +59,29 @@ val MasroufiPalettes = listOf(
         primaryLight = Color(0xFF047857),
         primaryContainerLight = Color(0xFFD1FAE5),
         onPrimaryContainerLight = Color(0xFF064E3B),
-        heroStart = Color(0xFF10241E),
-        heroMid = Color(0xFF132E26),
-        heroEnd = Color(0xFF0B1613),
+        heroStart = Color(0xFF064E3B),
+        heroMid = Color(0xFF047857),
+        heroEnd = Color(0xFF022C22),
         swatchColor = Color(0xFF10B981)
     ),
     AccentPaletteSpec(
         key = "majorelle",
-        labelFr = "Vyxel Periwinkle & Onyx",
-        primaryDark = Color(0xFFB8C7FA),
-        onPrimaryDark = Color(0xFF10182E),
-        primaryContainerDark = Color(0xFF23293A),
-        onPrimaryContainerDark = Color(0xFFE0E8FF),
-        primaryLight = Color(0xFF284299),
-        primaryContainerLight = Color(0xFFDCE4FF),
-        onPrimaryContainerLight = Color(0xFF101B42),
-        heroStart = Color(0xFF141822),
-        heroMid = Color(0xFF1C2333),
-        heroEnd = Color(0xFF0F1219),
-        swatchColor = Color(0xFFB8C7FA)
+        labelFr = "Indigo",
+        primaryDark = Color(0xFFB8ADFF),
+        onPrimaryDark = Color(0xFF1B1347),
+        primaryContainerDark = Color(0xFF28234A),
+        onPrimaryContainerDark = Color(0xFFF2EFFF),
+        primaryLight = Color(0xFF5546C7),
+        primaryContainerLight = Color(0xFFEAE6FF),
+        onPrimaryContainerLight = Color(0xFF1F1659),
+        heroStart = Color(0xFF3F3299),
+        heroMid = Color(0xFF5546C7),
+        heroEnd = Color(0xFF2A206B),
+        swatchColor = Color(0xFF5546C7)
     ),
     AccentPaletteSpec(
         key = "amber",
-        labelFr = "Or & Obsidienne Luxe",
+        labelFr = "Or",
         primaryDark = Color(0xFFFBBF24),
         onPrimaryDark = Color(0xFF451A03),
         primaryContainerDark = Color(0xFF78350F),
@@ -107,65 +89,26 @@ val MasroufiPalettes = listOf(
         primaryLight = Color(0xFF92400E),
         primaryContainerLight = Color(0xFFFEF3C7),
         onPrimaryContainerLight = Color(0xFF451A03),
-        heroStart = Color(0xFF241B10),
-        heroMid = Color(0xFF302212),
-        heroEnd = Color(0xFF14100B),
+        heroStart = Color(0xFF78350F),
+        heroMid = Color(0xFF92400E),
+        heroEnd = Color(0xFF451A03),
         swatchColor = Color(0xFFF59E0B)
-    ),
-    AccentPaletteSpec(
-        key = "amethyst",
-        labelFr = "Violet Royal",
-        primaryDark = Color(0xFFC4B5FD),
-        onPrimaryDark = Color(0xFF2E1065),
-        primaryContainerDark = Color(0xFF4C1D95),
-        onPrimaryContainerDark = Color(0xFFEDE9FE),
-        primaryLight = Color(0xFF6D28D9),
-        primaryContainerLight = Color(0xFFEDE9FE),
-        onPrimaryContainerLight = Color(0xFF2E1065),
-        heroStart = Color(0xFF1B1528),
-        heroMid = Color(0xFF261C38),
-        heroEnd = Color(0xFF110D1A),
-        swatchColor = Color(0xFF8B5CF6)
-    ),
-    AccentPaletteSpec(
-        key = "terracotta",
-        labelFr = "Rose Rubis Vif",
-        primaryDark = Color(0xFFFDA4AF),
-        onPrimaryDark = Color(0xFF4C0519),
-        primaryContainerDark = Color(0xFF881337),
-        onPrimaryContainerDark = Color(0xFFFFE4E6),
-        primaryLight = Color(0xFFBE123C),
-        primaryContainerLight = Color(0xFFFFE4E6),
-        onPrimaryContainerLight = Color(0xFF4C0519),
-        heroStart = Color(0xFF261219),
-        heroMid = Color(0xFF361822),
-        heroEnd = Color(0xFF160B0F),
-        swatchColor = Color(0xFFF43F5E)
-    ),
-    AccentPaletteSpec(
-        key = "ocean",
-        labelFr = "Cyan Pacifique",
-        primaryDark = Color(0xFF38BDF8),
-        onPrimaryDark = Color(0xFF082F49),
-        primaryContainerDark = Color(0xFF0369A1),
-        onPrimaryContainerDark = Color(0xFFE0F2FE),
-        primaryLight = Color(0xFF0369A1),
-        primaryContainerLight = Color(0xFFE0F2FE),
-        onPrimaryContainerLight = Color(0xFF0C4A6E),
-        heroStart = Color(0xFF101E28),
-        heroMid = Color(0xFF152936),
-        heroEnd = Color(0xFF0B131A),
-        swatchColor = Color(0xFF0EA5E9)
     )
 )
 
 fun paletteForKey(key: String): AccentPaletteSpec {
-    return MasroufiPalettes.find { it.key == key } ?: MasroufiPalettes.first()
+    val normalized = when (key.trim().lowercase()) {
+        "indigo", "majorelle" -> "majorelle"
+        "amber", "or", "gold" -> "amber"
+        "emerald", "emeraude" -> "emerald"
+        else -> key
+    }
+    return MasroufiPalettes.find { it.key == normalized } ?: MasroufiPalettes.first()
 }
 
 fun heroGradientColors(accentPalette: String, isOverBudget: Boolean): List<Color> {
     if (isOverBudget) {
-        return listOf(Color(0xFF2B1219), Color(0xFF3B1520), Color(0xFF170B0E))
+        return listOf(Color(0xFF881337), Color(0xFF9F1239), Color(0xFF4C0519))
     }
     val spec = paletteForKey(accentPalette)
     return listOf(spec.heroStart, spec.heroMid, spec.heroEnd)
@@ -196,7 +139,7 @@ val ExpressiveShapes = androidx.compose.material3.Shapes(
 
 @Composable
 fun MasroufiTheme(
-    darkTheme: Boolean = true,
+    darkTheme: Boolean = false,
     accentPalette: String = "majorelle",
     content: @Composable () -> Unit
 ) {
@@ -226,8 +169,8 @@ fun MasroufiTheme(
             inverseOnSurface = Color(0xFF0B1120),
             inversePrimary = spec.primaryLight,
             scrim = Color(0xCC000000),
-            surfaceContainerLowest = Color(0xFF000000),
-            surfaceContainerLow = Color(0xFF0D1016),
+            surfaceContainerLowest = Color(0xFF07090E),
+            surfaceContainerLow = Color(0xFF0E111A),
             surfaceContainer = MasroufiSurfaceContainerDark,
             surfaceContainerHigh = MasroufiSurfaceContainerHighDark,
             surfaceContainerHighest = MasroufiSurfaceContainerHighestDark,
@@ -244,10 +187,10 @@ fun MasroufiTheme(
             onPrimary = Color.White,
             primaryContainer = spec.primaryContainerLight,
             onPrimaryContainer = spec.onPrimaryContainerLight,
-            secondary = Color(0xFF284299),
+            secondary = Color(0xFF5546C7),
             onSecondary = Color.White,
-            secondaryContainer = Color(0xFFDCE4FF),
-            onSecondaryContainer = Color(0xFF101B42),
+            secondaryContainer = Color(0xFFEAE6FF),
+            onSecondaryContainer = Color(0xFF1F1659),
             tertiary = Color(0xFFB45309),
             onTertiary = Color.White,
             tertiaryContainer = Color(0xFFFEF3C7),

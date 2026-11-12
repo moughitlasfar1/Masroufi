@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.fragment.app.FragmentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -148,6 +149,7 @@ import com.example.ui.setLocalModeEnabled
 import com.example.ui.setMoreFeaturesEnabled
 import com.example.ui.signOutUser
 import androidx.compose.foundation.BorderStroke
+import com.example.ui.dashboard.DashboardHeader
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
@@ -181,6 +183,27 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 
 internal val MAIN_TAB_KEYS = listOf("vue", "semaine", "categories", "historique")
+
+sealed interface ActiveSheet {
+    data object None : ActiveSheet
+    data class AddOrEditTransaction(
+        val existingTx: TransactionItem? = null,
+        val initialType: String = "expense",
+        val autoLaunchVoice: Boolean = false
+    ) : ActiveSheet
+    data object QuickPresets : ActiveSheet
+    data class FinancialOrAccountItem(
+        val itemType: String,
+        val existingItem: FinancialItem? = null,
+        val existingAccount: AccountItem? = null
+    ) : ActiveSheet
+    data object EnvelopesEditor : ActiveSheet
+    data object Settings : ActiveSheet
+    data object CustomizationStudio : ActiveSheet
+    data object QuickOnboarding : ActiveSheet
+    data object RestoreBackup : ActiveSheet
+    data object SplitBill : ActiveSheet
+}
 private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
 private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
 private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
@@ -336,7 +359,7 @@ fun AppNavigation(
     var localModeEnabled by remember { mutableStateOf(isLocalModeEnabled(context)) }
     val user = currentUser
     if (user == null && !localModeEnabled) {
-        MasroufiTheme(darkTheme = true, accentPalette = "majorelle") {
+        MasroufiTheme(darkTheme = false, accentPalette = "majorelle") {
             AuthScreen(
                 onAuthSuccess = {
                     setLocalModeEnabled(context, false)
@@ -409,19 +432,9 @@ fun MainFeatureScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Restore persistent privacy mask & apply one-time Vyxel Dark OLED migration
+    // Restore persistent privacy mask
     LaunchedEffect(Unit) {
         viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
-    }
-
-    LaunchedEffect(state.isLoading) {
-        if (!state.isLoading) {
-            val uiPrefs = context.getSharedPreferences("masroufi_ui_prefs", Context.MODE_PRIVATE)
-            if (!uiPrefs.getBoolean("vyxel_dark_v4_migrated", false)) {
-                uiPrefs.edit().putBoolean("vyxel_dark_v4_migrated", true).apply()
-                viewModel.applyDefaultLightRevolutThemeMigration()
-            }
-        }
     }
 
     // Sync Home-Screen Widget, Quick Settings Tile & WorkManager Smart Notifications whenever DashboardState updates
@@ -480,29 +493,53 @@ fun MainFeatureScreen(
         mutableStateOf(isMoreFeaturesEnabled(context, hasExistingData))
     }
 
-    var showQuickPresetPicker by remember { mutableStateOf(false) }
-
-    var showAddTxSheet by remember { mutableStateOf(openQuickAddOnLaunch) }
-    var autoLaunchVoiceInSheet by remember { mutableStateOf(openQuickVoiceOnLaunch) }
-    var initialTxType by remember { mutableStateOf("expense") }
-    var editingTx by remember { mutableStateOf<TransactionItem?>(null) }
-    var showSettingsSheet by remember { mutableStateOf(false) }
-    var showQuickOnboardingSheet by remember { mutableStateOf(false) }
-    var showCustomizationSheet by remember { mutableStateOf(false) }
-    var showEnvelopesSheet by remember { mutableStateOf(false) }
-    var activeItemSheetType by remember { mutableStateOf<String?>(null) }
-    var editingFinancialItem by remember { mutableStateOf<FinancialItem?>(null) }
-    var editingAccountItem by remember { mutableStateOf<AccountItem?>(null) }
-    var showRestoreSheet by remember { mutableStateOf(false) }
-    var showSplitBillSheet by remember { mutableStateOf(false) }
+    // Phase 6: Single ActiveSheet state so two bottom sheets can never open at the same time
+    var activeSheet by remember {
+        mutableStateOf<ActiveSheet>(
+            if (openQuickAddOnLaunch) {
+                ActiveSheet.AddOrEditTransaction(
+                    existingTx = null,
+                    initialType = "expense",
+                    autoLaunchVoice = openQuickVoiceOnLaunch
+                )
+            } else {
+                ActiveSheet.None
+            }
+        )
+    }
 
     var flagSecureEnabled by remember { mutableStateOf(AppSecurityManager.isFlagSecureEnabled(context)) }
     var appLockEnabled by remember { mutableStateOf(AppSecurityManager.isAppLockEnabled(context)) }
     var isSessionUnlocked by remember { mutableStateOf(!AppSecurityManager.isAppLockEnabled(context)) }
 
-    val activity = context as? Activity
+    val activity = context as? FragmentActivity
     LaunchedEffect(flagSecureEnabled) {
         AppSecurityManager.applyWindowFlagSecure(activity, flagSecureEnabled)
+    }
+
+    // Phase 1 Bug #3: Match status bar icon style to Light vs Dark theme
+    LaunchedEffect(state.profile.isDarkTheme) {
+        runCatching {
+            val isDark = state.profile.isDarkTheme
+            activity?.enableEdgeToEdge(
+                statusBarStyle = if (isDark) {
+                    SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(
+                        android.graphics.Color.TRANSPARENT,
+                        android.graphics.Color.TRANSPARENT
+                    )
+                },
+                navigationBarStyle = if (isDark) {
+                    SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(
+                        android.graphics.Color.TRANSPARENT,
+                        android.graphics.Color.TRANSPARENT
+                    )
+                }
+            )
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -569,7 +606,7 @@ fun MainFeatureScreen(
             val raw = AppSecurityManager.readTextFromUri(context, uri)
             if (!raw.isNullOrBlank()) {
                 pendingRestoreRawContent = raw
-                showRestoreSheet = true
+                activeSheet = ActiveSheet.RestoreBackup
             } else {
                 scope.launch {
                     snackbarHostState.showSnackbar("Fichier illisible ou dépassant la limite de 10 Mo.")
@@ -657,34 +694,20 @@ fun MainFeatureScreen(
                     containerColor = Color.Transparent,
                     snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
                     topBar = {
-                        MasroufiTopBar(
+                        DashboardHeader(
                             language = state.profile.language,
                             isDarkTheme = state.profile.isDarkTheme,
                             hideAmounts = state.hideAmounts,
                             isSyncing = state.isSyncing,
-                            hasSyncWarning = isLocalMode || !state.errorMessage.isNullOrBlank(),
-                            moreFeaturesEnabled = moreFeaturesEnabled,
-                            appTitle = state.customPrefs.customTitle.ifBlank { "Masroufi" },
-                            subTitle = state.customPrefs.customSubtitle.ifBlank { strings.subTitle },
-                            currencySymbol = cur,
+                            isOfflineMode = isLocalMode || state.isOfflineMode,
                             accentPalette = state.customPrefs.accentPalette,
-                            cycleLabel = "${state.activeWindow.cycleKey} (${state.activeWindow.startIso.takeLast(5)} → ${state.activeWindow.endIso.takeLast(5)})",
-                            onCycleLanguage = {
-                                val nextLang = when (state.profile.language) {
-                                    "fr" -> "darija"
-                                    "darija" -> "ar"
-                                    "ar" -> "en"
-                                    else -> "fr"
-                                }
-                                viewModel.updateLanguage(nextLang)
-                            },
+                            startIso = state.activeWindow.startIso,
+                            endIso = state.activeWindow.endIso,
                             onTogglePrivacy = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 togglePrivacyMask()
                             },
-                            onToggleTheme = { viewModel.toggleTheme() },
-                            onOpenCustomization = { showCustomizationSheet = true },
-                            onOpenSettings = { showSettingsSheet = true },
+                            onOpenSettings = { activeSheet = ActiveSheet.Settings },
                             onShiftCycle = { delta -> viewModel.shiftCycle(delta) }
                         )
                     },
@@ -712,9 +735,11 @@ fun MainFeatureScreen(
                         ExtendedFloatingActionButton(
                             onClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                editingTx = null
-                                initialTxType = "expense"
-                                showAddTxSheet = true
+                                activeSheet = ActiveSheet.AddOrEditTransaction(
+                                    existingTx = null,
+                                    initialType = "expense",
+                                    autoLaunchVoice = false
+                                )
                             },
                             shape = RoundedCornerShape(22.dp),
                             containerColor = MaterialTheme.colorScheme.primary,
@@ -806,27 +831,30 @@ fun MainFeatureScreen(
                                         state = state,
                                         strings = strings,
                                         onOpenAddModal = { type ->
-                                            editingTx = null
-                                            initialTxType = type
-                                            showAddTxSheet = true
+                                            activeSheet = ActiveSheet.AddOrEditTransaction(
+                                                existingTx = null,
+                                                initialType = type
+                                            )
                                         },
                                         onQuickPresetTap = { preset ->
                                             triggerQuickPreset(preset)
                                         },
                                         onOpenAccountModal = { acc ->
-                                            editingAccountItem = acc
-                                            editingFinancialItem = null
-                                            activeItemSheetType = "account"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "account",
+                                                existingAccount = acc
+                                            )
                                         },
                                         onPayBill = { bill -> viewModel.payRecurringBill(bill) },
                                         onAddPresetModal = { preset ->
-                                            editingFinancialItem = preset
-                                            editingAccountItem = null
-                                            activeItemSheetType = "preset"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "preset",
+                                                existingItem = preset
+                                            )
                                         },
                                         onDeletePreset = { id -> deleteFinancialItemWithUndoSnackbar(id) },
-                                        onOpenCustomizationModal = { showCustomizationSheet = true },
-                                        onOpenQuickOnboarding = { showQuickOnboardingSheet = true },
+                                        onOpenCustomizationModal = { activeSheet = ActiveSheet.CustomizationStudio },
+                                        onOpenQuickOnboarding = { activeSheet = ActiveSheet.QuickOnboarding },
                                         onLoadDemoData = {
                                             viewModel.loadDemoData {
                                                 scope.launch {
@@ -842,7 +870,7 @@ fun MainFeatureScreen(
                                             }
                                         },
                                         onToggleHideAmounts = { togglePrivacyMask() },
-                                        onOpenQuickPresetPicker = { showQuickPresetPicker = true },
+                                        onOpenQuickPresetPicker = { activeSheet = ActiveSheet.QuickPresets },
                                         onMoveDashboardSection = { sectionKey, dir ->
                                             viewModel.moveDashboardSection(sectionKey, dir)
                                         },
@@ -863,10 +891,11 @@ fun MainFeatureScreen(
                                             shareTextContent(context, textPayload, "Bilan Masroufi", "text/plain")
                                         },
                                         onEditTransaction = { tx ->
-                                            editingTx = tx
-                                            initialTxType = tx.type
-                                            autoLaunchVoiceInSheet = false
-                                            showAddTxSheet = true
+                                            activeSheet = ActiveSheet.AddOrEditTransaction(
+                                                existingTx = tx,
+                                                initialType = tx.type,
+                                                autoLaunchVoice = false
+                                            )
                                         },
                                         onSeeAllTransactions = {
                                             scope.launch {
@@ -884,9 +913,10 @@ fun MainFeatureScreen(
                                         onUpdateWhatIf = { key, pct -> viewModel.updateWhatIf(key, pct) },
                                         onContributeSeasonal = { item -> viewModel.contributeToGoalOrSeasonal(item, 200.0) },
                                         onOpenNewSeasonal = { item ->
-                                            editingFinancialItem = item
-                                            editingAccountItem = null
-                                            activeItemSheetType = "seasonal"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "seasonal",
+                                                existingItem = item
+                                            )
                                         },
                                         onDeleteItem = { id -> deleteFinancialItemWithUndoSnackbar(id) },
                                         onShiftCycle = { delta -> viewModel.shiftCycle(delta) },
@@ -927,32 +957,36 @@ fun MainFeatureScreen(
                                         state = state,
                                         strings = strings,
                                         moreFeaturesEnabled = moreFeaturesEnabled,
-                                        onOpenCustomizeEnvelopes = { showEnvelopesSheet = true },
+                                        onOpenCustomizeEnvelopes = { activeSheet = ActiveSheet.EnvelopesEditor },
                                         onPayDaretRound = { daret -> viewModel.payDaretRound(daret) },
                                         onOpenNewDaret = { item ->
-                                            editingFinancialItem = item
-                                            editingAccountItem = null
-                                            activeItemSheetType = "daret"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "daret",
+                                                existingItem = item
+                                            )
                                         },
                                         onSettleDebt = { debt ->
                                             val rem = (debt.amount - debt.secondaryAmount).coerceAtLeast(0.0)
                                             if (rem > 0.0) viewModel.settleDebt(debt, rem)
                                         },
                                         onOpenNewDebt = { item ->
-                                            editingFinancialItem = item
-                                            editingAccountItem = null
-                                            activeItemSheetType = "debt"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "debt",
+                                                existingItem = item
+                                            )
                                         },
                                         onContributeGoal = { goal -> viewModel.contributeToGoalOrSeasonal(goal, 200.0) },
                                         onOpenNewGoal = { item ->
-                                            editingFinancialItem = item
-                                            editingAccountItem = null
-                                            activeItemSheetType = "goal"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "goal",
+                                                existingItem = item
+                                            )
                                         },
                                         onOpenNewBill = { item ->
-                                            editingFinancialItem = item
-                                            editingAccountItem = null
-                                            activeItemSheetType = "bill"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "bill",
+                                                existingItem = item
+                                            )
                                         },
                                         onPayBill = { bill -> viewModel.payRecurringBill(bill) },
                                         onDeleteItem = { id -> deleteFinancialItemWithUndoSnackbar(id) },
@@ -965,7 +999,7 @@ fun MainFeatureScreen(
                                         onSendWhatsAppReminder = { msg ->
                                             sendWhatsAppOrShareReminder(context, msg)
                                         },
-                                        onOpenSplitBillModal = { showSplitBillSheet = true },
+                                        onOpenSplitBillModal = { activeSheet = ActiveSheet.SplitBill },
                                         onQuickCreateBillTemplate = { tplName, tplAmt, tplDueDay ->
                                             viewModel.saveFinancialItem(
                                                 FinancialItem(
@@ -985,20 +1019,23 @@ fun MainFeatureScreen(
                                             }
                                         },
                                         onOpenAccountModal = { acc ->
-                                            editingAccountItem = acc
-                                            editingFinancialItem = null
-                                            activeItemSheetType = "account"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "account",
+                                                existingAccount = acc
+                                            )
                                         },
                                         onOpenTransferModal = {
-                                            editingTx = null
-                                            initialTxType = "transfer"
-                                            showAddTxSheet = true
+                                            activeSheet = ActiveSheet.AddOrEditTransaction(
+                                                existingTx = null,
+                                                initialType = "transfer"
+                                            )
                                         },
                                         onQuickPresetTap = { preset -> triggerQuickPreset(preset) },
                                         onAddPresetModal = { preset ->
-                                            editingFinancialItem = preset
-                                            editingAccountItem = null
-                                            activeItemSheetType = "preset"
+                                            activeSheet = ActiveSheet.FinancialOrAccountItem(
+                                                itemType = "preset",
+                                                existingItem = preset
+                                            )
                                         },
                                         onDeletePreset = { id -> deleteFinancialItemWithUndoSnackbar(id) },
                                         onTriggerReminderAction = { reminder ->
@@ -1015,10 +1052,11 @@ fun MainFeatureScreen(
                                         strings = strings,
                                         onUpdateFilter = { fn -> viewModel.updateFilter(fn) },
                                         onEditTransaction = { tx ->
-                                            editingTx = tx
-                                            initialTxType = tx.type
-                                            autoLaunchVoiceInSheet = false
-                                            showAddTxSheet = true
+                                            activeSheet = ActiveSheet.AddOrEditTransaction(
+                                                existingTx = tx,
+                                                initialType = tx.type,
+                                                autoLaunchVoice = false
+                                            )
                                         },
                                         onDeleteTransaction = { tx ->
                                             viewModel.deleteTransactionWithUndo(tx)
@@ -1099,7 +1137,7 @@ fun MainFeatureScreen(
                                         },
                                         onOpenRestoreModal = {
                                             pendingRestoreRawContent = ""
-                                            showRestoreSheet = true
+                                            activeSheet = ActiveSheet.RestoreBackup
                                         },
                                         onExportJsonFile = { pwd ->
                                             pendingBackupPassword = pwd
@@ -1128,9 +1166,10 @@ fun MainFeatureScreen(
                                             }
                                         },
                                         onAddFirstTransaction = {
-                                            editingTx = null
-                                            initialTxType = "expense"
-                                            showAddTxSheet = true
+                                            activeSheet = ActiveSheet.AddOrEditTransaction(
+                                                existingTx = null,
+                                                initialType = "expense"
+                                            )
                                         }
                                     )
                                 }
@@ -1140,24 +1179,22 @@ fun MainFeatureScreen(
                 }
             }
 
-            if (showQuickPresetPicker) {
-                QuickPresetPickerSheet(
+            when (val sheet = activeSheet) {
+                ActiveSheet.None -> Unit
+
+                ActiveSheet.QuickPresets -> QuickPresetPickerSheet(
                     state = state,
                     strings = strings,
-                    onDismiss = { showQuickPresetPicker = false },
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onSelectPreset = { preset -> triggerQuickPreset(preset) },
                     onCreateNewPreset = {
-                        editingFinancialItem = null
-                        editingAccountItem = null
-                        activeItemSheetType = "preset"
+                        activeSheet = ActiveSheet.FinancialOrAccountItem(itemType = "preset")
                     }
                 )
-            }
 
-            if (showSplitBillSheet) {
-                SplitBillToSellefSheet(
+                ActiveSheet.SplitBill -> SplitBillToSellefSheet(
                     state = state,
-                    onDismiss = { showSplitBillSheet = false },
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onSplitBill = { billTitle, totalAmt, friendsCsv, includeSelf, recordFullNow ->
                         viewModel.splitBillIntoSellef(
                             billTitle = billTitle,
@@ -1174,19 +1211,14 @@ fun MainFeatureScreen(
                         }
                     }
                 )
-            }
 
-            if (showAddTxSheet) {
-                TransactionEditorSheet(
-                    existingTx = editingTx,
-                    initialType = initialTxType,
+                is ActiveSheet.AddOrEditTransaction -> TransactionEditorSheet(
+                    existingTx = sheet.existingTx,
+                    initialType = sheet.initialType,
                     state = state,
                     strings = strings,
-                    autoLaunchVoice = autoLaunchVoiceInSheet,
-                    onDismiss = {
-                        showAddTxSheet = false
-                        autoLaunchVoiceInSheet = false
-                    },
+                    autoLaunchVoice = sheet.autoLaunchVoice,
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onSave = { id, type, amt, cat, envKey, accId, toAccId, desc, iso ->
                         viewModel.saveTransaction(id, type, amt, cat, envKey, accId, toAccId, desc, iso)
                     },
@@ -1204,12 +1236,10 @@ fun MainFeatureScreen(
                         }
                     }
                 )
-            }
 
-            if (showQuickOnboardingSheet) {
-                QuickOnboarding30sSheet(
+                ActiveSheet.QuickOnboarding -> QuickOnboarding30sSheet(
                     state = state,
-                    onDismiss = { showQuickOnboardingSheet = false },
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onCompleteOnboarding = { salary, payDay, envelopes ->
                         viewModel.completeQuickOnboarding(salary, payDay, envelopes) {
                             scope.launch {
@@ -1225,10 +1255,8 @@ fun MainFeatureScreen(
                         }
                     }
                 )
-            }
 
-            if (showSettingsSheet) {
-                SettingsBottomSheet(
+                ActiveSheet.Settings -> SettingsBottomSheet(
                     state = state,
                     strings = strings,
                     moreFeaturesEnabled = moreFeaturesEnabled,
@@ -1240,12 +1268,15 @@ fun MainFeatureScreen(
                     onLinkGoogleAccount = {
                         onExitLocalModeToGoogleSignIn()
                     },
-                    onDismiss = { showSettingsSheet = false },
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onSaveSettings = { b, day, roll ->
                         viewModel.saveBudgetSettings(b, day, roll)
                     },
-                    onOpenCustomizationStudio = { showCustomizationSheet = true },
-                    onOpenQuickOnboarding = { showQuickOnboardingSheet = true },
+                    onToggleTheme = { viewModel.toggleTheme() },
+                    onSelectLanguage = { langCode -> viewModel.updateLanguage(langCode) },
+                    onSaveCustomPrefs = { prefs -> viewModel.saveCustomizationPrefs(prefs) },
+                    onOpenCustomizationStudio = { activeSheet = ActiveSheet.CustomizationStudio },
+                    onOpenQuickOnboarding = { activeSheet = ActiveSheet.QuickOnboarding },
                     onLoadDemoData = {
                         viewModel.loadDemoData {
                             scope.launch {
@@ -1276,6 +1307,17 @@ fun MainFeatureScreen(
                             snackbarHostState.showSnackbar("Presse-papiers vidé !")
                         }
                     },
+                    onExportJsonFile = { pwd ->
+                        pendingBackupPassword = pwd
+                        exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
+                    },
+                    onExportCsvFile = {
+                        exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")
+                    },
+                    onOpenRestoreModal = {
+                        pendingRestoreRawContent = ""
+                        activeSheet = ActiveSheet.RestoreBackup
+                    },
                     onSignOut = {
                         setLocalModeEnabled(context, false)
                         signOutUser(
@@ -1285,40 +1327,29 @@ fun MainFeatureScreen(
                         )
                     }
                 )
-            }
 
-            if (showCustomizationSheet) {
-                CustomizationStudioSheet(
+                ActiveSheet.CustomizationStudio -> CustomizationStudioSheet(
                     state = state,
-                    onDismiss = { showCustomizationSheet = false },
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onSaveCustomPrefs = { prefs ->
                         viewModel.saveCustomizationPrefs(prefs)
                     }
                 )
-            }
 
-            if (showEnvelopesSheet) {
-                CustomizeEnvelopesSheet(
+                ActiveSheet.EnvelopesEditor -> CustomizeEnvelopesSheet(
                     state = state,
-                    onDismiss = { showEnvelopesSheet = false },
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onSaveEnvelope = { env -> viewModel.saveEnvelopeConfig(env) },
                     onDeleteEnvelope = { id -> viewModel.deleteEnvelopeConfig(id) },
                     onAutoBalance100 = { viewModel.autoBalanceEnvelopesTo100() }
                 )
-            }
 
-            val sheetType = activeItemSheetType
-            if (sheetType != null) {
-                AddFinancialItemSheet(
-                    itemType = sheetType,
-                    existingItem = editingFinancialItem,
-                    existingAccount = editingAccountItem,
+                is ActiveSheet.FinancialOrAccountItem -> AddFinancialItemSheet(
+                    itemType = sheet.itemType,
+                    existingItem = sheet.existingItem,
+                    existingAccount = sheet.existingAccount,
                     state = state,
-                    onDismiss = {
-                        activeItemSheetType = null
-                        editingFinancialItem = null
-                        editingAccountItem = null
-                    },
+                    onDismiss = { activeSheet = ActiveSheet.None },
                     onSaveItem = { item -> viewModel.saveFinancialItem(item) },
                     onSaveAccount = { id, name, kind, bal, colorHex ->
                         viewModel.saveAccount(
@@ -1332,17 +1363,15 @@ fun MainFeatureScreen(
                     onDeleteAccount = { id -> viewModel.deleteAccount(id) },
                     onDeleteItem = { id -> deleteFinancialItemWithUndoSnackbar(id) }
                 )
-            }
 
-            if (showRestoreSheet) {
-                RestoreJsonSheet(
+                ActiveSheet.RestoreBackup -> RestoreJsonSheet(
                     strings = strings,
                     initialRawJson = pendingRestoreRawContent,
                     onPreviewBackup = { raw, pwd ->
                         viewModel.previewBackupImport(raw, pwd)
                     },
                     onDismiss = {
-                        showRestoreSheet = false
+                        activeSheet = ActiveSheet.None
                         pendingRestoreRawContent = ""
                     },
                     onRestore = { raw, pwd, replaceExisting ->
@@ -1356,464 +1385,6 @@ fun MainFeatureScreen(
                         importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
                     }
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MasroufiTopBar(
-    language: String,
-    isDarkTheme: Boolean,
-    hideAmounts: Boolean,
-    isSyncing: Boolean = false,
-    hasSyncWarning: Boolean = false,
-    moreFeaturesEnabled: Boolean = false,
-    appTitle: String,
-    subTitle: String,
-    currencySymbol: String,
-    accentPalette: String,
-    cycleLabel: String,
-    onCycleLanguage: () -> Unit,
-    onTogglePrivacy: () -> Unit,
-    onToggleTheme: () -> Unit,
-    onOpenCustomization: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onShiftCycle: (Int) -> Unit
-) {
-    val pal = paletteForKey(accentPalette)
-    val strings = Translations.forLang(language)
-    val topBarBg = if (isDarkTheme) Color(0xFF000000) else MaterialTheme.colorScheme.surface
-    val circleBtnBg = if (isDarkTheme) Color(0xFF161921) else MaterialTheme.colorScheme.surfaceContainerHigh
-    val circleBtnBorder = if (isDarkTheme) Color(0xFF252A36) else MaterialTheme.colorScheme.outlineVariant
-    val activeSegmentBg = if (isDarkTheme) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
-    val activeSegmentFg = if (isDarkTheme) VyxelOnPeriwinkle else Color.White
-
-    Surface(
-        color = topBarBg,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(circleBtnBg)
-                            .clickable { onOpenSettings() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AccountBalanceWallet,
-                            contentDescription = null,
-                            tint = if (isDarkTheme) VyxelPeriwinkle else pal.primaryLight,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = appTitle,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1
-                            )
-                            Surface(
-                                shape = CircleShape,
-                                color = when {
-                                    isSyncing || hasSyncWarning -> AccentAmber.copy(alpha = 0.16f)
-                                    else -> AccentEmerald.copy(alpha = 0.16f)
-                                },
-                                border = BorderStroke(
-                                    width = 1.dp,
-                                    color = if (isSyncing || hasSyncWarning) AccentAmber.copy(alpha = 0.38f) else AccentEmerald.copy(alpha = 0.38f)
-                                ),
-                                modifier = Modifier.testTag("sync_status_indicator")
-                            ) {
-                                Text(
-                                    text = when {
-                                        isSyncing -> when (language) {
-                                            "ar" -> "مزامنة…"
-                                            "darija" -> "كيتزامن…"
-                                            "en" -> "Syncing…"
-                                            else -> "Synchro…"
-                                        }
-                                        hasSyncWarning -> when (language) {
-                                            "ar" -> "محلي"
-                                            "darija" -> "فالتليفون"
-                                            "en" -> "On device"
-                                            else -> "Local"
-                                        }
-                                        else -> when (language) {
-                                            "ar" -> "متزامن ✓"
-                                            "darija" -> "متزامن ✓"
-                                            "en" -> "Synced ✓"
-                                            else -> "Synchro ✓"
-                                        }
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 10.sp,
-                                    color = if (isSyncing || hasSyncWarning) AccentAmber else AccentEmerald,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            text = subTitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
-                        )
-                    }
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = circleBtnBg,
-                            border = BorderStroke(1.dp, circleBtnBorder),
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .clickable { onTogglePrivacy() }
-                                .testTag("privacy_eye_button")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = if (hideAmounts) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (hideAmounts) "Show Amounts" else "Hide Amounts",
-                                    tint = if (hideAmounts) AccentAmber else MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            text = when (language) {
-                                "ar" -> "إخفاء"
-                                "darija" -> "خبي"
-                                "en" -> "Privacy"
-                                else -> "Privé"
-                            },
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    if (moreFeaturesEnabled) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = circleBtnBg,
-                                border = BorderStroke(1.dp, circleBtnBorder),
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .clickable { onOpenCustomization() }
-                                    .testTag("customization_button")
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Palette,
-                                        contentDescription = "Customize App",
-                                        tint = VyxelPeriwinkle,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = when (language) {
-                                    "ar" -> "المظهر"
-                                    "darija" -> "الألوان"
-                                    "en" -> "Style"
-                                    else -> "Style"
-                                },
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = circleBtnBg,
-                            border = BorderStroke(1.dp, circleBtnBorder),
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .clickable { onOpenSettings() }
-                                .testTag("settings_button")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Tune,
-                                    contentDescription = "Settings",
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            text = when (language) {
-                                "ar" -> "إعدادات"
-                                "darija" -> "إعدادات"
-                                "en" -> "Profile"
-                                else -> "Profil"
-                            },
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-
-            // Row 2: Vyxel 3-Part Segmented Pill Bar ([ ◀ Préc. | ✨ Active Cycle Pill in Soft Periwinkle | Suiv. ▶ ])
-            var monthPillDragAccumulator by remember { mutableFloatStateOf(0f) }
-            val haptics = LocalHapticFeedback.current
-            Surface(
-                shape = CircleShape,
-                color = if (isDarkTheme) Color(0xFF13161D) else MaterialTheme.colorScheme.surfaceContainerHigh,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = if (isDarkTheme) Color(0xFF262A34) else MaterialTheme.colorScheme.outlineVariant
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .glass3d(
-                        cornerRadius = 50.dp,
-                        isDark = isDarkTheme,
-                        drawOuterShadows = false
-                    )
-                    .pointerInput(cycleLabel) {
-                        detectHorizontalDragGestures(
-                            onHorizontalDrag = { change, dragAmount ->
-                                change.consume()
-                                monthPillDragAccumulator += dragAmount
-                            },
-                            onDragEnd = {
-                                when {
-                                    monthPillDragAccumulator <= -56f -> {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onShiftCycle(1)
-                                    }
-                                    monthPillDragAccumulator >= 56f -> {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onShiftCycle(-1)
-                                    }
-                                }
-                                monthPillDragAccumulator = 0f
-                            },
-                            onDragCancel = {
-                                monthPillDragAccumulator = 0f
-                            }
-                        )
-                    }
-                    .testTag("top_bar_month_header_pill")
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(5.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Left segment: Previous cycle
-                    Row(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onShiftCycle(-1) }
-                            .padding(horizontal = 12.dp, vertical = 9.dp)
-                            .testTag("month_header_prev_btn"),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "Previous Cycle",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(17.dp)
-                        )
-                        Text(
-                            text = strings.previousShortLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    // Center active segment: Soft-Periwinkle capsule (#B8C7FA) with sparkle icon & dark navy label
-                    Surface(
-                        shape = CircleShape,
-                        color = activeSegmentBg,
-                        contentColor = activeSegmentFg,
-                        shadowElevation = 4.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = null,
-                                tint = activeSegmentFg,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Text(
-                                text = cycleLabel,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = activeSegmentFg,
-                                maxLines = 1
-                            )
-                        }
-                    }
-
-                    // Right segment: Next cycle
-                    Row(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onShiftCycle(1) }
-                            .padding(horizontal = 12.dp, vertical = 9.dp)
-                            .testTag("month_header_next_btn"),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = strings.currentShortLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Next Cycle",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(17.dp)
-                        )
-                    }
-                }
-            }
-
-            // Row 3: Vyxel Filter Dropdown Chips ([ 🌐 FR · DH ⌄ ]  [ 🎚️ Quick actions · Dark ⌄ ])
-            val langDisplay = when (language) {
-                "ar" -> "AR"
-                "darija" -> "دارجة"
-                "en" -> "EN"
-                else -> "FR"
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = circleBtnBg,
-                    border = BorderStroke(1.dp, circleBtnBorder),
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { onCycleLanguage() }
-                        .testTag("lang_switcher_pill")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = "$langDisplay · $currencySymbol",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-
-                Surface(
-                    shape = CircleShape,
-                    color = circleBtnBg,
-                    border = BorderStroke(1.dp, circleBtnBorder),
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .clickable { onToggleTheme() }
-                        .testTag("theme_toggle_button")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
-                            contentDescription = "Toggle Theme",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Text(
-                            text = when (language) {
-                                "ar" -> if (isDarkTheme) "الوضع الليلي" else "الوضع النهاري"
-                                "darija" -> if (isDarkTheme) "الوضع الليلي" else "الوضع النهاري"
-                                "en" -> if (isDarkTheme) "Dark mode" else "Light mode"
-                                else -> if (isDarkTheme) "Mode Sombre" else "Mode Clair"
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
             }
         }
     }

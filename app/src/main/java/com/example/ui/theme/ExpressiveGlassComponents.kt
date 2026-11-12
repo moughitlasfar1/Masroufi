@@ -351,14 +351,12 @@ fun Modifier.glass3d(
 }
 
 /**
- * Reusable `.glass3d` 3D floating glass card for Light and Dark modes with multi-layer directional
- * slate drop shadows, `hsl(189 80% 10% / 0.2)` glass glaze, 100px egg-shell noise, and 5-layer
- * `hsl(205 20% 90%)` inset specular bevels while preserving >= 4.5:1 WCAG text contrast.
+ * Crisp Material 3 card container for Light and Dark modes (glass effects are reserved for floating elements).
  */
 @Composable
 fun ExpressiveGlassCard(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 26.dp,
+    cornerRadius: Dp = 24.dp,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     contentColor: Color = contentColorFor(containerColor).takeOrElse { MaterialTheme.colorScheme.onSurface },
     accentRimColor: Color? = null,
@@ -367,12 +365,6 @@ fun ExpressiveGlassCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    // Vyxel matte charcoal card surface (#111317) in Dark Mode, crisp white in Light Mode
-    val glassFill = if (isDark) {
-        containerColor.copy(alpha = 0.96f)
-    } else {
-        containerColor.copy(alpha = 0.96f)
-    }
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val haptics = LocalHapticFeedback.current
@@ -388,31 +380,20 @@ fun ExpressiveGlassCard(
         label = "glass_card_scale"
     )
 
-    val topRim = accentRimColor?.copy(alpha = if (isDark) 0.22f else 0.24f)
-        ?: if (isDark) Color(0xFF222630) else Glass3dTokens.InsetHighlight80
-    val bottomRim = accentRimColor?.copy(alpha = 0.08f)
-        ?: if (isDark) Color(0xFF181B22) else Glass3dTokens.ShadowAlpha20
+    val borderColor = accentRimColor?.copy(alpha = if (isDark) 0.28f else 0.22f)
+        ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.65f else 0.75f)
 
     val shape = RoundedCornerShape(animatedRadius)
 
     Surface(
         shape = shape,
-        color = glassFill,
+        color = containerColor,
         contentColor = contentColor,
         tonalElevation = 0.dp,
-        shadowElevation = if (isDark) 6.dp else 4.dp,
-        border = BorderStroke(
-            width = 1.dp,
-            brush = Brush.linearGradient(listOf(topRim, bottomRim))
-        ),
+        shadowElevation = if (isDark) 2.dp else 1.dp,
+        border = BorderStroke(1.dp, borderColor),
         modifier = modifier
             .scale(animatedScale)
-            .glass3d(
-                cornerRadius = animatedRadius,
-                isDark = isDark,
-                accentRimColor = accentRimColor,
-                drawOuterShadows = true
-            )
             .clip(shape)
             .then(
                 if (onClick != null) {
@@ -435,12 +416,12 @@ fun ExpressiveGlassCard(
 }
 
 /**
- * Reusable `.glass3d` inner tile for nested items inside cards, headers, or sheets (Vyxel #1C2027 / #232731 pill surface).
+ * Crisp inner surface tile for nested items inside cards, headers, or sheets.
  */
 @Composable
 fun ExpressiveGlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(20.dp),
+    shape: Shape = RoundedCornerShape(18.dp),
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     contentColor: Color = contentColorFor(containerColor).takeOrElse { MaterialTheme.colorScheme.onSurface },
     accentBorderColor: Color? = null,
@@ -448,25 +429,18 @@ fun ExpressiveGlassSurface(
     content: @Composable BoxScope.() -> Unit
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val fill = containerColor.copy(alpha = if (isDark) 0.95f else 0.95f)
-    val borderColor = accentBorderColor?.copy(alpha = 0.22f)
-        ?: if (isDark) Color(0xFF242833) else Glass3dTokens.InsetHighlight80
+    val borderColor = accentBorderColor?.copy(alpha = 0.25f)
+        ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.55f else 0.65f)
     val haptics = LocalHapticFeedback.current
 
     Surface(
         shape = shape,
-        color = fill,
+        color = containerColor,
         contentColor = contentColor,
         tonalElevation = 0.dp,
-        shadowElevation = if (isDark) 2.dp else 1.dp,
+        shadowElevation = 0.dp,
         border = BorderStroke(1.dp, borderColor),
         modifier = modifier
-            .glass3d(
-                cornerRadius = 20.dp,
-                isDark = isDark,
-                accentRimColor = accentBorderColor,
-                drawOuterShadows = false
-            )
             .clip(shape)
             .then(
                 if (onClick != null) {

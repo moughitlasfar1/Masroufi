@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -359,7 +360,8 @@ fun LargeNumericKeypadSection(
     recentCategories: List<RecentCategoryShortcut>,
     selectedEnvelopeKey: String,
     onAmountChange: (String) -> Unit,
-    onSelectCategoryShortcut: (RecentCategoryShortcut, Boolean) -> Unit
+    onSelectCategoryShortcut: (RecentCategoryShortcut, Boolean) -> Unit,
+    onVoiceMicClick: (() -> Unit)? = null
 ) {
     val haptics = LocalHapticFeedback.current
 
@@ -396,7 +398,7 @@ fun LargeNumericKeypadSection(
     }
 
     ExpressiveGlassCard(
-        cornerRadius = 26.dp,
+        cornerRadius = 24.dp,
         contentPadding = PaddingValues(14.dp),
         accentRimColor = MaterialTheme.colorScheme.primary,
         modifier = Modifier
@@ -406,7 +408,7 @@ fun LargeNumericKeypadSection(
         Column(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Amount Display & 2-Tap Mode Toggle
+            // Amount Display, Mic Button & 2-Tap Mode Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -417,7 +419,7 @@ fun LargeNumericKeypadSection(
                         text = when (language) {
                             "darija" -> "1. كتب المبلغ · 2. ورك على الفئة = تسجلات!"
                             "ar" -> "1. أدخل المبلغ · 2. اضغط الفئة = تم الحفظ!"
-                            "en" -> "1. Type amount · 2. Tap category = Done in 2 taps!"
+                            "en" -> "1. Type amount · 2. Tap category = Done!"
                             else -> "1. Tapez le montant · 2. Touchez une catégorie = Fait !"
                         },
                         style = MaterialTheme.typography.labelSmall,
@@ -425,23 +427,56 @@ fun LargeNumericKeypadSection(
                         fontWeight = FontWeight.Bold
                     )
                     Row(
-                        verticalAlignment = Alignment.Bottom,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = amountText.ifBlank { "0" },
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            modifier = Modifier.testTag("keypad_amount_display")
-                        )
-                        Text(
-                            text = currencySymbol,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(bottom = 4.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = amountText.ifBlank { "0" },
+                                style = MaterialTheme.typography.headlineLarge,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.testTag("keypad_amount_display")
+                            )
+                            Text(
+                                text = currencySymbol,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        }
+                        if (onVoiceMicClick != null) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onVoiceMicClick()
+                                    }
+                                    .testTag("keypad_voice_mic_btn")
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.Mic,
+                                        contentDescription = when (language) {
+                                            "ar", "darija" -> "إدخال صوتي"
+                                            "en" -> "Voice input"
+                                            else -> "Saisie vocale"
+                                        },
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -465,16 +500,6 @@ fun LargeNumericKeypadSection(
 
             // 3 Most Recent Categories as Prominent 1-Tap Shortcuts
             if (recentCategories.isNotEmpty()) {
-                Text(
-                    text = when (language) {
-                        "darija" -> "آخر 3 فئات استعملتي (ضغطة وحدة للحفظ):"
-                        "ar" -> "آخر 3 فئات مستخدمة (ضغطة واحدة للحفظ):"
-                        "en" -> "3 Most Recent Categories (1-tap to finish):"
-                        else -> "3 Catégories Récentes (1 geste pour valider) :"
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -493,10 +518,11 @@ fun LargeNumericKeypadSection(
                                 .weight(1f)
                                 .testTag("recent_category_shortcut_$idx")
                         ) {
-                            Column(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -539,33 +565,45 @@ fun LargeNumericKeypadSection(
                             .weight(1f)
                             .testTag("keypad_plus_$inc")
                     ) {
-                        Text(
-                            text = "+$inc",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = AccentEmerald,
-                            fontWeight = FontWeight.ExtraBold,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "+$inc",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = AccentEmerald,
+                                fontWeight = FontWeight.ExtraBold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
                 ExpressiveGlassSurface(
                     shape = RoundedCornerShape(12.dp),
-                    containerColor = AccentCoral.copy(alpha = 0.16f),
-                    accentBorderColor = AccentCoral,
+                    containerColor = MaterialTheme.colorScheme.error,
+                    accentBorderColor = MaterialTheme.colorScheme.error,
                     onClick = { appendDigitOrDot("C") },
                     modifier = Modifier
                         .weight(0.8f)
                         .testTag("keypad_clear")
                 ) {
-                    Text(
-                        text = "C",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = AccentCoral,
-                        fontWeight = FontWeight.ExtraBold,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "C",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
 
@@ -596,7 +634,10 @@ fun LargeNumericKeypadSection(
                                 .height(48.dp)
                                 .testTag(tag)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 if (key == "⌫") {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Backspace,

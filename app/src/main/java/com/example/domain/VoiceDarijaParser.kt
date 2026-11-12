@@ -65,40 +65,56 @@ object VoiceDarijaParser {
         Triple(
             listOf(
                 "coffee", "café", "cafe", "qahwa", "kahwa", "قهوة", "قهوه", "أتاي", "اتاي", "atay",
-                "tacos", "طاكوس", "طاكوص", "pizza", "بيتزا", "sandwich", "سندويش", "فطور", "غداء",
-                "عشاء", "فتور", "resto", "restaurant", "مسمن", "حرشة", "عصير", "jus", "snack", "garo"
+                "tacos", "طاكوس", "طاكوص", "pizza", "بيتزا", "sandwich", "سندويش", "فطور", "غداء", "غدا",
+                "gheda", "ghda", "lgheda", "déjeuner", "dejeuner", "lunch",
+                "عشاء", "عشا", "echa", "3cha", "acha", "dîner", "diner", "dinner",
+                "فتور", "ftour", "breakfast", "resto", "restaurant", "مسمن", "حرشة", "عصير", "jus",
+                "snack", "garo", "chawarma", "شاورما", "burger", "glace", "pâtisserie", "patisserie"
             ),
             "cafe",
             "Café & Sorties"
         ),
-        // Transport & Carburant -> "transport"
+        // Transport -> "transport"
         Triple(
             listOf(
-                "taxi", "طاكسي", "تاكسي", "oncf", "تران", "قطار", "train", "tram", "طرام", "bus",
-                "طوبيس", "وطوبيس", "مازوط", "ليسنس", "essence", "gasoil", "carburant", "autoroute",
-                "نقل", "transport", "indrive", "careem", "uber", "parking", "باركينغ"
+                "taxi", "طاكسي", "تاكسي", "petit taxi", "grand taxi", "oncf", "تران", "قطار", "train",
+                "tram", "طرام", "bus", "طوبيس", "وطوبيس", "مازوط", "ليسنس", "essence", "gasoil",
+                "carburant", "autoroute", "peage", "péage", "نقل", "transport", "indrive", "careem",
+                "uber", "parking", "باركينغ", "buraq", "al boraq"
             ),
             "transport",
-            "Transport & Carburant"
+            "Transport"
         ),
-        // Charges fixes & Maison -> "charges"
+        // Charges & Maison -> "charges"
         Triple(
             listOf(
-                "khobz", "5obz", "خبز", "حليب", "hlib", "7lib", "تقضية", "تقدية", "tqadya", "t9adya", "سوق", "مرجان", "بيم",
-                "bim", "marjane", "carrefour", "أسيما", "خضرة", "لحم", "l7am", "دجاج", "حوت", "7out", "hout", "ماء", "ضو",
-                "ضوء", "الكراء", "كراء", "ويفي", "wifi", "fibre", "inwi", "iam", "orange", "روشارج",
-                "recharge", "lydec", "redal", "amendis", "amendys", "onee", "facture", "فاتورة", "دار", "maison", "courses"
+                "khobz", "5obz", "خبز", "حليب", "hlib", "7lib", "lben", "لبن", "تقضية", "تقدية",
+                "tqadya", "t9adya", "سوق", "مرجان", "بيم", "bim", "marjane", "carrefour", "أسيما",
+                "خضرة", "لحم", "l7am", "دجاج", "حوت", "7out", "hout", "hanout", "7anout", "حانوت",
+                "epicerie", "épicerie", "ماء", "ضو", "ضوء", "الكراء", "كراء", "loyer", "syndic",
+                "ويفي", "wifi", "fibre", "inwi", "iam", "orange", "روشارج", "recharge", "lydec",
+                "redal", "amendis", "amendys", "onee", "facture", "فاتورة", "دار", "maison", "courses",
+                "gaz", "بوطا", "boutagaz", "bota"
             ),
             "charges",
-            "Charges fixes & Maison"
+            "Charges & Maison"
         ),
-        // Épargne & Investissement -> "epargne"
+        // Épargne -> "epargne"
         Triple(
             listOf(
                 "épargne", "epargne", "توفير", "ادخار", "دارت", "daret", "jam3iya", "قرعة", "ذهب", "استثمار", "savings"
             ),
             "epargne",
-            "Épargne & Investissement"
+            "Épargne"
+        ),
+        // Santé, Pharmacie & Imprévus -> "autre"
+        Triple(
+            listOf(
+                "dwa", "ldwa", "دوا", "دواء", "pharmacie", "pharmacy", "صيدلية", "tbib", "طبيب",
+                "médecin", "medecin", "dentiste", "clinique", "coiffeur", "7ellak", "حلاق", "cadeau", "هدية"
+            ),
+            "autre",
+            "Autre"
         )
     )
 
@@ -111,12 +127,35 @@ object VoiceDarijaParser {
         Regex("""\b3assir\b""", RegexOption.IGNORE_CASE) to "Asir",
         Regex("""\b7out\b""", RegexOption.IGNORE_CASE) to "Hout",
         Regex("""\bl7am\b""", RegexOption.IGNORE_CASE) to "Lham",
-        Regex("""\b3cha\b""", RegexOption.IGNORE_CASE) to "Acha",
+        Regex("""\b3cha\b""", RegexOption.IGNORE_CASE) to "Echa",
         Regex("""\bt9adya\b""", RegexOption.IGNORE_CASE) to "Tqadya",
         Regex("""\b9raya\b""", RegexOption.IGNORE_CASE) to "Qraya",
         Regex("""\bjam3iya\b""", RegexOption.IGNORE_CASE) to "Jam3iya",
-        Regex("""\b7anout\b""", RegexOption.IGNORE_CASE) to "Hanout"
+        Regex("""\b7anout\b""", RegexOption.IGNORE_CASE) to "Hanout",
+        Regex("""\b7ellak\b""", RegexOption.IGNORE_CASE) to "Hellak"
     )
+
+    fun inferKeywordCategory(
+        rawText: String,
+        envelopes: List<EnvelopeConfig> = emptyList(),
+        language: String = "fr"
+    ): Pair<String, String>? {
+        var normalized = rawText.trim()
+        if (normalized.isBlank()) return null
+        for ((pattern, replacement) in ARABIZI_WORD_REPLACEMENTS) {
+            normalized = pattern.replace(normalized, replacement)
+        }
+        val lower = normalized.lowercase(Locale.ROOT)
+        for ((keywords, envKey, defaultLabel) in DARIJA_CATEGORY_MAP) {
+            if (keywords.any { kw -> lower.contains(kw) }) {
+                val matchedEnv = envelopes.find { it.key == envKey }
+                val finalKey = matchedEnv?.key ?: envKey
+                val finalName = matchedEnv?.localizedName(language) ?: defaultLabel
+                return finalKey to finalName
+            }
+        }
+        return null
+    }
 
     fun parse(
         rawInput: String,

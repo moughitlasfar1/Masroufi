@@ -65,6 +65,15 @@ object DefaultCategoryResolver {
         "التوفير والادخار"
     )
 
+    private val MARCHE_ALIASES = setOf(
+        "marche",
+        "env_marche",
+        "marché",
+        "groceries",
+        "السوق",
+        "التقدية"
+    )
+
     private val AUTRE_ALIASES = setOf(
         "autre",
         "env_autre",
@@ -73,8 +82,11 @@ object DefaultCategoryResolver {
         "général",
         "general",
         "other / unplanned",
+        "other",
         "أخرى / مصاريف غير متوقعة",
-        "حاجة خرى / مكنتش حاسبها"
+        "أخرى",
+        "حاجة خرى / مكنتش حاسبها",
+        "حاجة خرى"
     )
 
     fun stripNumericPrefix(raw: String): String {
@@ -86,9 +98,10 @@ object DefaultCategoryResolver {
         if (cleaned.isEmpty()) return null
         return when (cleaned) {
             in TRANSPORT_ALIASES -> "transport"
-            in CHARGES_ALIASES -> "charges"
-            in CAFE_ALIASES -> "cafe"
-            in EPARGNE_ALIASES -> "epargne"
+            in CHARGES_ALIASES, "charges & maison", "bills & home", "الالتزامات والمنزل", "مصاريف الدار" -> "charges"
+            in CAFE_ALIASES, "مقهى وخرجات", "قهوة وخرجات" -> "cafe"
+            in EPARGNE_ALIASES, "épargne", "epargne", "savings", "الادخار", "التوفير" -> "epargne"
+            in MARCHE_ALIASES -> "marche"
             in AUTRE_ALIASES -> "autre"
             else -> null
         }
@@ -98,36 +111,85 @@ object DefaultCategoryResolver {
         val normId = canonicalDefaultId(canonicalId) ?: canonicalId.trim().lowercase(Locale.ROOT)
         return when (normId) {
             "transport" -> when (lang) {
-                "ar" -> "النقل والتنقل (القطار، سيارة الأجرة)"
-                "darija" -> "الخدمة والتنقل (التران، الطاكسي)"
-                "en" -> "Commute & Transit (Train, Taxi)"
-                else -> "Transport & Déplacement (ONCF, Taxi)"
+                "ar" -> "النقل"
+                "darija" -> "التنقل"
+                "en" -> "Transport"
+                else -> "Transport"
             }
             "charges" -> when (lang) {
-                "ar" -> "الالتزامات الثابتة والمنزل"
-                "darija" -> "التزامات قارة ومصاريف الدار"
-                "en" -> "Fixed Bills & Household"
-                else -> "Charges fixes & Maison (Factures)"
+                "ar" -> "الالتزامات والمنزل"
+                "darija" -> "مصاريف الدار"
+                "en" -> "Bills & Home"
+                else -> "Charges & Maison"
             }
             "cafe" -> when (lang) {
-                "ar" -> "مقهى وخروج (شخصي وترفيه)"
-                "darija" -> "قهوة وخروج (مصروف شخصي)"
-                "en" -> "Café & Outings (Personal & Leisure)"
-                else -> "Café & Sorties (Personnel & Loisirs)"
+                "ar" -> "مقهى وخرجات"
+                "darija" -> "قهوة وخرجات"
+                "en" -> "Café & Outings"
+                else -> "Café & Sorties"
             }
             "epargne" -> when (lang) {
-                "ar" -> "الادخار والاستثمار"
-                "darija" -> "التوفير والادخار"
-                "en" -> "Savings & Investments"
-                else -> "Épargne & Investissement"
+                "ar" -> "الادخار"
+                "darija" -> "التوفير"
+                "en" -> "Savings"
+                else -> "Épargne"
+            }
+            "marche" -> when (lang) {
+                "ar" -> "السوق"
+                "darija" -> "التقدية"
+                "en" -> "Groceries"
+                else -> "Marché"
             }
             "autre" -> when (lang) {
-                "ar" -> "أخرى / مصاريف غير متوقعة"
-                "darija" -> "حاجة خرى / مكنتش حاسبها"
-                "en" -> "Other / Unplanned"
-                else -> "Autre / Imprévus"
+                "ar" -> "أخرى"
+                "darija" -> "حاجة خرى"
+                "en" -> "Other"
+                else -> "Autre"
             }
             else -> null
+        }
+    }
+
+    fun localizedDefaultHelper(canonicalId: String, lang: String): String {
+        val normId = canonicalDefaultId(canonicalId) ?: canonicalId.trim().lowercase(Locale.ROOT)
+        return when (normId) {
+            "transport" -> when (lang) {
+                "ar" -> "القطار، سيارة الأجرة، الترام، الوقود"
+                "darija" -> "التران، الطاكسي، الترام، المازوط"
+                "en" -> "ONCF, Taxi, Tram, Fuel"
+                else -> "ONCF, Taxi, Tram, Carburant"
+            }
+            "charges" -> when (lang) {
+                "ar" -> "الكراء، الماء والكهرباء، الإنترنت"
+                "darija" -> "الكرا، الما والضو، الويفي"
+                "en" -> "Rent, Water & Electricity, Internet"
+                else -> "Loyer, Eau & Électricité, Internet"
+            }
+            "cafe" -> when (lang) {
+                "ar" -> "مقهى، مطعم، ترفيه"
+                "darija" -> "قهوة، ريسطو، خريجات"
+                "en" -> "Coffee, Dining, Leisure"
+                else -> "Café, Restaurant, Loisirs"
+            }
+            "epargne" -> when (lang) {
+                "ar" -> "صندوق الطوارئ، استثمار"
+                "darija" -> "فلوس الدواير، مشاريع"
+                "en" -> "Emergency fund, Goals"
+                else -> "Fonds d'urgence, Objectifs"
+            }
+            "marche" -> when (lang) {
+                "ar" -> "الخضر، البقالة، مرجان"
+                "darija" -> "الخضرة، الحانوت، مرجان"
+                "en" -> "Groceries, Market, Supermarket"
+                else -> "Courses, Marché, Supermarché"
+            }
+            "autre" -> when (lang) {
+                "ar" -> "مصاريف غير متوقعة"
+                "darija" -> "مصاريف ما كنتش حاسبها"
+                "en" -> "Unplanned expenses"
+                else -> "Imprévus, Divers"
+            }
+            else -> ""
         }
     }
 
@@ -183,7 +245,7 @@ object DefaultCategoryResolver {
         if (fallbackCanonical != null) {
             localizedDefaultName(fallbackCanonical, lang)?.let { return it }
         }
-        return localizedDefaultName("autre", lang) ?: "Autre / Imprévus"
+        return localizedDefaultName("autre", lang) ?: "Autre"
     }
 }
 
@@ -196,7 +258,7 @@ data class UserProfile(
     val rolloverEnabled: Boolean = true,
     val language: String = "fr",
     @get:PropertyName("isDarkTheme")
-    val isDarkTheme: Boolean = true,
+    val isDarkTheme: Boolean = false,
     val seeded: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null

@@ -43,7 +43,7 @@ class ExampleRobolectricTest {
 
     @Test
     fun `custom palettes and pay cycle engine computeWindow and computeCycleWindow work accurately`() {
-        assertEquals(6, MasroufiPalettes.size)
+        assertEquals(3, MasroufiPalettes.size)
         assertEquals("majorelle", paletteForKey("majorelle").key)
         assertEquals("emerald", paletteForKey("unknown_key").key)
 
@@ -819,8 +819,9 @@ class ExampleRobolectricTest {
             nameDarija = "3. قهوة وخرجات"
         )
         assertTrue(defaultEnv.isDefaultUnrenamed())
-        assertEquals("Café & Outings (Personal & Leisure)", defaultEnv.localizedName("en"))
-        assertEquals("Café & Sorties (Personnel & Loisirs)", defaultEnv.localizedName("fr"))
+        assertEquals("Café & Outings", defaultEnv.localizedName("en"))
+        assertEquals("Café & Sorties", defaultEnv.localizedName("fr"))
+        assertTrue(com.example.data.DefaultCategoryResolver.localizedDefaultHelper("cafe", "fr").contains("Café"))
         assertFalse(defaultEnv.localizedName("fr").startsWith("3."))
 
         val renamedEnv = defaultEnv.copy(nameFr = "Restaurants & Sushi", nameEn = "Restaurants & Sushi")
@@ -959,5 +960,84 @@ class ExampleRobolectricTest {
         assertTrue(darija.moreOptionsLabel.isNotBlank())
         assertTrue(darija.moreFeaturesTitle.isNotBlank())
     }
+
+    @Test
+    fun `Masroufi Improvement Plan Phases 1 to 6 money rounding, unified projection, Darija learner, and friendly dates work accurately`() {
+        // 1. Money precision rounding to 2 decimals on write
+        assertEquals(15.25, PayCycleEngine.roundMoney(15.254), 0.0001)
+        assertEquals(15.26, PayCycleEngine.roundMoney(15.256), 0.0001)
+        assertEquals(0.0, PayCycleEngine.roundMoney(Double.NaN), 0.0001)
+
+        // 2. Unified overspend projection: 5276 DH in 16 of 31 days (no single-day >3x outlier) -> ~10222 DH
+        val window31 = PayCycleEngine.computeWindow("2026-05", 1, "2026-05-16")
+        assertEquals(31, window31.totalDays)
+        assertEquals(16, window31.daysRemaining)
+        val uniformDailyTxs = (1..16).map { day ->
+            val dStr = day.toString().padStart(2, '0')
+            TransactionItem(
+                id = "tx_u_$day",
+                type = "expense",
+                amount = 5276.0 / 16.0,
+                category = "Marché",
+                envelopeKey = "marche",
+                desc = "Courses $day",
+                isoDate = "2026-05-$dStr"
+            )
+        }
+        val unifiedProj = PayCycleEngine.computeOverspendProjection(
+            window = window31,
+            totalAvailableBudget = 8000.0,
+            spentSoFar = 5276.0,
+            scheduledBills = 0.0,
+            pastOrTodayCycleTransactions = uniformDailyTxs,
+            bills = emptyList()
+        )
+        assertEquals(10222.25, unifiedProj.projectedTotal, 1.0)
+
+        // 3. Expanded Darija vocabulary (gheda, echa, dwa, khobz) & category learner
+        val envelopes = listOf(
+            EnvelopeConfig(id = "e_cafe", key = "cafe", nameFr = "Café & Sorties", percentage = 20.0),
+            EnvelopeConfig(id = "e_marche", key = "marche", nameFr = "Marché", percentage = 30.0),
+            EnvelopeConfig(id = "e_autre", key = "autre", nameFr = "Autre", percentage = 10.0)
+        )
+        val envStatuses = PayCycleEngine.computeEnvelopes(
+            envelopes = envelopes,
+            baseBudget = 6000.0,
+            rolloverEnabled = false,
+            currentWindow = window31,
+            previousWindow = PayCycleEngine.computeWindow("2026-04", 1, "2026-05-16"),
+            allTransactions = emptyList()
+        )
+        assertEquals("cafe", com.example.domain.VoiceDarijaParser.parse("gheda 45")?.envelopeKey)
+        assertEquals("cafe", com.example.domain.VoiceDarijaParser.parse("echa 60")?.envelopeKey)
+        assertEquals("autre", com.example.domain.VoiceDarijaParser.parse("dwa 120")?.envelopeKey)
+        assertEquals("charges", com.example.domain.VoiceDarijaParser.parse("khobz 5")?.envelopeKey)
+
+        PayCycleEngine.clearLearnedCategories()
+        PayCycleEngine.learnCategoryForDescription("Boulangerie Atlas", "marche")
+        assertEquals("marche", PayCycleEngine.getLearnedCategoryForDescription("boulangerie atlas"))
+        val learnedGuess = PayCycleEngine.inferSmartDefaults("Boulangerie Atlas", emptyList(), envStatuses, "acc_cash")
+        assertNotNull(learnedGuess)
+        assertEquals("marche", learnedGuess!!.envelopeKey)
+
+        // 4. Uncapped envelope usagePercent is 0 (percentages mean only spent vs cap)
+        val uncappedEnvs = PayCycleEngine.computeEnvelopes(
+            envelopes = listOf(EnvelopeConfig(id = "e_uncapped", key = "autre", nameFr = "Autre", percentage = 15.0, hasCap = false)),
+            baseBudget = 5000.0,
+            rolloverEnabled = false,
+            currentWindow = window31,
+            previousWindow = PayCycleEngine.computeWindow("2026-04", 1, "2026-05-16"),
+            allTransactions = uniformDailyTxs.map { it.copy(envelopeKey = "autre") }
+        )
+        assertEquals(0, uncappedEnvs.first().usagePercent)
+
+        // 5. Friendly date formatting in FR, EN, AR, Darija
+        assertEquals("Aujourd'hui", PayCycleEngine.formatFriendlyDate("2026-05-16", "fr", "2026-05-16"))
+        assertEquals("Hier", PayCycleEngine.formatFriendlyDate("2026-05-15", "fr", "2026-05-16"))
+        assertEquals("Today", PayCycleEngine.formatFriendlyDate("2026-05-16", "en", "2026-05-16"))
+        assertEquals("14 mai", PayCycleEngine.formatFriendlyDate("2026-05-14", "fr", "2026-05-16"))
+        assertEquals("1 mai → 31 mai", PayCycleEngine.formatCycleRangeFriendly("2026-05-01", "2026-05-31", "fr"))
+    }
 }
+
 
