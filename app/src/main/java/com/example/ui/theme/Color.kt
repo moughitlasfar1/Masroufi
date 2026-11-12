@@ -8,13 +8,13 @@ val MasroufiSurfaceDark = Color(0xFF000000)
 val MasroufiSurfaceContainerDark = Color(0xFF111317)
 val MasroufiSurfaceContainerHighDark = Color(0xFF1B1E26)
 val MasroufiSurfaceContainerHighestDark = Color(0xFF242832)
-val MasroufiOnSurfaceDark = Color(0xFFF5F7FB)
-val MasroufiOnSurfaceVariantDark = Color(0xFFA6B0C2)
-val MasroufiOutlineVariantDark = Color(0xFF232731)
+val MasroufiOnSurfaceDark = Color(0xFFF8FAFC)
+val MasroufiOnSurfaceVariantDark = Color(0xFFC8D1E3)
+val MasroufiOutlineVariantDark = Color(0xFF2A303E)
 val MasroufiPrimaryDark = Color(0xFFB8C7FA)
 val MasroufiPrimaryBrightDark = Color(0xFFD4DFFF)
 val MasroufiPrimaryContainerDark = Color(0xFF23293A)
-val MasroufiOnPrimaryContainerDark = Color(0xFFE0E8FF)
+val MasroufiOnPrimaryContainerDark = Color(0xFFF1F5FF)
 val MasroufiErrorDark = Color(0xFFFB7185)
 val MasroufiErrorContainerDark = Color(0xFF881337)
 
@@ -87,11 +87,11 @@ private val DistinctEnvelopeColorsDark = listOf(
  * Phase 6 — Calm the look:
  * Uses one primary accent color across UI elements so color is reserved for +/- amounts.
  */
-fun distinctEnvelopeColor(keyOrName: String, isDark: Boolean = false): Color {
+fun distinctEnvelopeColor(keyOrName: String, isDark: Boolean = true): Color {
     return if (isDark) VyxelPeriwinkle else MasroufiPrimaryLight
 }
 
-fun distinctAccountColor(kind: String, isDark: Boolean = false): Color {
+fun distinctAccountColor(kind: String, isDark: Boolean = true): Color {
     return if (isDark) VyxelPeriwinkle else MasroufiPrimaryLight
 }
 

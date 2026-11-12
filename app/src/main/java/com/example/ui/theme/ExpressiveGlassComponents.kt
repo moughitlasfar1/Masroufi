@@ -40,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -56,6 +57,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -358,6 +360,7 @@ fun ExpressiveGlassCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 26.dp,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    contentColor: Color = contentColorFor(containerColor).takeOrElse { MaterialTheme.colorScheme.onSurface },
     accentRimColor: Color? = null,
     contentPadding: PaddingValues = PaddingValues(18.dp),
     onClick: (() -> Unit)? = null,
@@ -395,7 +398,8 @@ fun ExpressiveGlassCard(
     Surface(
         shape = shape,
         color = glassFill,
-        tonalElevation = if (isDark) 2.dp else 1.dp,
+        contentColor = contentColor,
+        tonalElevation = 0.dp,
         shadowElevation = if (isDark) 6.dp else 4.dp,
         border = BorderStroke(
             width = 1.dp,
@@ -438,6 +442,7 @@ fun ExpressiveGlassSurface(
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(20.dp),
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    contentColor: Color = contentColorFor(containerColor).takeOrElse { MaterialTheme.colorScheme.onSurface },
     accentBorderColor: Color? = null,
     onClick: (() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
@@ -451,6 +456,8 @@ fun ExpressiveGlassSurface(
     Surface(
         shape = shape,
         color = fill,
+        contentColor = contentColor,
+        tonalElevation = 0.dp,
         shadowElevation = if (isDark) 2.dp else 1.dp,
         border = BorderStroke(1.dp, borderColor),
         modifier = modifier
@@ -614,6 +621,7 @@ fun ExpressivePillChip(
     testTag: String? = null,
     accentColor: Color = MaterialTheme.colorScheme.primary
 ) {
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val haptics = LocalHapticFeedback.current
     val cornerRadius by animateDpAsState(
         targetValue = if (selected) 14.dp else 22.dp,
@@ -621,17 +629,17 @@ fun ExpressivePillChip(
         label = "chip_corner"
     )
     val bgColor by animateColorAsState(
-        targetValue = if (selected) accentColor.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.78f),
+        targetValue = if (selected) accentColor.copy(alpha = if (isDark) 0.26f else 0.16f) else MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.88f),
         animationSpec = ExpressiveMotion.snappySpring(),
         label = "chip_bg"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (selected) accentColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+        targetValue = if (selected) accentColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.65f else 0.45f),
         animationSpec = ExpressiveMotion.snappySpring(),
         label = "chip_border"
     )
     val contentColor by animateColorAsState(
-        targetValue = if (selected) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+        targetValue = if (selected) accentColor else if (isDark) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = ExpressiveMotion.snappySpring(),
         label = "chip_content"
     )
@@ -640,6 +648,7 @@ fun ExpressivePillChip(
     Surface(
         shape = shape,
         color = bgColor,
+        contentColor = contentColor,
         border = BorderStroke(if (selected) 1.5.dp else 1.dp, borderColor),
         modifier = modifier
             .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
@@ -695,7 +704,7 @@ fun ExpressiveGlassBottomDock(
     modifier: Modifier = Modifier
 ) {
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val dockFill = if (isDark) Color(0xFF13161D).copy(alpha = 0.92f) else MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f)
+    val dockFill = if (isDark) Color(0xFF13161D).copy(alpha = 0.94f) else MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f)
     val rimTop = if (isDark) Color.White.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.90f)
     val rimBottom = if (isDark) Color(0xFF252A36) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
     val activeBubbleColor = if (isDark) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
@@ -713,7 +722,8 @@ fun ExpressiveGlassBottomDock(
         Surface(
             shape = RoundedCornerShape(36.dp),
             color = dockFill,
-            tonalElevation = 8.dp,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 0.dp,
             shadowElevation = 14.dp,
             border = BorderStroke(
                 width = 1.dp,

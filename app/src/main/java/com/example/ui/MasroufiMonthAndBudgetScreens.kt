@@ -186,7 +186,8 @@ fun MonthScreen(
                     Text(
                         text = strings.monthlyTracking,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Surface(
                         shape = CircleShape,
@@ -401,7 +402,8 @@ fun MonthScreen(
                             Text(
                                 text = "${strings.topCategoryPrefix} $topCatName",
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = "${strings.biggestDayPrefix} $biggestDayLabel",
@@ -480,6 +482,7 @@ fun MonthScreen(
                                 Text(
                                     text = env.config.localizedName(state.profile.language),
                                     style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1
                                 )
                                 Text(
@@ -582,7 +585,8 @@ fun MonthScreen(
                                             Text(
                                                 text = sub.name,
                                                 style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = FontWeight.Bold
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
                                             )
                                             Text(
                                                 text = "-${fmt(sub.amount)} $cur • ${sub.occurrences}x (~le ${sub.typicalDayOfMonth})",
@@ -800,7 +804,11 @@ fun MonthScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                                         ) {
-                                            Text(text = item.name, style = MaterialTheme.typography.labelLarge)
+                                            Text(
+                                                text = item.name,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
                                             Icon(
                                                 imageVector = Icons.Default.Edit,
                                                 contentDescription = "Edit",
@@ -996,6 +1004,7 @@ fun BudgetAndDaretScreen(
                         Surface(
                             shape = RoundedCornerShape(24.dp),
                             color = if (state.profile.isDarkTheme) Color(0xFF14171E) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            contentColor = MaterialTheme.colorScheme.onSurface,
                             border = BorderStroke(
                                 1.dp,
                                 if (state.profile.isDarkTheme) Color(0xFF232834) else MaterialTheme.colorScheme.outlineVariant
@@ -1039,6 +1048,7 @@ fun BudgetAndDaretScreen(
                                 Surface(
                                     shape = CircleShape,
                                     color = if (state.profile.isDarkTheme) VyxelPillDark else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Box(
@@ -1209,7 +1219,8 @@ fun BudgetAndDaretScreen(
                         Text(
                             text = strings.envelopesTitle,
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = strings.envelopesSub,
@@ -1276,7 +1287,8 @@ fun BudgetAndDaretScreen(
                                     Text(
                                         text = envStatus.config.localizedName(state.profile.language),
                                         style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.ExtraBold
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                                 Surface(
@@ -1957,7 +1969,8 @@ fun CategoryDonutChart(
                 Text(
                     text = PayCycleEngine.formatAmountOrMask(totalSpent, hideAmounts),
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = currencySymbol,
@@ -1989,6 +2002,7 @@ fun CategoryDonutChart(
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                         maxLines = 1
                     )

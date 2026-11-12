@@ -698,6 +698,7 @@ fun InsightsScreen(
         Surface(
             shape = CircleShape,
             color = if (isDark) Color(0xFF13161D) else MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             border = BorderStroke(
                 1.dp,
                 if (isDark) Color(0xFF242833) else MaterialTheme.colorScheme.outlineVariant
@@ -718,9 +719,11 @@ fun InsightsScreen(
                     "month" to strings.monthToggleLabel
                 ).forEach { (key, label) ->
                     val selected = selectedSubTab == key
+                    val itemFg = if (selected) activeFg else if (isDark) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                     Surface(
                         shape = CircleShape,
                         color = if (selected) activeBg else Color.Transparent,
+                        contentColor = itemFg,
                         modifier = Modifier
                             .weight(1f)
                             .clip(CircleShape)
@@ -735,7 +738,7 @@ fun InsightsScreen(
                                 text = label,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                color = if (selected) activeFg else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = itemFg
                             )
                         }
                     }

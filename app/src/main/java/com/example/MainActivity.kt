@@ -737,6 +737,7 @@ fun MainFeatureScreen(
                                 Surface(
                                     shape = RoundedCornerShape(18.dp),
                                     color = AccentCoral.copy(alpha = 0.14f),
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
@@ -1390,6 +1391,7 @@ private fun MasroufiTopBar(
 
     Surface(
         color = topBarBg,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
@@ -1609,6 +1611,7 @@ private fun MasroufiTopBar(
             Surface(
                 shape = CircleShape,
                 color = if (isDarkTheme) Color(0xFF13161D) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = MaterialTheme.colorScheme.onSurface,
                 border = BorderStroke(
                     width = 1.dp,
                     color = if (isDarkTheme) Color(0xFF262A34) else MaterialTheme.colorScheme.outlineVariant
@@ -1681,6 +1684,7 @@ private fun MasroufiTopBar(
                     Surface(
                         shape = CircleShape,
                         color = activeSegmentBg,
+                        contentColor = activeSegmentFg,
                         shadowElevation = 4.dp
                     ) {
                         Row(

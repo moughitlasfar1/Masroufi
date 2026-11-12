@@ -1018,7 +1018,11 @@ fun TransactionEditorSheet(
         return true
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1034,7 +1038,8 @@ fun TransactionEditorSheet(
                 Text(
                     text = if (existingTx != null) strings.editOperationTitle else strings.addOperationTitle,
                     style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 ExpressivePillChip(
                     label = strings.moreOptionsLabel,
@@ -1066,9 +1071,11 @@ fun TransactionEditorSheet(
                         Triple("transfer", strings.transferTab, MaterialTheme.colorScheme.primary)
                     ).forEach { (typeKey, label, accent) ->
                         val isSelected = txType == typeKey
+                        val tabFg = if (isSelected) accent else if (isDark) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
                         Surface(
                             shape = CircleShape,
                             color = if (isSelected) accent.copy(alpha = 0.22f) else Color.Transparent,
+                            contentColor = tabFg,
                             border = if (isSelected) BorderStroke(1.dp, accent.copy(alpha = 0.65f)) else null,
                             modifier = Modifier
                                 .weight(1f)
@@ -1082,7 +1089,7 @@ fun TransactionEditorSheet(
                                 text = label,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                color = if (isSelected) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = tabFg,
                                 modifier = Modifier.padding(vertical = 10.dp),
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
@@ -1504,7 +1511,11 @@ fun SettingsBottomSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1512,7 +1523,12 @@ fun SettingsBottomSheet(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text(text = strings.settingsTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+            Text(
+                text = strings.settingsTitle,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
 
             // Phase 0: Link Google Account button when running in local/optional sign-in mode
             if (isLocalMode) {
@@ -1638,6 +1654,7 @@ fun SettingsBottomSheet(
                         Text(
                             text = strings.rolloverToggleLabel,
                             style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
                             modifier = Modifier.weight(1f)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -2203,7 +2220,11 @@ fun CustomizationStudioSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2252,6 +2273,7 @@ fun CustomizationStudioSheet(
                     Surface(
                         shape = RoundedCornerShape(18.dp),
                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier
                             .width(142.dp)
                             .clip(RoundedCornerShape(18.dp))
@@ -2286,6 +2308,7 @@ fun CustomizationStudioSheet(
                                 text = label,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1
                             )
                         }
@@ -2479,7 +2502,11 @@ fun CustomizeEnvelopesSheet(
     var newPct by remember { mutableStateOf("10") }
     val totalPct = state.envelopes.filter { it.config.hasCap }.sumOf { it.config.percentage }.safeRoundToInt()
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2495,7 +2522,8 @@ fun CustomizeEnvelopesSheet(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Personnaliser les Enveloppes",
-                        style = MaterialTheme.typography.titleLarge
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = "Total alloué : $totalPct% (Recommandé : 100%)",
@@ -2603,7 +2631,8 @@ fun CustomizeEnvelopesSheet(
                                 )
                                 Text(
                                     text = if (hasCapToggle) "Plafond actif" else "Sans plafond",
-                                    style = MaterialTheme.typography.bodySmall
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                             if (state.envelopes.size > 1) {
@@ -2625,7 +2654,11 @@ fun CustomizeEnvelopesSheet(
             }
 
             Spacer(modifier = Modifier.height(6.dp))
-            Text(text = "Ajouter une catégorie personnalisée :", style = MaterialTheme.typography.labelLarge)
+            Text(
+                text = "Ajouter une catégorie personnalisée :",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2740,7 +2773,11 @@ fun AddFinancialItemSheet(
         )
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -2758,7 +2795,11 @@ fun AddFinancialItemSheet(
                 "preset" -> if (isEditing) "Modifier Achat Rapide (1-Tap)" else "Nouveau Bouton d'Achat Rapide"
                 else -> if (isEditing) "Modifier Objectif d'Épargne" else "Nouvel Objectif d'Épargne"
             }
-            Text(text = title, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
 
             // Moroccan Bill Templates inside Bill modal
             if (itemType == "bill") {
@@ -3098,7 +3139,11 @@ fun RestoreJsonSheet(
 
     val isEncrypted = remember(rawJson) { AppSecurityManager.isEncryptedBackup(rawJson) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3106,7 +3151,11 @@ fun RestoreJsonSheet(
                 .padding(horizontal = 20.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(text = strings.btnRestoreJson, style = MaterialTheme.typography.titleLarge)
+            Text(
+                text = strings.btnRestoreJson,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
 
             FilledTonalButton(
                 onClick = {
@@ -3272,7 +3321,7 @@ private fun SwipeableTransactionRow(
     hideAmounts: Boolean,
     lang: String = "fr",
     envelopes: List<EnvelopeConfig> = emptyList(),
-    isDarkTheme: Boolean = false,
+    isDarkTheme: Boolean = true,
     deleteLabel: String,
     editLabel: String,
     duplicateLabel: String = "Dupliquer",
@@ -3563,7 +3612,11 @@ fun QuickPresetPickerSheet(
     val hide = state.hideAmounts
     val lang = state.profile.language
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -3587,7 +3640,8 @@ fun QuickPresetPickerSheet(
                     )
                     Text(
                         text = strings.quickPresetsTitle,
-                        style = MaterialTheme.typography.titleLarge
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
                 FilledTonalButton(

@@ -244,7 +244,8 @@ fun VoiceDarijaEntrySection(
                                 else -> "Saisie Vocale Darija (ex: « qahwa 15 »)"
                             },
                             style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
                             text = voiceStatus ?: when (lang) {
@@ -451,7 +452,8 @@ fun LargeNumericKeypadSection(
                     Text(
                         text = "2-Tap",
                         style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Switch(
                         checked = twoTapInstantSave,
@@ -599,6 +601,7 @@ fun LargeNumericKeypadSection(
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Backspace,
                                         contentDescription = "Backspace",
+                                        tint = MaterialTheme.colorScheme.onSurface,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 } else {
@@ -606,7 +609,8 @@ fun LargeNumericKeypadSection(
                                         text = key,
                                         style = MaterialTheme.typography.titleLarge,
                                         fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 20.sp
+                                        fontSize = 20.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                             }
@@ -660,7 +664,11 @@ fun QuickOnboarding30sSheet(
         mutableStateOf("20")
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -695,7 +703,8 @@ fun QuickOnboarding30sSheet(
                             else -> "Configuration Express en 30 Secondes"
                         },
                         style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = when (lang) {
@@ -959,7 +968,11 @@ fun SplitBillToSellefSheet(
     val divisor = (if (includeSelf) parsedFriends.size + 1 else parsedFriends.size).coerceAtLeast(1)
     val perPerson = if (totalVal > 0.0) totalVal / divisor else 0.0
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
