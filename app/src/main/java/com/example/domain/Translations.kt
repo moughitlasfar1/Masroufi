@@ -162,7 +162,17 @@ data class AppStrings(
     val confirmResetBtn: String = "Confirmer la remise à zéro",
     val emptyHomeTitle: String = "Aucune dépense ce cycle",
     val emptyHomeSub: String = "Appuyez sur + pour enregistrer une dépense en 5 secondes.",
-    val privacyLabel: String = "Privé"
+    val privacyLabel: String = "Privé",
+    val moonshineBadgeLabel: String = "Moonshine · Sur l'appareil",
+    val moonshineHoldHint: String = "Maintenez + pour parler · Tapez pour le clavier",
+    val moonshineReleaseToSave: String = "Relâchez pour enregistrer automatiquement",
+    val moonshineSlideToCancel: String = "Glisser pour annuler",
+    val moonshineListeningLabel: String = "Écoute en cours… (ex: « qahwa 15 w taxi 20 »)",
+    val moonshineBatchSavedFmt: String = "✓ {count} opérations ajoutées ({total} {cur})",
+    val moonshineSingleSavedFmt: String = "✓ {desc} · {total} {cur} ({cat})",
+    val moonshineAskHint: String = "Ou demandez : « Ch7al b9a liya lyoum ? »",
+    val moonshineTryPhrasesLabel: String = "Exemples Moonshine (1-tap) :",
+    val moonshineMicPermDenied: String = "Autorisez le microphone pour utiliser Moonshine Voice."
 )
 
 object Translations {
@@ -327,7 +337,17 @@ object Translations {
         confirmResetBtn = "Confirmer la remise à zéro",
         emptyHomeTitle = "Aucune dépense ce cycle",
         emptyHomeSub = "Appuyez sur + pour enregistrer une dépense en 5 secondes.",
-        privacyLabel = "Privé"
+        privacyLabel = "Privé",
+        moonshineBadgeLabel = "Moonshine · Sur l'appareil",
+        moonshineHoldHint = "Maintenez + pour parler · Tapez pour le clavier",
+        moonshineReleaseToSave = "Relâchez pour enregistrer automatiquement",
+        moonshineSlideToCancel = "Glisser pour annuler",
+        moonshineListeningLabel = "Écoute en cours… (ex: « qahwa 15 w taxi 20 »)",
+        moonshineBatchSavedFmt = "✓ {count} opérations ajoutées ({total} {cur})",
+        moonshineSingleSavedFmt = "✓ {desc} · {total} {cur} ({cat})",
+        moonshineAskHint = "Ou demandez : « Combien il me reste aujourd'hui ? »",
+        moonshineTryPhrasesLabel = "Exemples Moonshine (1-tap) :",
+        moonshineMicPermDenied = "Autorisez le microphone pour utiliser Moonshine Voice."
     )
 
     val EN = AppStrings(
@@ -491,7 +511,17 @@ object Translations {
         confirmResetBtn = "Reset now",
         emptyHomeTitle = "No expenses this cycle",
         emptyHomeSub = "Tap + to log an expense in 5 seconds.",
-        privacyLabel = "Privacy"
+        privacyLabel = "Privacy",
+        moonshineBadgeLabel = "Moonshine · On-Device",
+        moonshineHoldHint = "Hold + to speak · Tap for keypad",
+        moonshineReleaseToSave = "Release to auto-save",
+        moonshineSlideToCancel = "Slide to cancel",
+        moonshineListeningLabel = "Listening… (e.g. 'coffee 15 and taxi 20')",
+        moonshineBatchSavedFmt = "✓ {count} expenses logged ({total} {cur})",
+        moonshineSingleSavedFmt = "✓ {desc} · {total} {cur} ({cat})",
+        moonshineAskHint = "Or ask: 'How much can I spend today?'",
+        moonshineTryPhrasesLabel = "Moonshine 1-tap examples:",
+        moonshineMicPermDenied = "Grant microphone access to use Moonshine Voice."
     )
 
     val AR = AppStrings(
@@ -655,7 +685,17 @@ object Translations {
         confirmResetBtn = "تأكيد التصفير",
         emptyHomeTitle = "لا توجد مصاريف في هذه الدورة",
         emptyHomeSub = "اضغط + لتسجيل مصروف في 5 ثوانٍ.",
-        privacyLabel = "إخفاء"
+        privacyLabel = "إخفاء",
+        moonshineBadgeLabel = "Moonshine · صوت محلي على الجهاز",
+        moonshineHoldHint = "اضغط مطولاً على + للتحدث · أو نقرة للوحة المفاتيح",
+        moonshineReleaseToSave = "ارفع إصبعك للحفظ التلقائي",
+        moonshineSlideToCancel = "اسحب للإلغاء",
+        moonshineListeningLabel = "جارٍ الاستماع… (مثلاً: قهوة 15 وطاكسي 20)",
+        moonshineBatchSavedFmt = "✓ تمت إضافة {count} عمليات ({total} {cur})",
+        moonshineSingleSavedFmt = "✓ {desc} · {total} {cur} ({cat})",
+        moonshineAskHint = "أو اسأل: « كم تبقى لي اليوم؟ »",
+        moonshineTryPhrasesLabel = "أمثلة Moonshine السريعة :",
+        moonshineMicPermDenied = "يرجى السماح بالميكروفون لاستخدام Moonshine Voice."
     )
 
     val DARIJA = AppStrings(
@@ -819,7 +859,17 @@ object Translations {
         confirmResetBtn = "صفر الحساب",
         emptyHomeTitle = "ما قيدتي حتى مصروف هاد الشهر",
         emptyHomeSub = "ورك على + باش تقيد مصروف فـ 5 ثواني.",
-        privacyLabel = "خبي"
+        privacyLabel = "خبي",
+        moonshineBadgeLabel = "Moonshine · بلا أنترنت فالتيليفون",
+        moonshineHoldHint = "بقا مورك على + وهضر · ولا نقرة للكلافيي",
+        moonshineReleaseToSave = "طلق صبعك باش يتسجل أوتوماتيك",
+        moonshineSlideToCancel = "جر باش تلغي",
+        moonshineListeningLabel = "كنسمعك… (قول مثلاً: قهوة 15 وطاكسي 25 وخبز 5)",
+        moonshineBatchSavedFmt = "✓ تزادو {count} عمليات ({total} {cur})",
+        moonshineSingleSavedFmt = "✓ {desc} · {total} {cur} ({cat})",
+        moonshineAskHint = "ولا سولني: « شحال بقى ليا اليوم؟ »",
+        moonshineTryPhrasesLabel = "جرب أمثلة Moonshine بضغطة :",
+        moonshineMicPermDenied = "عطي الصلاحية ديال الميكروفون باش تخدم بـ Moonshine Voice."
     )
 
     fun forLang(lang: String): AppStrings = when (lang) {

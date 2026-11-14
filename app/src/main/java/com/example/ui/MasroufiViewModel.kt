@@ -1391,6 +1391,82 @@ class MasroufiViewModel(
         }
     }
 
+    /**
+     * Saves one or multiple transactions parsed by Moonshine Voice in a single batch,
+     * rounding amounts via [PayCycleEngine.roundMoney] and learning description -> category mappings.
+     * Returns the created [TransactionItem] list so the 5-second Undo snackbar can revert them.
+     */
+    fun saveVoiceBatchTransactions(
+        items: List<com.example.domain.VoiceParsedTransaction>,
+        accountId: String = ""
+    ): List<TransactionItem> {
+        if (items.isEmpty()) return emptyList()
+        val s = uiState.value
+        val resolvedAccountId = accountId.ifBlank {
+            s.accounts.firstOrNull()?.account?.id ?: "acc_cash"
+        }
+        val today = PayCycleEngine.todayIso()
+        val baseTime = System.currentTimeMillis()
+        val envConfigs = s.envelopes.map { it.config }
+
+        val createdTxs = items.mapIndexedNotNull { idx, parsed ->
+            val roundedAmt = PayCycleEngine.roundMoney(parsed.amount)
+            if (roundedAmt <= 0.0) return@mapIndexedNotNull null
+            val resolvedEnvKey = parsed.envelopeKey.ifBlank {
+                PayCycleEngine.resolveEnvelopeKey(parsed.categoryName, parsed.description, envConfigs)
+            }
+            if (parsed.txType == "expense" && parsed.description.isNotBlank() && resolvedEnvKey.isNotBlank()) {
+                PayCycleEngine.learnCategoryForDescription(parsed.description, resolvedEnvKey)
+            }
+            val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(
+                parsed.categoryName,
+                resolvedEnvKey
+            )
+            TransactionItem(
+                id = "tx_voice_${baseTime}_$idx",
+                userId = currentUserId,
+                type = parsed.txType.ifBlank { "expense" },
+                amount = roundedAmt,
+                category = normalizedCat,
+                envelopeKey = resolvedEnvKey,
+                accountId = resolvedAccountId,
+                toAccountId = "",
+                desc = parsed.description.ifBlank { parsed.categoryName },
+                isoDate = today
+            )
+        }
+
+        if (createdTxs.isEmpty()) return emptyList()
+
+        if (isLocalOnlyUser) {
+            val curList = _localTransactions.value ?: s.allTransactions
+            _localTransactions.value = createdTxs + curList
+            return createdTxs
+        }
+
+        safeLaunch("saveVoiceBatchTransactions") {
+            createdTxs.forEach { tx ->
+                repository.upsertTransaction(tx)
+            }
+        }
+        return createdTxs
+    }
+
+    fun deleteTransactionsBatch(txs: List<TransactionItem>) {
+        if (txs.isEmpty()) return
+        val idsToRemove = txs.map { it.id }.toSet()
+        if (isLocalOnlyUser) {
+            val curList = _localTransactions.value ?: uiState.value.allTransactions
+            _localTransactions.value = curList.filterNot { it.id in idsToRemove }
+            return
+        }
+        safeLaunch("deleteTransactionsBatch") {
+            txs.forEach { tx ->
+                repository.deleteTransaction(tx.id)
+            }
+        }
+    }
+
     fun saveAccount(id: String = "", name: String, kind: String, initialBalance: Double, colorHex: String) {
         val existing = uiState.value.accounts.find { it.account.id == id }?.account
         safeLaunch("saveAccount") {

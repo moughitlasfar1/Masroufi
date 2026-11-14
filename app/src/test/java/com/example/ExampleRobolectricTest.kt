@@ -1037,6 +1037,52 @@ class ExampleRobolectricTest {
         assertEquals("Today", PayCycleEngine.formatFriendlyDate("2026-05-16", "en", "2026-05-16"))
         assertEquals("14 mai", PayCycleEngine.formatFriendlyDate("2026-05-14", "fr", "2026-05-16"))
         assertEquals("1 mai → 31 mai", PayCycleEngine.formatCycleRangeFriendly("2026-05-01", "2026-05-31", "fr"))
+
+        // 6. Moonshine multi-expense sentence parsing & hands-free Budget Q&A over DashboardState
+        val multiDarija = com.example.domain.VoiceDarijaParser.parseMultiExpenses(
+            "9ahwa 15 w taxi 25 w khobz 5",
+            envelopes,
+            "darija"
+        )
+        assertEquals(3, multiDarija.size)
+        assertEquals(15.0, multiDarija[0].amount, 0.01)
+        assertEquals("cafe", multiDarija[0].envelopeKey)
+        assertEquals(25.0, multiDarija[1].amount, 0.01)
+        assertEquals(5.0, multiDarija[2].amount, 0.01)
+
+        val multiArabic = com.example.domain.VoiceDarijaParser.parseMultiExpenses(
+            "قهوة 15 وطاكسي 25 وخبز 5",
+            envelopes,
+            "ar"
+        )
+        assertEquals(3, multiArabic.size)
+        assertEquals(45.0, multiArabic.sumOf { it.amount }, 0.01)
+
+        val sampleState = DashboardState(
+            profile = UserProfile(language = "darija"),
+            safeToSpendToday = 165.0,
+            remainingBudget = 2480.0,
+            cycleExpenses = 1520.0,
+            totalAvailableBudget = 4000.0,
+            totalNetWorth = 9200.0,
+            envelopes = envStatuses,
+            hideAmounts = false
+        )
+        val qaSafeToday = com.example.domain.VoiceDarijaParser.evaluateVoiceUtterance(
+            "شحال بقى ليا اليوم؟",
+            sampleState
+        )
+        assertTrue(qaSafeToday is com.example.domain.VoiceBatchParseResult.BudgetQuery)
+        val queryObj = qaSafeToday as com.example.domain.VoiceBatchParseResult.BudgetQuery
+        assertEquals(com.example.domain.VoiceQueryType.SAFE_TODAY, queryObj.queryType)
+        assertTrue(queryObj.displayValue.contains("165"))
+
+        // Verify privacy masking on Moonshine Q&A visual display
+        val maskedQa = com.example.domain.VoiceDarijaParser.evaluateVoiceUtterance(
+            "Ch7al b9a liya lyoum?",
+            sampleState.copy(hideAmounts = true)
+        ) as com.example.domain.VoiceBatchParseResult.BudgetQuery
+        assertTrue(maskedQa.displayValue.contains("••••"))
     }
 }
 

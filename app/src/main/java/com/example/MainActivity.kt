@@ -124,9 +124,16 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.input.pointer.pointerInput
 import com.example.domain.PayCycleEngine
+import com.example.domain.VoiceBatchParseResult
+import com.example.domain.VoiceDarijaParser
 import com.example.notifications.MasroufiNotificationManager
 import com.example.security.AppSecurityManager
 import com.example.security.MasroufiSecurityLockScreen
+import com.example.ui.voice.MoonshineAnswerOverlayCard
+import com.example.ui.voice.MoonshineWalkieTalkieFab
+import com.example.ui.voice.MoonshineWalkieTalkieHud
+import com.example.voice.MoonshineVoiceController
+import kotlinx.coroutines.delay
 import com.example.ui.AddFinancialItemSheet
 import com.example.ui.AuthScreen
 import com.example.ui.BudgetAndDaretScreen
@@ -645,6 +652,102 @@ fun MainFeatureScreen(
         }
     }
 
+    val moonshineController = remember(context) {
+        MoonshineVoiceController(context = context, scope = scope)
+    }
+    val isMoonshineListening by moonshineController.isListening.collectAsStateWithLifecycle()
+    val moonshineLiveTranscript by moonshineController.liveTranscript.collectAsStateWithLifecycle()
+    val moonshineWaveformLevels by moonshineController.waveformLevels.collectAsStateWithLifecycle()
+    var activeBudgetQueryAnswer by remember { mutableStateOf<VoiceBatchParseResult.BudgetQuery?>(null) }
+
+    DisposableEffect(moonshineController) {
+        onDispose {
+            moonshineController.shutdown()
+        }
+    }
+
+    LaunchedEffect(activeBudgetQueryAnswer) {
+        if (activeBudgetQueryAnswer != null) {
+            delay(5000L)
+            activeBudgetQueryAnswer = null
+        }
+    }
+
+    val recordAudioPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            moonshineController.startListening(state.profile.language)
+        } else {
+            // Still open the Moonshine HUD so the user can use 1-tap phrases or type Darija
+            moonshineController.startListening(state.profile.language)
+            scope.launch {
+                snackbarHostState.showSnackbar(strings.moonshineMicPermDenied)
+            }
+        }
+    }
+
+    fun startMoonshineWalkieTalkie() {
+        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+        activeBudgetQueryAnswer = null
+        if (MoonshineVoiceController.hasRecordAudioPermission(context)) {
+            moonshineController.startListening(state.profile.language)
+        } else {
+            recordAudioPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun commitMoonshineWalkieTalkie() {
+        val raw = moonshineController.stopAndConsumeTranscript()
+        moonshineController.cancelListening()
+        if (raw.isBlank()) return
+        when (val result = VoiceDarijaParser.evaluateVoiceUtterance(raw, state)) {
+            is VoiceBatchParseResult.ExpensesBatch -> {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                val savedBatch = viewModel.saveVoiceBatchTransactions(result.items)
+                if (savedBatch.isNotEmpty()) {
+                    val toastText = if (savedBatch.size > 1) {
+                        strings.moonshineBatchSavedFmt
+                            .replace("{count}", savedBatch.size.toString())
+                            .replace("{total}", PayCycleEngine.formatAmountOrMask(result.totalAmount, state.hideAmounts))
+                            .replace("{cur}", cur)
+                    } else {
+                        val first = result.items.first()
+                        strings.moonshineSingleSavedFmt
+                            .replace("{desc}", first.description)
+                            .replace("{total}", PayCycleEngine.formatAmountOrMask(first.amount, state.hideAmounts))
+                            .replace("{cur}", cur)
+                            .replace("{cat}", first.categoryName)
+                    }
+                    scope.launch {
+                        val snackRes = snackbarHostState.showSnackbar(
+                            message = toastText,
+                            actionLabel = strings.undoLabel,
+                            duration = SnackbarDuration.Short
+                        )
+                        if (snackRes == SnackbarResult.ActionPerformed) {
+                            viewModel.deleteTransactionsBatch(savedBatch)
+                        }
+                    }
+                }
+            }
+            is VoiceBatchParseResult.BudgetQuery -> {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                activeBudgetQueryAnswer = result
+                moonshineController.speakAnswer(
+                    text = result.spokenAnswer,
+                    language = state.profile.language,
+                    hideAmounts = state.hideAmounts
+                )
+            }
+            is VoiceBatchParseResult.Unrecognized -> {
+                scope.launch {
+                    snackbarHostState.showSnackbar(result.hint)
+                }
+            }
+        }
+    }
+
     fun triggerQuickPreset(preset: FinancialItem) {
         viewModel.quickAddPreset(preset) { added ->
             scope.launch {
@@ -712,28 +815,57 @@ fun MainFeatureScreen(
                         )
                     },
                     bottomBar = {
-                        val tabs = listOf(
-                            Triple("vue", strings.navVue, Icons.Default.Home),
-                            Triple("semaine", strings.navSemaine, Icons.Default.BarChart),
-                            Triple("categories", strings.navCat, Icons.Default.PieChart),
-                            Triple("historique", strings.navHist, Icons.Default.History)
-                        )
-                        ExpressiveGlassBottomDock(
-                            tabs = tabs,
-                            activeTabKey = activeTab,
-                            onSelectTab = { pageIdx, _ ->
-                                scope.launch {
-                                    pagerState.animateScrollToPage(
-                                        page = pageIdx,
-                                        animationSpec = ExpressiveMotion.snappySpring()
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            MoonshineAnswerOverlayCard(
+                                queryResult = activeBudgetQueryAnswer,
+                                isDarkTheme = state.profile.isDarkTheme,
+                                onReplayAudio = { q ->
+                                    moonshineController.speakAnswer(
+                                        text = q.spokenAnswer,
+                                        language = state.profile.language,
+                                        hideAmounts = state.hideAmounts
                                     )
+                                },
+                                onDismiss = { activeBudgetQueryAnswer = null }
+                            )
+                            MoonshineWalkieTalkieHud(
+                                visible = isMoonshineListening,
+                                state = state,
+                                liveTranscript = moonshineLiveTranscript,
+                                waveformLevels = moonshineWaveformLevels,
+                                onTranscriptChange = { moonshineController.updateTranscriptManual(it) },
+                                onCommit = { commitMoonshineWalkieTalkie() },
+                                onCancel = { moonshineController.cancelListening() }
+                            )
+                            val tabs = listOf(
+                                Triple("vue", strings.navVue, Icons.Default.Home),
+                                Triple("semaine", strings.navSemaine, Icons.Default.BarChart),
+                                Triple("categories", strings.navCat, Icons.Default.PieChart),
+                                Triple("historique", strings.navHist, Icons.Default.History)
+                            )
+                            ExpressiveGlassBottomDock(
+                                tabs = tabs,
+                                activeTabKey = activeTab,
+                                onSelectTab = { pageIdx, _ ->
+                                    scope.launch {
+                                        pagerState.animateScrollToPage(
+                                            page = pageIdx,
+                                            animationSpec = ExpressiveMotion.snappySpring()
+                                        )
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     },
                     floatingActionButton = {
-                        ExtendedFloatingActionButton(
-                            onClick = {
+                        MoonshineWalkieTalkieFab(
+                            addLabel = strings.btnAddAction,
+                            isListening = isMoonshineListening,
+                            isDarkTheme = state.profile.isDarkTheme,
+                            onQuickTapAdd = {
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                 activeSheet = ActiveSheet.AddOrEditTransaction(
                                     existingTx = null,
@@ -741,12 +873,12 @@ fun MainFeatureScreen(
                                     autoLaunchVoice = false
                                 )
                             },
-                            shape = RoundedCornerShape(22.dp),
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                            text = { Text(strings.btnAddAction, fontWeight = FontWeight.ExtraBold) },
-                            modifier = Modifier.testTag("fab_add_expense")
+                            onStartWalkieTalkie = {
+                                startMoonshineWalkieTalkie()
+                            },
+                            onStopAndCommitWalkieTalkie = {
+                                commitMoonshineWalkieTalkie()
+                            }
                         )
                     }
                 ) { innerPadding ->

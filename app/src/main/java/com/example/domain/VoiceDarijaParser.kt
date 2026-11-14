@@ -1,6 +1,7 @@
 package com.example.domain
 
 import com.example.data.EnvelopeConfig
+import com.example.ui.DashboardState
 import java.util.Locale
 
 data class VoiceParsedTransaction(
@@ -11,6 +12,36 @@ data class VoiceParsedTransaction(
     val categoryName: String,
     val txType: String = "expense"
 )
+
+enum class VoiceQueryType {
+    SAFE_TODAY,
+    CYCLE_BALANCE,
+    SPENT_THIS_CYCLE,
+    TOTAL_ACCOUNTS,
+    CATEGORY_SPEND,
+    NO_SPEND_STREAK
+}
+
+sealed interface VoiceBatchParseResult {
+    data class ExpensesBatch(
+        val items: List<VoiceParsedTransaction>
+    ) : VoiceBatchParseResult {
+        val totalAmount: Double get() = PayCycleEngine.roundMoney(items.sumOf { it.amount })
+    }
+
+    data class BudgetQuery(
+        val queryType: VoiceQueryType,
+        val title: String,
+        val displayValue: String,
+        val subtitle: String,
+        val spokenAnswer: String
+    ) : VoiceBatchParseResult
+
+    data class Unrecognized(
+        val rawText: String,
+        val hint: String
+    ) : VoiceBatchParseResult
+}
 
 object VoiceDarijaParser {
 
@@ -145,6 +176,12 @@ object VoiceDarijaParser {
         for ((pattern, replacement) in ARABIZI_WORD_REPLACEMENTS) {
             normalized = pattern.replace(normalized, replacement)
         }
+        PayCycleEngine.getLearnedCategoryForDescription(normalized)?.let { learnedKey ->
+            val matchedEnv = envelopes.find { it.key == learnedKey }
+            if (matchedEnv != null) {
+                return matchedEnv.key to matchedEnv.localizedName(language)
+            }
+        }
         val lower = normalized.lowercase(Locale.ROOT)
         for ((keywords, envKey, defaultLabel) in DARIJA_CATEGORY_MAP) {
             if (keywords.any { kw -> lower.contains(kw) }) {
@@ -196,7 +233,8 @@ object VoiceDarijaParser {
             }
         }
 
-        if (extractedAmount <= 0.0) return null
+        val roundedAmount = PayCycleEngine.roundMoney(extractedAmount)
+        if (roundedAmount <= 0.0) return null
 
         // 2. Clean currency words and punctuation
         val descTokens = cleanedText
@@ -224,14 +262,16 @@ object VoiceDarijaParser {
         val isIncome = INCOME_KEYWORDS.any { fullLower.contains(it) }
         val txType = if (isIncome) "income" else "expense"
 
-        // 3. Infer envelopeKey & localized category name
-        var matchedKey = ""
+        // 3. Infer envelopeKey & localized category name (learned user categories first, then keyword map)
+        var matchedKey = PayCycleEngine.getLearnedCategoryForDescription(cleanedDesc).orEmpty()
         var fallbackLabel = ""
-        for ((keywords, envKey, defaultLabel) in DARIJA_CATEGORY_MAP) {
-            if (keywords.any { kw -> fullLower.contains(kw) }) {
-                matchedKey = envKey
-                fallbackLabel = defaultLabel
-                break
+        if (matchedKey.isBlank()) {
+            for ((keywords, envKey, defaultLabel) in DARIJA_CATEGORY_MAP) {
+                if (keywords.any { kw -> fullLower.contains(kw) }) {
+                    matchedKey = envKey
+                    fallbackLabel = defaultLabel
+                    break
+                }
             }
         }
 
@@ -246,7 +286,7 @@ object VoiceDarijaParser {
 
         return VoiceParsedTransaction(
             rawTranscript = rawInput.trim(),
-            amount = extractedAmount,
+            amount = roundedAmount,
             description = cleanedDesc,
             envelopeKey = finalEnvKey,
             categoryName = finalCategoryName,
@@ -254,10 +294,266 @@ object VoiceDarijaParser {
         )
     }
 
+    /**
+     * Splits a multi-expense sentence in Darija, Arabic, French, or English into individual
+     * [VoiceParsedTransaction] items (e.g., "9ahwa 15, taxi 25 w khobz 5" -> 3 transactions).
+     */
+    fun parseMultiExpenses(
+        rawInput: String,
+        envelopes: List<EnvelopeConfig> = emptyList(),
+        language: String = "fr"
+    ): List<VoiceParsedTransaction> {
+        val trimmed = rawInput.trim()
+        if (trimmed.isBlank()) return emptyList()
+
+        // Normalize Arabic-Indic digits first so we can detect multi-number clauses reliably
+        var normalized = buildString(trimmed.length) {
+            for (ch in trimmed) {
+                append(ARABIC_INDIC_DIGITS[ch] ?: ch)
+            }
+        }
+        for ((pattern, replacement) in ARABIZI_WORD_REPLACEMENTS) {
+            normalized = pattern.replace(normalized, replacement)
+        }
+
+        // Split on natural conjunctions across Darija/AR/FR/EN:
+        // ",", ";", "+", "&", " w ", " et ", " and ", " puis ", " ثم ", " من بعد ", or Arabic " و" when separating clauses with numbers
+        val delimiterRegex = Regex(
+            """(?:\s*[,;+&،]\s*|\s+(?:w|et|and|puis|then|ثم|من بعد)\s+|\s+و(?=\s*\p{L}+\s+\d|\p{L}+\s+\d))""",
+            RegexOption.IGNORE_CASE
+        )
+
+        val candidateClauses = normalized
+            .split(delimiterRegex)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+        if (candidateClauses.size > 1) {
+            val parsedList = candidateClauses.mapNotNull { clause ->
+                parse(clause, envelopes, language)
+            }
+            if (parsedList.isNotEmpty()) {
+                return parsedList
+            }
+        }
+
+        // Also support adjacent "<word(s)> <number> <word(s)> <number>" without explicit conjunctions
+        // e.g. "qahwa 15 taxi 20 khobz 5"
+        val itemPattern = Regex("""([^\d,;+&،]+?\s+\d+(?:[.,]\d{1,2})?(?:\s*(?:dh|dhs|mad|درهم|دراهم))?)""", RegexOption.IGNORE_CASE)
+        val sequentialMatches = itemPattern.findAll(normalized).map { it.value.trim() }.toList()
+        if (sequentialMatches.size >= 2) {
+            val parsedSeq = sequentialMatches.mapNotNull { seg ->
+                parse(seg, envelopes, language)
+            }
+            if (parsedSeq.size >= 2) {
+                return parsedSeq
+            }
+        }
+
+        return listOfNotNull(parse(trimmed, envelopes, language))
+    }
+
+    /**
+     * Evaluates a spoken utterance as either:
+     * 1. A hands-free Budget Q&A question answered strictly from [DashboardState] (with privacy masking support),
+     * 2. A single or multi-expense batch ([VoiceBatchParseResult.ExpensesBatch]), or
+     * 3. An unrecognized phrase with a helpful localized example.
+     */
+    fun evaluateVoiceUtterance(
+        rawInput: String,
+        state: DashboardState
+    ): VoiceBatchParseResult {
+        val lang = state.profile.language
+        val envelopes = state.envelopes.map { it.config }
+        val trimmed = rawInput.trim()
+        if (trimmed.isBlank()) {
+            return VoiceBatchParseResult.Unrecognized(trimmed, defaultHintForLang(lang))
+        }
+
+        // 1. Check if the user is asking a hands-free Budget Question
+        detectBudgetQuery(trimmed, state)?.let { queryResult ->
+            return queryResult
+        }
+
+        // 2. Otherwise parse single or multiple expenses from the utterance
+        val expenses = parseMultiExpenses(trimmed, envelopes, lang)
+        if (expenses.isNotEmpty()) {
+            return VoiceBatchParseResult.ExpensesBatch(expenses)
+        }
+
+        return VoiceBatchParseResult.Unrecognized(trimmed, defaultHintForLang(lang))
+    }
+
+    private fun detectBudgetQuery(
+        rawInput: String,
+        state: DashboardState
+    ): VoiceBatchParseResult.BudgetQuery? {
+        val lang = state.profile.language
+        val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+        val hide = state.hideAmounts
+        val lower = rawInput.lowercase(Locale.ROOT)
+
+        val questionMarkers = listOf(
+            "ch7al", "chhal", "شحال", "كم", "combien", "how much", "what is", "whats",
+            "b9a", "bqa", "بقى", "تبقى", "متبقي", "reste", "left", "remaining",
+            "sraft", "sreft", "صرفت", "أنفقت", "dépensé", "depense", "spent",
+            "solde", "رصيد", "balance", "streak", "سلسلة", "safe"
+        )
+        val hasQuestionMarker = questionMarkers.any { lower.contains(it) } || rawInput.endsWith("?") || rawInput.endsWith("؟")
+        if (!hasQuestionMarker) return null
+
+        // If it contains a standalone number and no explicit question word ("ch7al"/"combien"/"how much"/"كم"),
+        // treat it as an expense rather than a question.
+        val hasExplicitInterrogative = listOf("ch7al", "chhal", "شحال", "كم", "combien", "how much", "?", "؟")
+            .any { lower.contains(it) }
+        val hasDigits = rawInput.any { it.isDigit() && it != '7' && it != '9' && it != '3' && it != '5' }
+        if (hasDigits && !hasExplicitInterrogative) return null
+
+        // Check if asking about a specific category/envelope first (e.g. "ch7al sraft f transport?")
+        for (envStatus in state.envelopes) {
+            val envNameLower = envStatus.config.localizedName(lang).lowercase(Locale.ROOT)
+            val keyLower = envStatus.config.key.lowercase(Locale.ROOT)
+            val matchesCat = lower.contains(keyLower) ||
+                lower.contains(envNameLower) ||
+                (keyLower == "transport" && (lower.contains("طاكسي") || lower.contains("نقل") || lower.contains("تران"))) ||
+                (keyLower == "cafe" && (lower.contains("قهوة") || lower.contains("qahwa") || lower.contains("خرج") || lower.contains("café"))) ||
+                (keyLower == "charges" && (lower.contains("دار") || lower.contains("تقدية") || lower.contains("سوق")))
+            if (matchesCat) {
+                val catTitle = envStatus.config.localizedName(lang)
+                val spentDisp = PayCycleEngine.formatCurrencyOrMask(envStatus.spent, cur, hide)
+                val remDisp = PayCycleEngine.formatCurrencyOrMask(envStatus.remaining, cur, hide)
+                val spoken = when (lang) {
+                    "darija" -> "فـ $catTitle صرفتي ${PayCycleEngine.formatDh(envStatus.spent)} $cur، وباقي ليك ${PayCycleEngine.formatDh(envStatus.remaining)} $cur."
+                    "ar" -> "في فئة $catTitle أنفقت ${PayCycleEngine.formatDh(envStatus.spent)} $cur، والمتبقي ${PayCycleEngine.formatDh(envStatus.remaining)} $cur."
+                    "en" -> "In $catTitle, you spent ${PayCycleEngine.formatDh(envStatus.spent)} $cur, with ${PayCycleEngine.formatDh(envStatus.remaining)} $cur remaining."
+                    else -> "Dans $catTitle, vous avez dépensé ${PayCycleEngine.formatDh(envStatus.spent)} $cur, il reste ${PayCycleEngine.formatDh(envStatus.remaining)} $cur."
+                }
+                val sub = when (lang) {
+                    "darija" -> "الباقي فهاد الظرف: $remDisp"
+                    "ar" -> "المتبقي في الظرف: $remDisp"
+                    "en" -> "Remaining in envelope: $remDisp"
+                    else -> "Reste dans l'enveloppe : $remDisp"
+                }
+                return VoiceBatchParseResult.BudgetQuery(
+                    queryType = VoiceQueryType.CATEGORY_SPEND,
+                    title = catTitle,
+                    displayValue = spentDisp,
+                    subtitle = sub,
+                    spokenAnswer = spoken
+                )
+            }
+        }
+
+        // Check if asking about total spent this cycle ("ch7al sraft", "combien j'ai dépensé", "how much did I spend")
+        val asksSpent = listOf("sraft", "sreft", "صرفت", "أنفقت", "dépensé", "depense", "spent")
+            .any { lower.contains(it) }
+        if (asksSpent) {
+            val spentDisp = PayCycleEngine.formatCurrencyOrMask(state.cycleExpenses, cur, hide)
+            val budgetDisp = PayCycleEngine.formatCurrencyOrMask(state.totalAvailableBudget, cur, hide)
+            val title = when (lang) {
+                "darija" -> "مجموع المصاريف هاد الشهر"
+                "ar" -> "إجمالي مصاريف الدورة"
+                "en" -> "Spent this cycle"
+                else -> "Dépensé ce cycle"
+            }
+            val sub = when (lang) {
+                "darija" -> "من أصل ميزانية $budgetDisp"
+                "ar" -> "من أصل ميزانية $budgetDisp"
+                "en" -> "Out of $budgetDisp budget"
+                else -> "Sur un budget de $budgetDisp"
+            }
+            val spoken = when (lang) {
+                "darija" -> "صرفتي هاد الشهر ${PayCycleEngine.formatDh(state.cycleExpenses)} $cur من أصل ${PayCycleEngine.formatDh(state.totalAvailableBudget)} $cur."
+                "ar" -> "أنفقت في هذه الدورة ${PayCycleEngine.formatDh(state.cycleExpenses)} $cur من أصل ${PayCycleEngine.formatDh(state.totalAvailableBudget)} $cur."
+                "en" -> "You have spent ${PayCycleEngine.formatDh(state.cycleExpenses)} $cur this cycle out of ${PayCycleEngine.formatDh(state.totalAvailableBudget)} $cur."
+                else -> "Vous avez dépensé ${PayCycleEngine.formatDh(state.cycleExpenses)} $cur ce cycle sur ${PayCycleEngine.formatDh(state.totalAvailableBudget)} $cur."
+            }
+            return VoiceBatchParseResult.BudgetQuery(
+                queryType = VoiceQueryType.SPENT_THIS_CYCLE,
+                title = title,
+                displayValue = spentDisp,
+                subtitle = sub,
+                spokenAnswer = spoken
+            )
+        }
+
+        // Check if asking about total accounts / net worth ("حساباتي", "comptes", "accounts")
+        val asksAccounts = listOf("comptes", "accounts", "حسابات", "فلوس", "net worth", "banque")
+            .any { lower.contains(it) }
+        if (asksAccounts) {
+            val totalDisp = PayCycleEngine.formatCurrencyOrMask(state.totalNetWorth, cur, hide)
+            val cycleDisp = PayCycleEngine.formatCurrencyOrMask(state.remainingBudget, cur, hide)
+            val title = Translations.forLang(lang).totalAccountsLabel
+            val sub = "${Translations.forLang(lang).cycleBalanceLabel} : $cycleDisp"
+            val spoken = when (lang) {
+                "darija" -> "مجموع الحسابات ديالك هو ${PayCycleEngine.formatDh(state.totalNetWorth)} $cur، والباقي فميزانية الشهر هو ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+                "ar" -> "مجموع حساباتك هو ${PayCycleEngine.formatDh(state.totalNetWorth)} $cur، ورصيد الدورة المتبقي هو ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+                "en" -> "Your total across accounts is ${PayCycleEngine.formatDh(state.totalNetWorth)} $cur, and your cycle balance is ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+                else -> "Le total de vos comptes est de ${PayCycleEngine.formatDh(state.totalNetWorth)} $cur, et votre solde du cycle est de ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+            }
+            return VoiceBatchParseResult.BudgetQuery(
+                queryType = VoiceQueryType.TOTAL_ACCOUNTS,
+                title = title,
+                displayValue = totalDisp,
+                subtitle = sub,
+                spokenAnswer = spoken
+            )
+        }
+
+        // Check if asking about monthly / cycle balance ("هاد الشهر", "ce mois", "this month", "cycle")
+        val asksCycleBalance = listOf("chhar", "شهر", "الشهر", "mois", "month", "cycle")
+            .any { lower.contains(it) }
+        if (asksCycleBalance) {
+            val remDisp = PayCycleEngine.formatCurrencyOrMask(state.remainingBudget, cur, hide)
+            val safeDisp = PayCycleEngine.formatCurrencyOrMask(state.safeToSpendToday, cur, hide)
+            val title = Translations.forLang(lang).cycleBalanceLabel
+            val sub = "${Translations.forLang(lang).safeToSpendTitle} : $safeDisp"
+            val spoken = when (lang) {
+                "darija" -> "باقي ليك فهاد الشهر ${PayCycleEngine.formatDh(state.remainingBudget)} $cur، أي ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur فاليوم."
+                "ar" -> "المتبقي في رصيد الدورة ${PayCycleEngine.formatDh(state.remainingBudget)} $cur، أي ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur لليوم."
+                "en" -> "You have ${PayCycleEngine.formatDh(state.remainingBudget)} $cur left in this cycle, or ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur safe to spend today."
+                else -> "Il vous reste ${PayCycleEngine.formatDh(state.remainingBudget)} $cur sur ce cycle, soit ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur disponibles aujourd'hui."
+            }
+            return VoiceBatchParseResult.BudgetQuery(
+                queryType = VoiceQueryType.CYCLE_BALANCE,
+                title = title,
+                displayValue = remDisp,
+                subtitle = sub,
+                spokenAnswer = spoken
+            )
+        }
+
+        // Default budget question: Safe to spend today ("ch7al b9a liya lyoum?", "combien il me reste ?", "how much left today?")
+        val safeDisp = PayCycleEngine.formatCurrencyOrMask(state.safeToSpendToday, cur, hide)
+        val cycleDisp = PayCycleEngine.formatCurrencyOrMask(state.remainingBudget, cur, hide)
+        val title = Translations.forLang(lang).safeToSpendTitle
+        val sub = "${Translations.forLang(lang).cycleBalanceLabel} : $cycleDisp (${state.activeWindow.daysRemaining}j)"
+        val spoken = when (lang) {
+            "darija" -> "تقدر تصرف اليوم مرتاح ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur. الباقي فالشهر هو ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+            "ar" -> "المتاح للصرف اليوم هو ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur. المتبقي في الدورة ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+            "en" -> "You can safely spend ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur today. Your remaining cycle balance is ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+            else -> "Vous avez ${PayCycleEngine.formatDh(state.safeToSpendToday)} $cur disponibles aujourd'hui. Solde du cycle : ${PayCycleEngine.formatDh(state.remainingBudget)} $cur."
+        }
+        return VoiceBatchParseResult.BudgetQuery(
+            queryType = VoiceQueryType.SAFE_TODAY,
+            title = title,
+            displayValue = safeDisp,
+            subtitle = sub,
+            spokenAnswer = spoken
+        )
+    }
+
+    private fun defaultHintForLang(lang: String): String = when (lang) {
+        "darija" -> "قول مثلاً: « قهوة 15 وطاكسي 25 » ولا « شحال بقى ليا اليوم؟ »"
+        "ar" -> "قل مثلاً: « قهوة 15 وطاكسي 25 » أو « كم تبقى لي اليوم؟ »"
+        "en" -> "Say e.g. 'Coffee 15 and taxi 25' or 'How much left today?'"
+        else -> "Dites ex: « Café 15 et taxi 25 » ou « Combien il me reste ? »"
+    }
+
     fun samplePhrasesForLanguage(lang: String): List<String> = when (lang) {
-        "darija" -> listOf("9ahwa 15", "قهوة 15", "طاكسي 20", "تقضية 80", "طاكوس 35")
-        "ar" -> listOf("قهوة 15", "طاكسي 20", "خبز وحليب 18", "غداء 45", "وقود 200")
-        "en" -> listOf("9ahwa 15", "Coffee 15", "Taxi 20", "Groceries 85", "Train 60")
-        else -> listOf("9ahwa 15", "Café 15", "Taxi 20", "Khobz & Lait 18", "ONCF 80")
+        "darija" -> listOf("9ahwa 15 w taxi 25 w khobz 5", "قهوة 15", "طاكسي 20", "شحال بقى ليا اليوم؟", "شحال صرفت فـ transport؟")
+        "ar" -> listOf("قهوة 15 وطاكسي 25 وخبز 5", "غداء 45", "كم تبقى لي اليوم؟", "كم أنفقت هذا الشهر؟")
+        "en" -> listOf("Coffee 15 and taxi 25 and bread 5", "Lunch 45", "How much left today?", "How much did I spend?")
+        else -> listOf("Café 15 et taxi 25 et pain 5", "Déjeuner 45", "Combien il me reste aujourd'hui ?", "Combien j'ai dépensé ?")
     }
 }
