@@ -101,13 +101,6 @@ class QuickCaptureActivity : FragmentActivity() {
 
         val launchedViaVoiceAlias = intent?.component?.className?.endsWith("MasroufiVoiceLauncherAlias") == true
         val rawAction = intent?.action
-        val action = when {
-            launchedViaVoiceAlias -> MasroufiAppWidget.ACTION_QUICK_VOICE
-            rawAction == MasroufiAppWidget.ACTION_QUICK_VOICE -> MasroufiAppWidget.ACTION_QUICK_VOICE
-            rawAction == MasroufiAppWidget.ACTION_QUICK_PRESET -> MasroufiAppWidget.ACTION_QUICK_PRESET
-            rawAction == MasroufiAppWidget.ACTION_QUICK_ADD -> MasroufiAppWidget.ACTION_QUICK_ADD
-            else -> MasroufiAppWidget.ACTION_QUICK_ADD
-        }
         val presetName = intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_NAME).orEmpty()
         val presetAmount = intent?.getDoubleExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, 0.0) ?: 0.0
         val presetEnvelope = intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE).orEmpty()
@@ -115,6 +108,27 @@ class QuickCaptureActivity : FragmentActivity() {
         setContent {
             val context = LocalContext.current
             val snapshot = remember { MasroufiWidgetStore.loadSnapshot(context) }
+            val assistantResolution = remember {
+                GoogleAssistantExpenseBridge.resolveIntent(
+                    intent = intent,
+                    language = snapshot.language
+                )
+            }
+            val resolvedAction = remember(assistantResolution) {
+                when {
+                    assistantResolution is AssistantExpenseResolution.AutoLoggedBatch -> "assistant_auto"
+                    assistantResolution is AssistantExpenseResolution.OpenVoiceCapture -> MasroufiAppWidget.ACTION_QUICK_VOICE
+                    assistantResolution is AssistantExpenseResolution.OpenKeypadCapture -> MasroufiAppWidget.ACTION_QUICK_ADD
+                    launchedViaVoiceAlias -> MasroufiAppWidget.ACTION_QUICK_VOICE
+                    rawAction == MasroufiAppWidget.ACTION_QUICK_VOICE -> MasroufiAppWidget.ACTION_QUICK_VOICE
+                    rawAction == MasroufiAppWidget.ACTION_QUICK_PRESET -> MasroufiAppWidget.ACTION_QUICK_PRESET
+                    rawAction == MasroufiAppWidget.ACTION_QUICK_ADD -> MasroufiAppWidget.ACTION_QUICK_ADD
+                    else -> MasroufiAppWidget.ACTION_QUICK_ADD
+                }
+            }
+            val assistantAutoItems = remember(assistantResolution) {
+                (assistantResolution as? AssistantExpenseResolution.AutoLoggedBatch)?.items ?: emptyList()
+            }
 
             MasroufiTheme(
                 darkTheme = snapshot.isDarkTheme,
@@ -135,10 +149,11 @@ class QuickCaptureActivity : FragmentActivity() {
                     )
                 } else {
                     QuickCaptureOverlayContent(
-                        initialAction = action,
+                        initialAction = resolvedAction,
                         presetName = presetName,
                         presetAmount = presetAmount,
                         presetEnvelope = presetEnvelope,
+                        assistantAutoItems = assistantAutoItems,
                         snapshot = snapshot,
                         onCloseActivity = { finish() }
                     )
@@ -154,6 +169,7 @@ fun QuickCaptureOverlayContent(
     presetName: String,
     presetAmount: Double,
     presetEnvelope: String,
+    assistantAutoItems: List<VoiceParsedTransaction> = emptyList(),
     snapshot: WidgetSnapshot,
     onCloseActivity: () -> Unit
 ) {
@@ -166,6 +182,7 @@ fun QuickCaptureOverlayContent(
     var mode by remember {
         mutableStateOf(
             when (initialAction) {
+                "assistant_auto" -> "assistant_auto"
                 MasroufiAppWidget.ACTION_QUICK_VOICE -> "voice"
                 MasroufiAppWidget.ACTION_QUICK_PRESET -> "preset"
                 else -> "keypad"
@@ -202,9 +219,16 @@ fun QuickCaptureOverlayContent(
         }
     }
 
-    // Start Moonshine listening immediately in Voice mode, or auto-log preset in Preset mode
+    // Start Moonshine listening immediately in Voice mode, or auto-log preset / Google Assistant batch
     LaunchedEffect(mode) {
-        if (mode == "voice" && savedBatch.isEmpty()) {
+        if (mode == "assistant_auto" && savedBatch.isEmpty() && assistantAutoItems.isNotEmpty()) {
+            val created = MasroufiWidgetStore.recordQuickCaptureTransactions(
+                context = context,
+                items = assistantAutoItems
+            )
+            savedBatch = created
+            undoSecondsRemaining = 5
+        } else if (mode == "voice" && savedBatch.isEmpty()) {
             if (MoonshineVoiceController.hasRecordAudioPermission(context)) {
                 voiceController.startListening(snapshot.language)
             } else {
@@ -289,6 +313,7 @@ fun QuickCaptureOverlayContent(
                     currencySymbol = cur,
                     hideAmounts = snapshot.hideAmounts,
                     secondsRemaining = undoSecondsRemaining,
+                    isAssistantAutoSaved = mode == "assistant_auto",
                     strings = strings,
                     onUndo = {
                         MasroufiWidgetStore.undoQuickCaptureBatch(context, savedBatch)
@@ -779,6 +804,7 @@ private fun QuickCaptureUndoConfirmationBar(
     currencySymbol: String,
     hideAmounts: Boolean,
     secondsRemaining: Int,
+    isAssistantAutoSaved: Boolean = false,
     strings: com.example.domain.AppStrings,
     onUndo: () -> Unit,
     onDoneNow: () -> Unit
@@ -820,7 +846,11 @@ private fun QuickCaptureUndoConfirmationBar(
             }
             Column {
                 Text(
-                    text = "✓ ${strings.saveBtn} (${secondsRemaining}s)",
+                    text = if (isAssistantAutoSaved) {
+                        "${strings.assistantAutoSavedBadge} (${secondsRemaining}s)"
+                    } else {
+                        "✓ ${strings.saveBtn} (${secondsRemaining}s)"
+                    },
                     style = MaterialTheme.typography.labelMedium,
                     color = AccentEmerald,
                     fontWeight = FontWeight.ExtraBold

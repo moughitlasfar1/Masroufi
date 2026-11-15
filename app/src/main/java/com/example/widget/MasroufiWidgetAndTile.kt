@@ -463,6 +463,7 @@ object MasroufiWidgetStore {
                 dynamicList.add(shortcut)
             }
             sm.dynamicShortcuts = dynamicList
+            GoogleAssistantExpenseBridge.pushAssistantDynamicShortcuts(context, snapshot)
         }
     }
 }

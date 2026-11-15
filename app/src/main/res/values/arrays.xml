@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Synonyms recognized by Google Assistant for OPEN_APP_FEATURE -> Voice Expense Capture -->
+    <string-array name="assistant_voice_expense_synonyms">
+        <item>voice_expense</item>
+        <item>add_expense</item>
+        <item>ajouter dépense</item>
+        <item>ajouter une dépense</item>
+        <item>nouvelle dépense</item>
+        <item>dépense vocale</item>
+        <item>masroufi voix</item>
+        <item>moonshine voix</item>
+        <item>add expense</item>
+        <item>log expense</item>
+        <item>record expense</item>
+        <item>voice expense</item>
+        <item>masroufi voice</item>
+        <item>زيد مصروف</item>
+        <item>إضافة مصروف</item>
+        <item>تسجيل مصروف</item>
+        <item>مصروف بالصوت</item>
+        <item>zid masrouf</item>
+    </string-array>
+
+    <!-- Synonyms recognized by Google Assistant for OPEN_APP_FEATURE -> Quick Keypad Expense -->
+    <string-array name="assistant_add_expense_synonyms">
+        <item>quick_add</item>
+        <item>clavier dépense</item>
+        <item>ajout rapide</item>
+        <item>quick add</item>
+        <item>keypad expense</item>
+        <item>مصروف سريع</item>
+    </string-array>
+</resources>

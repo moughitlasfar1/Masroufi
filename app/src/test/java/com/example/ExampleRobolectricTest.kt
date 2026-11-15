@@ -1476,4 +1476,72 @@ class ExampleRobolectricTest {
         com.example.notifications.VoiceLauncherAliasManager.setVoiceAliasEnabled(context, false)
         assertFalse(com.example.notifications.VoiceLauncherAliasManager.isVoiceAliasEnabled(context))
     }
+
+    @Test
+    fun `GoogleAssistantExpenseBridge resolves spoken expense queries, structured BII parameters, deep links, and OPEN_APP_FEATURE voice launches accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val snap = com.example.widget.WidgetSnapshot(
+            snapshotDateIso = PayCycleEngine.todayIso(),
+            todaySpend = 30.0,
+            safeToSpendToday = 170.0,
+            remainingBudget = 1700.0,
+            daysRemainingInCycle = 10,
+            currencySymbol = "DH",
+            language = "fr"
+        )
+        com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(context, snap)
+
+        // 1. Spoken French/Darija query via Google Assistant SEARCH_ACTION with multiple expenses
+        val searchIntent = android.content.Intent("com.google.android.gms.actions.SEARCH_ACTION").apply {
+            putExtra(android.app.SearchManager.QUERY, "Ajouter dépense Café 15 DH et Taxi 25 DH")
+        }
+        val searchResolution = com.example.widget.GoogleAssistantExpenseBridge.resolveIntent(searchIntent, "fr")
+        assertTrue(searchResolution is com.example.widget.AssistantExpenseResolution.AutoLoggedBatch)
+        val batchFromQuery = (searchResolution as com.example.widget.AssistantExpenseResolution.AutoLoggedBatch).items
+        assertEquals(2, batchFromQuery.size)
+        assertEquals(40.0, batchFromQuery.sumOf { it.amount }, 0.01)
+        assertEquals("cafe", batchFromQuery[0].envelopeKey)
+        assertEquals("transport", batchFromQuery[1].envelopeKey)
+
+        // 2. Structured BII CREATE_MONEY_TRANSFER parameters (amount + merchant)
+        val transferIntent = android.content.Intent(com.example.widget.GoogleAssistantExpenseBridge.ACTION_ASSISTANT_ADD_EXPENSE).apply {
+            putExtra(com.example.widget.GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_AMOUNT, "85,50")
+            putExtra(com.example.widget.GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_MERCHANT, "Marjane")
+            putExtra(com.example.widget.GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_CURRENCY, "MAD")
+        }
+        val transferResolution = com.example.widget.GoogleAssistantExpenseBridge.resolveIntent(transferIntent, "fr")
+        assertTrue(transferResolution is com.example.widget.AssistantExpenseResolution.AutoLoggedBatch)
+        val batchFromTransfer = (transferResolution as com.example.widget.AssistantExpenseResolution.AutoLoggedBatch).items
+        assertEquals(1, batchFromTransfer.size)
+        assertEquals(85.50, batchFromTransfer.first().amount, 0.01)
+        assertEquals("Marjane", batchFromTransfer.first().description)
+
+        // 3. Deep link masroufi://assistant/add?query=9ahwa+15+w+khobz+5
+        val deepLinkIntent = android.content.Intent(
+            android.content.Intent.ACTION_VIEW,
+            android.net.Uri.parse("masroufi://assistant/add?query=9ahwa%2015%20w%20khobz%205")
+        )
+        val deepLinkResolution = com.example.widget.GoogleAssistantExpenseBridge.resolveIntent(deepLinkIntent, "darija")
+        assertTrue(deepLinkResolution is com.example.widget.AssistantExpenseResolution.AutoLoggedBatch)
+        val batchFromDeepLink = (deepLinkResolution as com.example.widget.AssistantExpenseResolution.AutoLoggedBatch).items
+        assertEquals(2, batchFromDeepLink.size)
+        assertEquals(20.0, batchFromDeepLink.sumOf { it.amount }, 0.01)
+
+        // 4. OPEN_APP_FEATURE ("ajouter dépense" without inline amount) -> opens Moonshine voice capture live
+        val openFeatureIntent = android.content.Intent(com.example.widget.GoogleAssistantExpenseBridge.ACTION_ASSISTANT_ADD_EXPENSE).apply {
+            putExtra(com.example.widget.GoogleAssistantExpenseBridge.EXTRA_FEATURE, "ajouter dépense")
+        }
+        val openFeatureResolution = com.example.widget.GoogleAssistantExpenseBridge.resolveIntent(openFeatureIntent, "fr")
+        assertTrue(openFeatureResolution is com.example.widget.AssistantExpenseResolution.OpenVoiceCapture)
+
+        // 5. Translations and sample commands for all 4 languages
+        listOf("fr", "en", "ar", "darija").forEach { lang ->
+            val s = Translations.forLang(lang)
+            assertTrue(s.assistantSectionTitle.isNotBlank())
+            assertTrue(s.assistantPinShortcutBtn.isNotBlank())
+            assertTrue(s.assistantAutoSavedBadge.isNotBlank())
+            assertEquals(3, com.example.widget.GoogleAssistantExpenseBridge.sampleVoiceCommandsForLang(lang).size)
+        }
+    }
 }
+

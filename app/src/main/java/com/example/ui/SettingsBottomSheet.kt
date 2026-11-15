@@ -817,6 +817,101 @@ fun SettingsBottomSheet(
                         )
                     }
 
+                    // Google Assistant ("Ok Google") Expense Integration Section
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_google_assistant_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = strings.assistantSectionTitle,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = strings.assistantSectionSub,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = strings.assistantTryCommandsLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            val sampleAssistantCommands = remember(lang) {
+                                com.example.widget.GoogleAssistantExpenseBridge.sampleVoiceCommandsForLang(lang)
+                            }
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                sampleAssistantCommands.forEachIndexed { idx, (spokenLabel, queryPayload) ->
+                                    FilterChip(
+                                        selected = false,
+                                        onClick = {
+                                            com.example.widget.GoogleAssistantExpenseBridge.launchSimulatedAssistantExpense(
+                                                context = context,
+                                                sampleQuery = queryPayload
+                                            )
+                                        },
+                                        label = {
+                                            Text(spokenLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        },
+                                        modifier = Modifier.testTag("settings_assistant_sample_$idx")
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                FilledTonalButton(
+                                    onClick = {
+                                        com.example.widget.GoogleAssistantExpenseBridge.requestPinAssistantVoiceShortcut(
+                                            context = context,
+                                            language = lang,
+                                            onResult = { msg -> tileFeedback = msg }
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("settings_pin_assistant_shortcut_btn")
+                                ) {
+                                    Text(strings.assistantPinShortcutBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val samplePhrase = when (lang) {
+                                            "ar" -> "قهوة 15 درهم"
+                                            "darija" -> "9ahwa 15 DH"
+                                            "en" -> "Coffee 15 DH"
+                                            else -> "Café 15 DH"
+                                        }
+                                        com.example.widget.GoogleAssistantExpenseBridge.launchSimulatedAssistantExpense(
+                                            context = context,
+                                            sampleQuery = samplePhrase
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("settings_test_assistant_command_btn")
+                                ) {
+                                    Text(strings.assistantTestCommandBtn, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                }
+                            }
+                        }
+                    }
+
                     // Phase 10: Bank Notification Auto-Detection entry
                     val pendingDetectionsCount = remember {
                         com.example.notifications.BankDetectionStore.loadPendingItems(context).size

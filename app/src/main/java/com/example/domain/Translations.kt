@@ -226,7 +226,13 @@ data class AppStrings(
     val bankDetectNeedsReviewBadge: String = "À vérifier",
     val bankDetectDuplicateBadge: String = "Doublon possible (±10 min)",
     val bankDetectAutoConfirmLabel: String = "Auto-confirmer sous le plafond",
-    val voiceLauncherAliasToggleLabel: String = "Icône « Masroufi Voice » (Lancement vocal direct)"
+    val voiceLauncherAliasToggleLabel: String = "Icône « Masroufi Voice » (Lancement vocal direct)",
+    val assistantSectionTitle: String = "Google Assistant (« Ok Google »)",
+    val assistantSectionSub: String = "Ajoutez une dépense à la voix avec Google Assistant en FR, Darija, Arabe ou EN.",
+    val assistantTryCommandsLabel: String = "Dites par exemple à Google Assistant :",
+    val assistantPinShortcutBtn: String = "+ Épingler raccourci Google Assistant",
+    val assistantTestCommandBtn: String = "🎙️ Tester « Ok Google, Café 15 DH »",
+    val assistantAutoSavedBadge: String = "🎙️ Google Assistant · Enregistré automatiquement"
 )
 
 object Translations {
@@ -455,7 +461,13 @@ object Translations {
         bankDetectNeedsReviewBadge = "À vérifier",
         bankDetectDuplicateBadge = "Doublon possible (±10 min)",
         bankDetectAutoConfirmLabel = "Auto-confirmer sous le plafond",
-        voiceLauncherAliasToggleLabel = "Icône « Masroufi Voice » (Lancement vocal direct)"
+        voiceLauncherAliasToggleLabel = "Icône « Masroufi Voice » (Lancement vocal direct)",
+        assistantSectionTitle = "Google Assistant (« Ok Google »)",
+        assistantSectionSub = "Ajoutez une dépense à la voix avec Google Assistant en FR, Darija, Arabe ou EN.",
+        assistantTryCommandsLabel = "Dites par exemple à Google Assistant :",
+        assistantPinShortcutBtn = "+ Épingler raccourci Google Assistant",
+        assistantTestCommandBtn = "🎙️ Tester « Ok Google, Café 15 DH »",
+        assistantAutoSavedBadge = "🎙️ Google Assistant · Enregistré automatiquement"
     )
 
     val EN = AppStrings(
@@ -683,7 +695,13 @@ object Translations {
         bankDetectNeedsReviewBadge = "Needs review",
         bankDetectDuplicateBadge = "Possible duplicate (±10 min)",
         bankDetectAutoConfirmLabel = "Auto-confirm below cap",
-        voiceLauncherAliasToggleLabel = "'Masroufi Voice' launcher icon (Voice command)"
+        voiceLauncherAliasToggleLabel = "'Masroufi Voice' launcher icon (Voice command)",
+        assistantSectionTitle = "Google Assistant ('Hey Google')",
+        assistantSectionSub = "Add expenses hands-free with Google Assistant in EN, FR, Darija, or Arabic.",
+        assistantTryCommandsLabel = "Try saying to Google Assistant:",
+        assistantPinShortcutBtn = "+ Pin Google Assistant Shortcut",
+        assistantTestCommandBtn = "🎙️ Test 'Hey Google, Coffee 15 DH'",
+        assistantAutoSavedBadge = "🎙️ Google Assistant · Saved automatically"
     )
 
     val AR = AppStrings(
@@ -911,7 +929,13 @@ object Translations {
         bankDetectNeedsReviewBadge = "يحتاج مراجعة",
         bankDetectDuplicateBadge = "احتمال تكرار (±10 دقائق)",
         bankDetectAutoConfirmLabel = "تأكيد تلقائي تحت السقف",
-        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » للفتح الصوتي المباشر"
+        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » للفتح الصوتي المباشر",
+        assistantSectionTitle = "مساعد Google (« Ok Google »)",
+        assistantSectionSub = "أضف مصاريفك صوتياً عبر مساعد Google بالعربية أو الدارجة أو الفرنسية.",
+        assistantTryCommandsLabel = "قل لمساعد Google مثلاً :",
+        assistantPinShortcutBtn = "+ تثبيت اختصار مساعد Google",
+        assistantTestCommandBtn = "🎙️ تجربة « Ok Google، قهوة 15 درهم »",
+        assistantAutoSavedBadge = "🎙️ مساعد Google · تم الحفظ تلقائياً"
     )
 
     val DARIJA = AppStrings(
@@ -1139,7 +1163,13 @@ object Translations {
         bankDetectNeedsReviewBadge = "خاصو مراجعة",
         bankDetectDuplicateBadge = "يمكن معاود (±10 دقايق)",
         bankDetectAutoConfirmLabel = "أكد أوتوماتيك تحت السقف",
-        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » فـ الشاشة باش تحل بالصوت"
+        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » فـ الشاشة باش تحل بالصوت",
+        assistantSectionTitle = "مساعد Google (« Ok Google »)",
+        assistantSectionSub = "زيد مصروفك بالصوت مع Google Assistant بالدارجة أو العربية أو الفرنسية.",
+        assistantTryCommandsLabel = "قول لـ Google Assistant مثلاً :",
+        assistantPinShortcutBtn = "+ زيد اختصار Google Assistant",
+        assistantTestCommandBtn = "🎙️ جرب « Ok Google, qahwa 15 DH »",
+        assistantAutoSavedBadge = "🎙️ Google Assistant · تقيدات أوتوماتيك"
     )
 
     fun forLang(lang: String): AppStrings = when (lang) {

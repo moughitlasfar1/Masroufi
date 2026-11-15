@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Voice Expense Shortcut bound to Google Assistant OPEN_APP_FEATURE -->
     <shortcut
         android:shortcutId="quick_voice_capture"
         android:enabled="true"
@@ -13,9 +14,11 @@
         <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
             <parameter-binding
                 android:key="feature"
-                android:value="voice_expense" />
+                android:value="@array/assistant_voice_expense_synonyms" />
         </capability-binding>
     </shortcut>
+
+    <!-- Quick Keypad Expense Shortcut bound to Google Assistant OPEN_APP_FEATURE -->
     <shortcut
         android:shortcutId="quick_add_expense"
         android:enabled="true"
@@ -26,8 +29,14 @@
             android:action="com.aistudio.masroufi.ACTION_QUICK_ADD"
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
             android:targetClass="com.example.widget.QuickCaptureActivity" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="@array/assistant_add_expense_synonyms" />
+        </capability-binding>
     </shortcut>
 
+    <!-- Google Assistant BII 1: Open App Feature ("Ok Google, ouvre Ajouter dépense sur Masroufi") -->
     <capability android:name="actions.intent.OPEN_APP_FEATURE">
         <intent
             android:action="com.aistudio.masroufi.ACTION_QUICK_VOICE"
@@ -36,6 +45,39 @@
             <Parameter
                 android:name="feature"
                 android:key="feature" />
+        </intent>
+    </capability>
+
+    <!-- Google Assistant BII 2: Create Thing / Expense ("Ok Google, créer Café 15 DH sur Masroufi") -->
+    <capability android:name="actions.intent.CREATE_THING">
+        <intent
+            android:action="com.aistudio.masroufi.ACTION_ASSISTANT_ADD_EXPENSE"
+            android:targetPackage="com.aistudio.masroufi.kxmpzq"
+            android:targetClass="com.example.widget.QuickCaptureActivity">
+            <Parameter
+                android:name="thing.name"
+                android:key="extra_assistant_query" />
+            <Parameter
+                android:name="thing.description"
+                android:key="extra_assistant_description" />
+        </intent>
+    </capability>
+
+    <!-- Google Assistant BII 3: Finance / Money Transfer ("Ok Google, enregistrer 25 DH Taxi sur Masroufi") -->
+    <capability android:name="actions.intent.CREATE_MONEY_TRANSFER">
+        <intent
+            android:action="com.aistudio.masroufi.ACTION_ASSISTANT_ADD_EXPENSE"
+            android:targetPackage="com.aistudio.masroufi.kxmpzq"
+            android:targetClass="com.example.widget.QuickCaptureActivity">
+            <Parameter
+                android:name="moneyTransfer.amount.value"
+                android:key="extra_assistant_amount" />
+            <Parameter
+                android:name="moneyTransfer.amount.currency"
+                android:key="extra_assistant_currency" />
+            <Parameter
+                android:name="moneyTransfer.moneyTransferDestination.name"
+                android:key="extra_assistant_merchant" />
         </intent>
     </capability>
 </shortcuts>
