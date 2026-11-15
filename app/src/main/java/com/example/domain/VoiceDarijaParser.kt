@@ -57,12 +57,29 @@ object VoiceDarijaParser {
         "الفين" to 2000.0,
         "ألف" to 1000.0,
         "الف" to 1000.0,
+        "تسعمية" to 900.0,
+        "تسعمائة" to 900.0,
+        "تمنمية" to 800.0,
+        "ثمانمائة" to 800.0,
+        "سبعمية" to 700.0,
+        "سبعمائة" to 700.0,
+        "ستمية" to 600.0,
+        "ستمائة" to 600.0,
         "خمسمائة" to 500.0,
         "خمسمية" to 500.0,
+        "ربعمية" to 400.0,
+        "أربعمائة" to 400.0,
+        "تلاتمية" to 300.0,
+        "ثلاثمائة" to 300.0,
         "ميتين" to 200.0,
         "مائتين" to 200.0,
         "مية" to 100.0,
         "مائة" to 100.0,
+        "تسعين" to 90.0,
+        "تمانين" to 80.0,
+        "ثمانين" to 80.0,
+        "سبعين" to 70.0,
+        "ستين" to 60.0,
         "خمسين" to 50.0,
         "ربعين" to 40.0,
         "أربعين" to 40.0,
@@ -75,16 +92,47 @@ object VoiceDarijaParser {
         "طناش" to 12.0,
         "عشرة" to 10.0,
         "عشره" to 10.0,
+        "تسعود" to 9.0,
+        "تسعة" to 9.0,
         "تمنية" to 8.0,
         "ثمانية" to 8.0,
         "سبعة" to 7.0,
         "ستة" to 6.0,
         "خمسة" to 5.0,
-        "خمسه" to 5.0
+        "خمسه" to 5.0,
+        "ربعة" to 4.0,
+        "أربعة" to 4.0,
+        "تلاتة" to 3.0,
+        "ثلاثة" to 3.0,
+        "جوج" to 2.0,
+        "زوج" to 2.0
+    )
+
+    private val RYAL_THOUSAND_MULTIPLIERS = listOf(
+        "مية" to 100.0, "مائة" to 100.0,
+        "تسعين" to 90.0, "تمانين" to 80.0, "ثمانين" to 80.0,
+        "سبعين" to 70.0, "ستين" to 60.0, "خمسين" to 50.0,
+        "ربعين" to 40.0, "أربعين" to 40.0,
+        "تلاتين" to 30.0, "ثلاثين" to 30.0,
+        "عشرين" to 20.0, "3echrin" to 20.0,
+        "خمسطاش" to 15.0, "خمسة عشر" to 15.0,
+        "طناش" to 12.0,
+        "عشرة" to 10.0, "عشره" to 10.0, "3achra" to 10.0, "achra" to 10.0,
+        "تسعود" to 9.0, "تسعة" to 9.0,
+        "تمنية" to 8.0, "ثمانية" to 8.0, "temnya" to 8.0,
+        "سبعة" to 7.0, "seb3a" to 7.0,
+        "ستة" to 6.0, "setta" to 6.0,
+        "خمسة" to 5.0, "خمسه" to 5.0, "khamsa" to 5.0,
+        "ربعة" to 4.0, "أربعة" to 4.0, "rb3a" to 4.0, "reb3a" to 4.0,
+        "تلاتة" to 3.0, "ثلاثة" to 3.0, "tlata" to 3.0,
+        "جوج" to 2.0, "زوج" to 2.0, "jouj" to 2.0, "jooj" to 2.0
     )
 
     private val CURRENCY_NOISE_WORDS = listOf(
-        "درهم", "دراهم", "د.م", "dh", "dhs", "mad", "dirhams", "dirham", "بـ", "ب"
+        "درهم", "دراهم", "د.م", "dh", "dhs", "mad", "dirhams", "dirham",
+        "ريال", "ريالات", "ryal", "rial", "ryalat", "دلاف", "dlaf",
+        "فرنك", "frank", "franc", "francs",
+        "بـ", "ب"
     )
 
     private val INCOME_KEYWORDS = listOf(
@@ -100,7 +148,8 @@ object VoiceDarijaParser {
                 "gheda", "ghda", "lgheda", "déjeuner", "dejeuner", "lunch",
                 "عشاء", "عشا", "echa", "3cha", "acha", "dîner", "diner", "dinner",
                 "فتور", "ftour", "breakfast", "resto", "restaurant", "مسمن", "حرشة", "عصير", "jus",
-                "snack", "garo", "chawarma", "شاورما", "burger", "glace", "pâtisserie", "patisserie"
+                "snack", "garo", "chawarma", "شاورما", "burger", "glace", "pâtisserie", "patisserie",
+                "glovo", "جلوفو", "mcdo", "ماكدو"
             ),
             "cafe",
             "Café & Sorties"
@@ -108,10 +157,14 @@ object VoiceDarijaParser {
         // Transport -> "transport"
         Triple(
             listOf(
-                "taxi", "طاكسي", "تاكسي", "petit taxi", "grand taxi", "oncf", "تران", "قطار", "train",
-                "tram", "طرام", "bus", "طوبيس", "وطوبيس", "مازوط", "ليسنس", "essence", "gasoil",
-                "carburant", "autoroute", "peage", "péage", "نقل", "transport", "indrive", "careem",
-                "uber", "parking", "باركينغ", "buraq", "al boraq"
+                "طاكسي كبير", "طاكسي صغير", "petit taxi", "grand taxi", "taxi", "طاكسي", "تاكسي",
+                "oncf", "تران", "قطار", "train", "tram", "طرام", "bus", "طوبيس", "وطوبيس",
+                "مازوط", "ليسنس", "ليصانص", "كازوال", "essence", "gasoil", "carburant",
+                "autoroute", "peage", "péage", "jawaz", "جواز", "navette",
+                "buraq", "al boraq", "alboraq", "لبراق", "البراق",
+                "afriquia", "افريقيا", "winxo", "وينكسو", "shell", "شيل",
+                "lavage", "لاڤاج", "لافاج",
+                "نقل", "transport", "indrive", "careem", "uber", "parking", "باركينغ"
             ),
             "transport",
             "Transport"
@@ -125,7 +178,8 @@ object VoiceDarijaParser {
                 "epicerie", "épicerie", "ماء", "ضو", "ضوء", "الكراء", "كراء", "loyer", "syndic",
                 "ويفي", "wifi", "fibre", "inwi", "iam", "orange", "روشارج", "recharge", "lydec",
                 "redal", "amendis", "amendys", "onee", "facture", "فاتورة", "دار", "maison", "courses",
-                "gaz", "بوطا", "boutagaz", "bota"
+                "gaz", "بوطا", "بوتاغاز", "boutagaz", "bota",
+                "la visite", "لافيزيت", "ضريبة", "vignette", "تأمين", "assurance"
             ),
             "charges",
             "Charges & Maison"
@@ -212,23 +266,32 @@ object VoiceDarijaParser {
             normalizedDigits = pattern.replace(normalizedDigits, replacement)
         }
 
-        // 1. Extract standalone numeric amount (digits not attached to letters first, then spoken Darija/Arabic words)
-        val standaloneNumberRegex = Regex("""(?<!\p{L})(\d+(?:[.,]\d{1,2})?)(?!\p{L})""")
-        val fallbackNumberRegex = Regex("""(\d+(?:[.,]\d{1,2})?)""")
-        val match = standaloneNumberRegex.find(normalizedDigits) ?: fallbackNumberRegex.find(normalizedDigits)
-        var extractedAmount = match?.groupValues?.get(1)?.replace(",", ".")?.toDoubleOrNull() ?: 0.0
-        var cleanedText = if (match != null) {
-            (normalizedDigits.substring(0, match.range.first) + " " + normalizedDigits.substring(match.range.last + 1)).trim()
+        // 1. Check Moroccan Ryal / Dlaf / Francs idioms and numeric Ryal ("1000 ryal", "ألف ريال", "جوج دلاف") first (1 DH = 20 Ryal)
+        var extractedAmount = 0.0
+        var cleanedText = normalizedDigits
+        val ryalMatch = extractRyalOrDlafAmount(normalizedDigits)
+        if (ryalMatch != null) {
+            extractedAmount = ryalMatch.first
+            cleanedText = ryalMatch.second
         } else {
-            normalizedDigits
-        }
+            // 2. Extract standalone numeric amount (digits not attached to letters first, then spoken Darija/Arabic words)
+            val standaloneNumberRegex = Regex("""(?<!\p{L})(\d+(?:[.,]\d{1,2})?)(?!\p{L})""")
+            val fallbackNumberRegex = Regex("""(\d+(?:[.,]\d{1,2})?)""")
+            val match = standaloneNumberRegex.find(normalizedDigits) ?: fallbackNumberRegex.find(normalizedDigits)
+            extractedAmount = match?.groupValues?.get(1)?.replace(",", ".")?.toDoubleOrNull() ?: 0.0
+            cleanedText = if (match != null) {
+                (normalizedDigits.substring(0, match.range.first) + " " + normalizedDigits.substring(match.range.last + 1)).trim()
+            } else {
+                normalizedDigits
+            }
 
-        if (extractedAmount <= 0.0) {
-            for ((word, value) in SPOKEN_NUMBERS) {
-                if (cleanedText.contains(word, ignoreCase = true)) {
-                    extractedAmount = value
-                    cleanedText = cleanedText.replaceFirst(word, "", ignoreCase = true).trim()
-                    break
+            if (extractedAmount <= 0.0) {
+                for ((word, value) in SPOKEN_NUMBERS) {
+                    if (cleanedText.contains(word, ignoreCase = true)) {
+                        extractedAmount = value
+                        cleanedText = cleanedText.replaceFirst(word, "", ignoreCase = true).trim()
+                        break
+                    }
                 }
             }
         }
@@ -294,6 +357,93 @@ object VoiceDarijaParser {
         )
     }
 
+    private fun parseMultiplierToken(raw: String): Double? {
+        val clean = raw.trim().lowercase(Locale.ROOT).replace(",", ".")
+        clean.toDoubleOrNull()?.let { return it }
+        return RYAL_THOUSAND_MULTIPLIERS.firstOrNull { (token, _) ->
+            clean == token.lowercase(Locale.ROOT)
+        }?.second
+    }
+
+    /**
+     * Converts Moroccan Ryal (`1 DH = 20 Ryal`), Dlaf (`جوج دلاف` = 2000 Ryal = 100 DH,
+     * `عشرة دلاف` = 10000 Ryal = 500 DH), and Francs (`1 DH = 100 Francs`) expressions to Dirhams.
+     */
+    private fun extractRyalOrDlafAmount(input: String): Pair<Double, String>? {
+        val multChoices = RYAL_THOUSAND_MULTIPLIERS.joinToString("|") { Regex.escape(it.first) }
+
+        // A. Dlaf idioms: "جوج دلاف", "عشرة دلاف", "2 dlaf", "10 dlaf" -> multiplier * 1000 ryal / 20
+        val dlafRegex = Regex(
+            """(?<!\p{L})($multChoices|\d+(?:[.,]\d+)?)\s*(?:دلاف|dlaf|d'alaf)(?!\p{L})""",
+            RegexOption.IGNORE_CASE
+        )
+        dlafRegex.find(input)?.let { m ->
+            val mult = parseMultiplierToken(m.groupValues[1])
+            if (mult != null && mult > 0.0) {
+                val dh = (mult * 1000.0) / 20.0
+                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                return dh to rem
+            }
+        }
+
+        // B. Compound "<multiplier> ألف/آلاف ريال": e.g. "عشرين ألف ريال" = 20000 ryal = 1000 DH
+        val compoundAlfRyalRegex = Regex(
+            """(?<!\p{L})($multChoices|\d+(?:[.,]\d+)?)\s*(?:ألف|الف|آلاف|الاف|alf|alaf)\s*(?:ريال|ريالات|ryalat|ryal|rial)(?!\p{L})""",
+            RegexOption.IGNORE_CASE
+        )
+        compoundAlfRyalRegex.find(input)?.let { m ->
+            val mult = parseMultiplierToken(m.groupValues[1])
+            if (mult != null && mult > 0.0) {
+                val dh = (mult * 1000.0) / 20.0
+                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                return dh to rem
+            }
+        }
+
+        // C. Numeric "<amount> ryal/ريال": e.g. "1000 ryal" = 50 DH, "100 ryal" = 5 DH
+        val numericRyalRegex = Regex(
+            """(?<!\p{L})(\d+(?:[.,]\d{1,2})?)\s*(?:ريال|ريالات|ryalat|ryal|rial)(?!\p{L})""",
+            RegexOption.IGNORE_CASE
+        )
+        numericRyalRegex.find(input)?.let { m ->
+            val ryal = m.groupValues[1].replace(",", ".").toDoubleOrNull()
+            if (ryal != null && ryal > 0.0) {
+                val dh = ryal / 20.0
+                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                return dh to rem
+            }
+        }
+
+        // D. Spoken single number + Ryal: e.g. "ألف ريال" = 50 DH, "مية ريال" = 5 DH, "خمسمية ريال" = 25 DH
+        for ((word, value) in SPOKEN_NUMBERS) {
+            val spokenRyalRegex = Regex(
+                """(?<!\p{L})${Regex.escape(word)}\s*(?:ريال|ريالات|ryalat|ryal|rial)(?!\p{L})""",
+                RegexOption.IGNORE_CASE
+            )
+            spokenRyalRegex.find(input)?.let { m ->
+                val dh = value / 20.0
+                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                return dh to rem
+            }
+        }
+
+        // E. Numeric or spoken Francs (1 DH = 100 francs): e.g. "500 francs" -> 5 DH
+        val numericFrancRegex = Regex(
+            """(?<!\p{L})(\d+(?:[.,]\d{1,2})?)\s*(?:فرنك|frank|francs?)(?!\p{L})""",
+            RegexOption.IGNORE_CASE
+        )
+        numericFrancRegex.find(input)?.let { m ->
+            val fr = m.groupValues[1].replace(",", ".").toDoubleOrNull()
+            if (fr != null && fr > 0.0) {
+                val dh = fr / 100.0
+                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                return dh to rem
+            }
+        }
+
+        return null
+    }
+
     /**
      * Splits a multi-expense sentence in Darija, Arabic, French, or English into individual
      * [VoiceParsedTransaction] items (e.g., "9ahwa 15, taxi 25 w khobz 5" -> 3 transactions).
@@ -317,9 +467,10 @@ object VoiceDarijaParser {
         }
 
         // Split on natural conjunctions across Darija/AR/FR/EN:
-        // ",", ";", "+", "&", " w ", " et ", " and ", " puis ", " ثم ", " من بعد ", or Arabic " و" when separating clauses with numbers
+        // ",", ";", "+", "&", " w ", " et ", " and ", " puis ", " ثم ", " من بعد ", or Arabic " و" when separating clauses with numbers/ryal
+        val spokenStart = "ألف|الف|مية|مائة|ميتين|خمسمية|جوج|عشرة|عشرين|تلاتين|ربعين|أربعين|خمسين"
         val delimiterRegex = Regex(
-            """(?:\s*[,;+&،]\s*|\s+(?:w|et|and|puis|then|ثم|من بعد)\s+|\s+و(?=\s*\p{L}+\s+\d|\p{L}+\s+\d))""",
+            """(?:\s*[,;+&،]\s*|\s+(?:w|et|and|puis|then|ثم|من بعد)\s+|\s+و(?=\s*\p{L}+\s+(?:\d|$spokenStart)|\p{L}+\s+(?:\d|$spokenStart)))""",
             RegexOption.IGNORE_CASE
         )
 
@@ -338,8 +489,11 @@ object VoiceDarijaParser {
         }
 
         // Also support adjacent "<word(s)> <number> <word(s)> <number>" without explicit conjunctions
-        // e.g. "qahwa 15 taxi 20 khobz 5"
-        val itemPattern = Regex("""([^\d,;+&،]+?\s+\d+(?:[.,]\d{1,2})?(?:\s*(?:dh|dhs|mad|درهم|دراهم))?)""", RegexOption.IGNORE_CASE)
+        // e.g. "qahwa 15 taxi 20 khobz 5" or "qahwa 200 ryal taxi 500 ryal"
+        val itemPattern = Regex(
+            """([^\d,;+&،]+?\s+\d+(?:[.,]\d{1,2})?(?:\s*(?:dh|dhs|mad|درهم|دراهم|ryal|rial|ryalat|ريال|ريالات|dlaf|دلاف|frank|francs?|فرنك))?)""",
+            RegexOption.IGNORE_CASE
+        )
         val sequentialMatches = itemPattern.findAll(normalized).map { it.value.trim() }.toList()
         if (sequentialMatches.size >= 2) {
             val parsedSeq = sequentialMatches.mapNotNull { seg ->

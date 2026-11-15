@@ -1354,6 +1354,8 @@ fun CustomizationStudioSheet(
     var selectedPalette by remember { mutableStateOf(state.customPrefs.accentPalette) }
     var currencySymbol by remember { mutableStateOf(state.customPrefs.currencySymbol.ifBlank { "DH" }) }
     var selectedThemeMode by remember { mutableStateOf(state.customPrefs.normalizedThemeMode()) }
+    var eurRateInput by remember { mutableStateOf(state.customPrefs.normalizedEurRate().toString()) }
+    var usdRateInput by remember { mutableStateOf(state.customPrefs.normalizedUsdRate().toString()) }
     val lang = state.profile.language
 
     ModalBottomSheet(
@@ -1474,13 +1476,56 @@ fun CustomizationStudioSheet(
                 }
             }
 
+            // Editable EUR & USD Exchange Rates (persisted in CustomizationPrefs)
+            Text(
+                text = strings.fxRatesSectionTitle,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = eurRateInput,
+                    onValueChange = { eurRateInput = it },
+                    label = { Text(strings.fxEurRateLabel) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("studio_eur_rate_input")
+                )
+                OutlinedTextField(
+                    value = usdRateInput,
+                    onValueChange = { usdRateInput = it },
+                    label = { Text(strings.fxUsdRateLabel) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("studio_usd_rate_input")
+                )
+            }
+
             Button(
                 onClick = {
+                    val parsedEur = eurRateInput.replace(",", ".").toDoubleOrNull()
+                        ?.takeIf { !it.isNaN() && !it.isInfinite() && it in 0.5..500.0 }
+                        ?: state.customPrefs.normalizedEurRate()
+                    val parsedUsd = usdRateInput.replace(",", ".").toDoubleOrNull()
+                        ?.takeIf { !it.isNaN() && !it.isInfinite() && it in 0.5..500.0 }
+                        ?: state.customPrefs.normalizedUsdRate()
                     onSaveCustomPrefs(
                         state.customPrefs.copy(
                             accentPalette = selectedPalette,
                             currencySymbol = currencySymbol.ifBlank { "DH" },
-                            themeMode = selectedThemeMode
+                            themeMode = selectedThemeMode,
+                            eurToMadRate = parsedEur,
+                            usdToMadRate = parsedUsd
                         )
                     )
                     onDismiss()

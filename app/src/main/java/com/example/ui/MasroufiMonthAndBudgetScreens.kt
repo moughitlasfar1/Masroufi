@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
@@ -48,6 +49,7 @@ import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Swipe
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -940,6 +942,7 @@ fun BudgetAndDaretScreen(
     moreFeaturesEnabled: Boolean = true,
     onOpenCustomizeEnvelopes: () -> Unit,
     onPayDaretRound: (FinancialItem) -> Unit,
+    onCollectDaretPot: (FinancialItem, String) -> Unit = { _, _ -> },
     onOpenNewDaret: (FinancialItem?) -> Unit,
     onSettleDebt: (FinancialItem) -> Unit,
     onOpenNewDebt: (FinancialItem?) -> Unit,
@@ -1731,6 +1734,9 @@ fun BudgetAndDaretScreen(
                         val totalPot = daret.amount * totalMembers
                         val progress = (daret.extraInt.toFloat() / totalMembers.toFloat()).safeFraction()
                         val whoseTurn = daret.subtitle.ifBlank { "Membre #${(daret.extraInt + 1).coerceAtMost(totalMembers)}" }
+                        val cleanPayoutDate = PayCycleEngine.daretPayoutDateOnly(daret)
+                        val isPotCollected = PayCycleEngine.isDaretPotCollected(daret)
+                        var selectedCollectAcc by remember(daret.id) { mutableStateOf("acc_bank") }
                         ExpressiveGlassSurface(
                             shape = RoundedCornerShape(20.dp),
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1768,7 +1774,7 @@ fun BudgetAndDaretScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            text = "-${fmt(daret.amount)} $cur/m · ${daret.extraInt}/$totalMembers · ${daret.dateOrCycle}",
+                                            text = "-${fmt(daret.amount)} $cur/m · ${daret.extraInt}/$totalMembers · $cleanPayoutDate",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontSize = 11.5.sp,
                                             color = MaterialTheme.colorScheme.primary
@@ -1789,7 +1795,7 @@ fun BudgetAndDaretScreen(
                                         }
                                         IconButton(
                                             onClick = {
-                                                val msg = "Salam l-khout! Rappel Daret '${daret.name}' : cotisation ${daret.amount.toInt()} $cur (Tour actuel: $whoseTurn, réception prévue: ${daret.dateOrCycle}). Lah yssakher 🙏"
+                                                val msg = "Salam l-khout! Rappel Daret '${daret.name}' : cotisation ${daret.amount.toInt()} $cur (Tour actuel: $whoseTurn, réception prévue: $cleanPayoutDate). Lah yssakher 🙏"
                                                 onSendWhatsAppReminder(msg)
                                             },
                                             modifier = Modifier.testTag("btn_whatsapp_daret_${daret.id}")
@@ -1812,6 +1818,86 @@ fun BudgetAndDaretScreen(
                                     trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                                     height = 8.dp
                                 )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                if (isPotCollected) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = AccentEmerald.copy(alpha = 0.18f),
+                                        modifier = Modifier.testTag("daret_pot_collected_badge_${daret.id}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = null,
+                                                tint = AccentEmerald,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = strings.daretPotCollectedBadge,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = AccentEmerald,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            FilterChip(
+                                                selected = selectedCollectAcc == "acc_bank",
+                                                onClick = { selectedCollectAcc = "acc_bank" },
+                                                label = { Text(strings.daretCollectAccountBank, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                                modifier = Modifier.testTag("daret_collect_acc_bank_${daret.id}")
+                                            )
+                                            FilterChip(
+                                                selected = selectedCollectAcc == "acc_cash",
+                                                onClick = { selectedCollectAcc = "acc_cash" },
+                                                label = { Text(strings.daretCollectAccountCash, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                                modifier = Modifier.testTag("daret_collect_acc_cash_${daret.id}")
+                                            )
+                                        }
+                                        val isMyTurnReached = daret.extraInt >= daret.dayOrTurn
+                                        if (isMyTurnReached) {
+                                            Button(
+                                                onClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    onCollectDaretPot(daret, selectedCollectAcc)
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                modifier = Modifier.testTag("btn_collect_daret_pot_${daret.id}")
+                                            ) {
+                                                Text(
+                                                    text = strings.daretCollectPotBtn,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                            }
+                                        } else {
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    onCollectDaretPot(daret, selectedCollectAcc)
+                                                },
+                                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                modifier = Modifier.testTag("btn_collect_daret_pot_${daret.id}")
+                                            ) {
+                                                Text(
+                                                    text = strings.daretCollectPotBtn,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

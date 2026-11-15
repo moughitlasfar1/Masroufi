@@ -425,6 +425,7 @@ fun MainFeatureScreen(
                     initialHideAmounts = AppSecurityManager.isHideAmountsEnabled(app),
                     initialRollbackSnapshot = AppSecurityManager.loadEncryptedRollbackSnapshot(app),
                     initialDismissedSubscriptions = AppSecurityManager.getDismissedRecurringBills(app),
+                    initialLearnedCategoriesJson = AppSecurityManager.loadLearnedCategoriesJson(app),
                     onRollbackSnapshotChanged = { snapshot ->
                         if (snapshot.isNullOrBlank()) {
                             AppSecurityManager.clearEncryptedRollbackSnapshot(app)
@@ -434,6 +435,9 @@ fun MainFeatureScreen(
                     },
                     onDismissSubscription = { merchant ->
                         AppSecurityManager.dismissRecurringBill(app, merchant)
+                    },
+                    onLearnedCategoriesUpdated = { json ->
+                        AppSecurityManager.saveLearnedCategoriesJson(app, json)
                     }
                 )
             }
@@ -463,6 +467,10 @@ fun MainFeatureScreen(
     LaunchedEffect(Unit) {
         viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
         com.example.notifications.BankDetectionStore.loadPendingItems(context)
+        PayCycleEngine.importLearnedCategoriesJson(
+            AppSecurityManager.loadLearnedCategoriesJson(context),
+            merge = true
+        )
     }
 
     // Sync Home-Screen Widget (full WidgetSnapshot), Quick Settings Tiles & WorkManager Smart Notifications whenever DashboardState updates
@@ -1132,6 +1140,12 @@ fun MainFeatureScreen(
                                         moreFeaturesEnabled = moreFeaturesEnabled,
                                         onOpenCustomizeEnvelopes = { activeSheet = ActiveSheet.EnvelopesEditor },
                                         onPayDaretRound = { daret -> viewModel.payDaretRound(daret) },
+                                        onCollectDaretPot = { daret, targetAccId ->
+                                            viewModel.collectDaretPot(daret, targetAccId)
+                                            scope.launch {
+                                                snackbarHostState.showSnackbar(strings.daretPotCollectedToast)
+                                            }
+                                        },
                                         onOpenNewDaret = { item ->
                                             activeSheet = ActiveSheet.FinancialOrAccountItem(
                                                 itemType = "daret",
@@ -1516,13 +1530,15 @@ fun MainFeatureScreen(
                     pendingItems = pendingBankDetections,
                     onConfirmDetection = { item ->
                         com.example.notifications.BankDetectionStore.removePendingItem(context, item.id)
+                        val isTransfer = item.direction == "transfer"
                         viewModel.saveTransaction(
                             existingId = "tx_${System.currentTimeMillis()}",
                             type = item.direction,
                             amount = item.amount,
-                            category = item.suggestedCategoryName,
-                            envelopeKey = item.suggestedEnvelopeKey,
+                            category = if (isTransfer) strings.transferAction else item.suggestedCategoryName,
+                            envelopeKey = if (isTransfer) "autre" else item.suggestedEnvelopeKey,
                             accountId = "acc_bank",
+                            toAccountId = if (isTransfer) "acc_cash" else "",
                             desc = item.merchant.ifBlank { item.suggestedCategoryName },
                             isoDate = item.isoDate
                         )
@@ -1532,13 +1548,15 @@ fun MainFeatureScreen(
                     },
                     onEditDetection = { item ->
                         com.example.notifications.BankDetectionStore.removePendingItem(context, item.id)
+                        val isTransfer = item.direction == "transfer"
                         val prefilled = TransactionItem(
                             id = "tx_${System.currentTimeMillis()}",
                             type = item.direction,
                             amount = item.amount,
-                            category = item.suggestedCategoryName,
-                            envelopeKey = item.suggestedEnvelopeKey,
+                            category = if (isTransfer) strings.transferAction else item.suggestedCategoryName,
+                            envelopeKey = if (isTransfer) "autre" else item.suggestedEnvelopeKey,
                             accountId = "acc_bank",
+                            toAccountId = if (isTransfer) "acc_cash" else "",
                             desc = item.merchant.ifBlank { item.suggestedCategoryName },
                             isoDate = item.isoDate
                         )

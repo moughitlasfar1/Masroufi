@@ -1593,6 +1593,329 @@ class ExampleRobolectricTest {
             assertTrue(s.themeModeDark.isNotBlank())
         }
     }
+
+    @Test
+    fun `Phase 2 Moroccan Ryal, Dlaf, Francs, and expanded commute keywords parse accurately`() {
+        val defaultEnvs = listOf(
+            EnvelopeConfig(id = "cafe", key = "cafe", nameFr = "Café & Sorties", nameEn = "Coffee & Dining", nameAr = "مقهى", nameDarija = "قهوة"),
+            EnvelopeConfig(id = "transport", key = "transport", nameFr = "Transport", nameEn = "Transport", nameAr = "نقل", nameDarija = "نقل"),
+            EnvelopeConfig(id = "charges", key = "charges", nameFr = "Charges & Maison", nameEn = "Bills & Home", nameAr = "فواتير", nameDarija = "الدار"),
+            EnvelopeConfig(id = "marche", key = "marche", nameFr = "Marché", nameEn = "Groceries", nameAr = "سوق", nameDarija = "تقدية"),
+            EnvelopeConfig(id = "autre", key = "autre", nameFr = "Autre", nameEn = "Other", nameAr = "أخرى", nameDarija = "حاجة خرى")
+        )
+
+        // 1. Ryal & Dlaf & Francs conversions (1 DH = 20 Ryal, 1 DH = 100 Francs)
+        val alfRyal = com.example.domain.VoiceDarijaParser.parse("قهوة ألف ريال", defaultEnvs, "darija")
+        assertNotNull(alfRyal)
+        assertEquals(50.0, alfRyal!!.amount, 0.01)
+        assertEquals("cafe", alfRyal.envelopeKey)
+
+        val num1000Ryal = com.example.domain.VoiceDarijaParser.parse("taxi 1000 ryal", defaultEnvs, "darija")
+        assertNotNull(num1000Ryal)
+        assertEquals(50.0, num1000Ryal!!.amount, 0.01)
+        assertEquals("transport", num1000Ryal.envelopeKey)
+
+        val myaRyal = com.example.domain.VoiceDarijaParser.parse("خبز مية ريال", defaultEnvs, "darija")
+        assertNotNull(myaRyal)
+        assertEquals(5.0, myaRyal!!.amount, 0.01)
+        assertEquals("charges", myaRyal.envelopeKey)
+
+        val num100Ryal = com.example.domain.VoiceDarijaParser.parse("khobz 100 ryal", defaultEnvs, "darija")
+        assertNotNull(num100Ryal)
+        assertEquals(5.0, num100Ryal!!.amount, 0.01)
+
+        val echrinAlf = com.example.domain.VoiceDarijaParser.parse("تقدية عشرين ألف ريال", defaultEnvs, "darija")
+        assertNotNull(echrinAlf)
+        assertEquals(1000.0, echrinAlf!!.amount, 0.01)
+
+        val khamsmya = com.example.domain.VoiceDarijaParser.parse("غداء خمسمية ريال", defaultEnvs, "darija")
+        assertNotNull(khamsmya)
+        assertEquals(25.0, khamsmya!!.amount, 0.01)
+
+        val joujDlaf = com.example.domain.VoiceDarijaParser.parse("مازوط جوج دلاف", defaultEnvs, "darija")
+        assertNotNull(joujDlaf)
+        assertEquals(100.0, joujDlaf!!.amount, 0.01)
+        assertEquals("transport", joujDlaf.envelopeKey)
+
+        val achraDlaf = com.example.domain.VoiceDarijaParser.parse("الكراء عشرة دلاف", defaultEnvs, "darija")
+        assertNotNull(achraDlaf)
+        assertEquals(500.0, achraDlaf!!.amount, 0.01)
+        assertEquals("charges", achraDlaf.envelopeKey)
+
+        val francs = com.example.domain.VoiceDarijaParser.parse("parking 500 francs", defaultEnvs, "fr")
+        assertNotNull(francs)
+        assertEquals(5.0, francs!!.amount, 0.01)
+        assertEquals("transport", francs.envelopeKey)
+
+        // Multi-expense with Ryal
+        val multiRyal = com.example.domain.VoiceDarijaParser.parseMultiExpenses(
+            "قهوة ميتين ريال و طاكسي ألف ريال",
+            defaultEnvs,
+            "darija"
+        )
+        assertEquals(2, multiRyal.size)
+        assertEquals(10.0, multiRyal[0].amount, 0.01)
+        assertEquals(50.0, multiRyal[1].amount, 0.01)
+
+        // 2. Expanded Moroccan commute, fuel, household & delivery keywords
+        val commuteCases = listOf(
+            "jawaz 50" to "transport",
+            "جواز 80" to "transport",
+            "navette 40" to "transport",
+            "alboraq 180" to "transport",
+            "لبراق 160" to "transport",
+            "afriquia 200" to "transport",
+            "winxo 150" to "transport",
+            "shell 300" to "transport",
+            "طاكسي كبير 25" to "transport",
+            "طاكسي صغير 12" to "transport",
+            "كازوال 250" to "transport",
+            "ليصانص 100" to "transport",
+            "lavage 40" to "transport",
+            "la visite 350" to "charges",
+            "vignette 650" to "charges",
+            "assurance 1200" to "charges",
+            "بوتاغاز 45" to "charges",
+            "glovo 75" to "cafe",
+            "mcdo 65" to "cafe"
+        )
+        commuteCases.forEach { (phrase, expectedEnv) ->
+            val parsed = com.example.domain.VoiceDarijaParser.parse(phrase, defaultEnvs, "fr")
+            assertNotNull("Expected non-null parse for '$phrase'", parsed)
+            assertEquals("Expected $expectedEnv for '$phrase'", expectedEnv, parsed!!.envelopeKey)
+        }
+    }
+
+    @Test
+    fun `Phase 3 ATM cash withdrawal bank alerts map to Retrait GAB transfer without inflating expenses`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("masroufi_bank_detection_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        context.getSharedPreferences("masroufi_widget_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+
+        val atmSamples = listOf(
+            Triple("com.bcp.pocketbank", "Pocket Bank", "Retrait GAB de 500,00 MAD effectué sur votre compte Chaabi Net"),
+            Triple("ma.attijariwafabank.lbankalik", "L'bankalik", "Retrait guichet automatique de 300.00 DH le 15/11"),
+            Triple("ma.baridbank.mobile", "بريد بنك", "عملية سحب من الشباك بمبلغ 400 درهم"),
+            Triple("com.cih.cihmobile", "CIH Mobile", "Opération GAB de 200 MAD effectuée avec succès")
+        )
+
+        atmSamples.forEach { (pkg, title, body) ->
+            val parsed = com.example.domain.BankMessageParser.parse(
+                rawTitle = title,
+                rawBody = body,
+                sourcePackage = pkg,
+                isoDate = "2026-11-15",
+                language = "fr"
+            )
+            assertNotNull("Expected ATM notification to parse for $title", parsed)
+            assertEquals("transfer", parsed!!.direction)
+            assertEquals("Retrait GAB", parsed.merchant)
+            assertEquals("autre", parsed.suggestedEnvelopeKey)
+            assertFalse(parsed.needsReview)
+        }
+
+        // Standard TPE / e-commerce card payments still map to "expense"
+        val tpeDebit = com.example.domain.BankMessageParser.parse(
+            rawTitle = "BMCE Direct",
+            rawBody = "Paiement TPE de 180,00 MAD chez Decathlon le 15/11",
+            sourcePackage = "com.bmce.agencedirecte",
+            isoDate = "2026-11-15",
+            language = "fr"
+        )
+        assertNotNull(tpeDebit)
+        assertEquals("expense", tpeDebit!!.direction)
+
+        val ecomDebit = com.example.domain.BankMessageParser.parse(
+            rawTitle = "Attijariwafa",
+            rawBody = "Paiement E-commerce de 95,00 MAD chez Glovo Maroc",
+            sourcePackage = "ma.attijariwafabank.lbankalik",
+            isoDate = "2026-11-15",
+            language = "fr"
+        )
+        assertNotNull(ecomDebit)
+        assertEquals("expense", ecomDebit!!.direction)
+        assertEquals("cafe", ecomDebit.suggestedEnvelopeKey)
+
+        // Confirming a detected ATM withdrawal creates a bank->cash transfer without inflating todaySpend
+        com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(
+            context,
+            com.example.widget.WidgetSnapshot(
+                snapshotDateIso = PayCycleEngine.todayIso(),
+                todaySpend = 40.0,
+                safeToSpendToday = 160.0,
+                remainingBudget = 1600.0,
+                daysRemainingInCycle = 10
+            )
+        )
+        com.example.notifications.BankDetectionStore.setPackageAllowed(context, "com.bcp.pocketbank", true)
+        val detectedAtm = com.example.notifications.BankDetectionStore.processIncomingNotification(
+            context = context,
+            sourcePackage = "com.bcp.pocketbank",
+            rawTitle = "Pocket Bank",
+            rawBody = "Retrait GAB de 500,00 MAD effectué ce jour",
+            notificationKey = "atm_1"
+        )
+        assertNotNull(detectedAtm)
+        assertEquals("transfer", detectedAtm!!.direction)
+
+        com.example.notifications.BankDetectionStore.confirmDetectedItem(context, detectedAtm)
+        val pendingQuick = com.example.widget.MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context)
+        assertEquals(1, pendingQuick.size)
+        val transferTx = pendingQuick.first()
+        assertEquals("transfer", transferTx.type)
+        assertEquals(500.0, transferTx.amount, 0.01)
+        assertEquals("acc_bank", transferTx.accountId)
+        assertEquals("acc_cash", transferTx.toAccountId)
+
+        val snapAfter = com.example.widget.MasroufiWidgetStore.loadSnapshot(context)
+        assertEquals(40.0, snapAfter.todaySpend, 0.01)
+    }
+
+    @Test
+    fun `Phases 1, 2 FX, and 4 learned category persistence, local UID fallback, editable FX, Daret pot collection, and notification actions work end-to-end`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        PayCycleEngine.clearLearnedCategories()
+
+        // 1. Learned category persistence across PayCycleEngine JSON, FinancialItem (<= 250 chars), and AppSecurityManager
+        PayCycleEngine.learnCategoryForDescription("boulangerie paul", "cafe")
+        PayCycleEngine.learnCategoryForDescription("station total casa", "transport")
+        val exportedJson = PayCycleEngine.exportLearnedCategoriesJson()
+        AppSecurityManager.saveLearnedCategoriesJson(context, exportedJson)
+
+        val finItem = PayCycleEngine.buildLearnedCategoriesFinancialItem(userId = com.example.data.MasroufiRepository.LOCAL_DEVICE_USER_ID)
+        assertEquals("learned_categories", finItem.id)
+        assertEquals("custom_prefs", finItem.itemType)
+        assertTrue(finItem.subtitle.length <= 250)
+        assertTrue(finItem.dateOrCycle.length <= 250)
+
+        PayCycleEngine.clearLearnedCategories()
+        assertNull(PayCycleEngine.getLearnedCategoryForDescription("boulangerie paul"))
+        PayCycleEngine.importLearnedCategoriesFromFinancialItem(finItem)
+        assertEquals("cafe", PayCycleEngine.getLearnedCategoryForDescription("boulangerie paul"))
+        assertEquals("transport", PayCycleEngine.getLearnedCategoryForDescription("station total casa"))
+
+        PayCycleEngine.clearLearnedCategories()
+        PayCycleEngine.importLearnedCategoriesJson(AppSecurityManager.loadLearnedCategoriesJson(context).orEmpty())
+        assertEquals("cafe", PayCycleEngine.getLearnedCategoryForDescription("boulangerie paul"))
+
+        // 2. Collision safety & editable FX rates in CustomizationPrefs + PayCycleEngine + BackupSerializer
+        val prefsWithCustomFx = CustomizationPrefs(
+            accentPalette = "emerald",
+            currencySymbol = "DH",
+            customTitle = "Masroufi",
+            themeMode = "system",
+            eurToMadRate = 11.20,
+            usdToMadRate = 10.15
+        )
+        val encodedPrefsItem = FinancialItem(
+            id = "custom_prefs",
+            itemType = "custom_prefs",
+            name = prefsWithCustomFx.customTitle,
+            subtitle = "emerald|DH|accounts,presets|system|11.20|10.15",
+            dayOrTurn = prefsWithCustomFx.toVisibilityMask()
+        )
+        val decodedPrefs = CustomizationPrefs.fromFinancialItem(encodedPrefsItem)
+        assertEquals(11.20, decodedPrefs.normalizedEurRate(), 0.001)
+        assertEquals(10.15, decodedPrefs.normalizedUsdRate(), 0.001)
+
+        val convertedEur = PayCycleEngine.convertCurrencyAmount(
+            amount = 10.0,
+            fromCurrency = "EUR",
+            toCurrency = "MAD",
+            eurToMadRate = decodedPrefs.normalizedEurRate(),
+            usdToMadRate = decodedPrefs.normalizedUsdRate()
+        )
+        assertEquals(112.0, convertedEur, 0.01)
+
+        val dummyState = DashboardState(
+            profile = UserProfile(baseBudget = 8000.0, payCycleDay = 1, language = "fr"),
+            customPrefs = prefsWithCustomFx
+        )
+        val v2Json = BackupSerializer.encodeV2Backup(dummyState)
+        val decodedBackup = BackupSerializer.decodeBackup(
+            rawJson = v2Json,
+            currentUserId = com.example.data.MasroufiRepository.LOCAL_DEVICE_USER_ID,
+            fallbackProfile = dummyState.profile
+        )
+        assertNotNull(decodedBackup.customPrefs)
+        assertEquals(11.20, decodedBackup.customPrefs!!.eurToMadRate, 0.001)
+        assertEquals(10.15, decodedBackup.customPrefs!!.usdToMadRate, 0.001)
+        assertEquals("cafe", decodedBackup.learnedCategories["boulangerie paul"])
+        assertEquals("local_device_user", com.example.data.MasroufiRepository.LOCAL_DEVICE_USER_ID)
+
+        // 3. Daret pot collection helpers & 4-language parity
+        val daret = FinancialItem(
+            id = "dar_1",
+            itemType = "daret",
+            name = "Daret Famille",
+            subtitle = "Tour #3",
+            amount = 1000.0,
+            secondaryAmount = 6.0,
+            dayOrTurn = 3,
+            extraInt = 2,
+            dateOrCycle = "2026-12-01"
+        )
+        assertFalse(PayCycleEngine.isDaretPotCollected(daret))
+        assertEquals("2026-12-01", PayCycleEngine.daretPayoutDateOnly(daret))
+
+        val collectedDaret = PayCycleEngine.markDaretPotCollected(daret)
+        assertTrue(PayCycleEngine.isDaretPotCollected(collectedDaret))
+        assertEquals("2026-12-01", PayCycleEngine.daretPayoutDateOnly(collectedDaret))
+        assertEquals(3, collectedDaret.extraInt)
+
+        listOf("fr", "en", "ar", "darija").forEach { lang ->
+            val s = Translations.forLang(lang)
+            assertTrue(s.fxRatesSectionTitle.isNotBlank())
+            assertTrue(s.fxEurRateLabel.isNotBlank())
+            assertTrue(s.fxUsdRateLabel.isNotBlank())
+            assertTrue(s.bankDetectTransferBadge.isNotBlank())
+            assertTrue(s.daretCollectPotBtn.isNotBlank())
+            assertTrue(s.daretPotCollectedBadge.isNotBlank())
+            assertTrue(s.daretCollectAccountBank.isNotBlank())
+            assertTrue(s.daretCollectAccountCash.isNotBlank())
+            assertTrue(s.daretPotCollectedToast.isNotBlank())
+        }
+
+        // 4. Direct notification action snapshot updates (bills 4001 & daret 4002)
+        val notifPrefs = context.getSharedPreferences("masroufi_notifications_prefs", Context.MODE_PRIVATE)
+        notifPrefs.edit().putString(
+            "notif_snapshot_json",
+            org.json.JSONObject().apply {
+                put("lang", "fr")
+                put("currency", "DH")
+                put("cycleKey", "2026-11")
+                put("upcomingBills", org.json.JSONArray().put(org.json.JSONObject().apply {
+                    put("id", "b1")
+                    put("name", "Lydec")
+                    put("amount", 320.0)
+                    put("dueDay", 15)
+                }))
+                put("activeDarets", org.json.JSONArray().put(org.json.JSONObject().apply {
+                    put("id", "d1")
+                    put("name", "Daret Amis")
+                    put("amount", 500.0)
+                    put("myTurn", 2)
+                    put("paidRounds", 1)
+                    put("totalMembers", 5)
+                }))
+            }.toString()
+        ).commit()
+
+        com.example.notifications.MasroufiNotificationManager.removeBillOrAdvanceDaretInCachedSnapshot(
+            context = context,
+            itemId = "b1",
+            isBill = true
+        )
+        com.example.notifications.MasroufiNotificationManager.removeBillOrAdvanceDaretInCachedSnapshot(
+            context = context,
+            itemId = "d1",
+            isBill = false
+        )
+        val updatedNotifJson = org.json.JSONObject(notifPrefs.getString("notif_snapshot_json", "{}") ?: "{}")
+        assertEquals(0, updatedNotifJson.getJSONArray("upcomingBills").length())
+        assertEquals(2, updatedNotifJson.getJSONArray("activeDarets").getJSONObject(0).getInt("paidRounds"))
+    }
 }
+
 
 

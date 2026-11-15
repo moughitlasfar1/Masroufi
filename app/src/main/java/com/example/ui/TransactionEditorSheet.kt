@@ -160,8 +160,12 @@ fun TransactionEditorSheet(
 
     val baseCurrencyCode = PayCycleEngine.normalizeCurrencyCode(cur)
     var entryCurrency by remember { mutableStateOf(baseCurrencyCode) }
-    var eurRateText by remember { mutableStateOf(PayCycleEngine.DEFAULT_EUR_TO_MAD.toString()) }
-    var usdRateText by remember { mutableStateOf(PayCycleEngine.DEFAULT_USD_TO_MAD.toString()) }
+    var eurRateText by remember(state.customPrefs.eurToMadRate) {
+        mutableStateOf(state.customPrefs.normalizedEurRate().toString())
+    }
+    var usdRateText by remember(state.customPrefs.usdToMadRate) {
+        mutableStateOf(state.customPrefs.normalizedUsdRate().toString())
+    }
 
     val recentCategories = remember(state.allTransactions, state.envelopes, lang) {
         computeTopThreeRecentCategories(state)

@@ -172,6 +172,14 @@ object AppSecurityManager {
         prefs(context).edit().putString(KEY_DASHBOARD_ORDER, order.joinToString(",")).apply()
     }
 
+    fun loadLearnedCategoriesJson(context: Context): String {
+        return prefs(context).getString("ux_learned_categories_json", "").orEmpty()
+    }
+
+    fun saveLearnedCategoriesJson(context: Context, json: String) {
+        prefs(context).edit().putString("ux_learned_categories_json", json).apply()
+    }
+
     /**
      * SEC-05: FLAG_SECURE is enabled by default to protect financial balances from
      * screenshots, screen recordings, and the Android Recents switcher.

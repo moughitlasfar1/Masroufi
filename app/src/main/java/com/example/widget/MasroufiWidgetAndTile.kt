@@ -213,27 +213,39 @@ object MasroufiWidgetStore {
         val baseMs = System.currentTimeMillis()
         val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull().orEmpty().ifBlank { "local_device_user" }
 
+        var learnedAny = false
         val createdTxs = items.mapIndexedNotNull { idx, item ->
             val rounded = PayCycleEngine.roundMoney(item.amount)
             if (rounded <= 0.0) return@mapIndexedNotNull null
-            if (item.txType == "expense" && item.description.isNotBlank() && item.envelopeKey.isNotBlank()) {
+            val resolvedType = item.txType.ifBlank { "expense" }
+            if (resolvedType == "expense" && item.description.isNotBlank() && item.envelopeKey.isNotBlank()) {
                 PayCycleEngine.learnCategoryForDescription(item.description, item.envelopeKey)
+                learnedAny = true
             }
             val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(item.categoryName, item.envelopeKey)
+            val isTransfer = resolvedType == "transfer"
             TransactionItem(
                 id = "tx_qc_${baseMs}_$idx",
                 userId = uid,
-                type = item.txType.ifBlank { "expense" },
+                type = resolvedType,
                 amount = rounded,
                 category = normalizedCat,
                 envelopeKey = item.envelopeKey.ifBlank { "autre" },
-                accountId = "acc_cash",
-                toAccountId = "",
+                accountId = if (isTransfer) "acc_bank" else "acc_cash",
+                toAccountId = if (isTransfer) "acc_cash" else "",
                 desc = item.description.ifBlank { item.categoryName },
                 isoDate = todayIso
             )
         }
         if (createdTxs.isEmpty()) return emptyList()
+        if (learnedAny) {
+            runCatching {
+                AppSecurityManager.saveLearnedCategoriesJson(
+                    appCtx,
+                    PayCycleEngine.exportLearnedCategoriesJson()
+                )
+            }
+        }
 
         val addedExpenseTotal = PayCycleEngine.roundMoney(
             createdTxs.filter { it.type == "expense" }.sumOf { it.amount }
@@ -286,6 +298,7 @@ object MasroufiWidgetStore {
                     put("category", tx.category)
                     put("envelopeKey", tx.envelopeKey)
                     put("accountId", tx.accountId)
+                    put("toAccountId", tx.toAccountId)
                     put("desc", tx.desc)
                     put("isoDate", tx.isoDate)
                 }
@@ -389,12 +402,36 @@ object MasroufiWidgetStore {
                     category = obj.optString("category", "Autre"),
                     envelopeKey = obj.optString("envelopeKey", "autre"),
                     accountId = obj.optString("accountId", "acc_cash"),
+                    toAccountId = obj.optString("toAccountId", ""),
                     desc = obj.optString("desc", "Achat"),
                     isoDate = obj.optString("isoDate", PayCycleEngine.todayIso())
                 )
             )
         }
         return list
+    }
+
+    fun markBillOrDaretPaidInSnapshot(
+        context: Context,
+        itemId: String,
+        kind: String
+    ) {
+        if (itemId.isBlank()) return
+        val appCtx = context.applicationContext
+        val current = loadSnapshot(appCtx)
+        val filteredReminders = current.reminders.filterNot {
+            it.itemId == itemId && (kind.isBlank() || it.kind == kind)
+        }
+        val paidItem = current.reminders.firstOrNull { it.itemId == itemId }
+        val deltaAmt = paidItem?.amount ?: 0.0
+        val todayIso = PayCycleEngine.todayIso()
+        val updated = current.copy(
+            snapshotDateIso = todayIso,
+            todaySpend = if (deltaAmt > 0.0) PayCycleEngine.roundMoney(current.effectiveTodaySpend(todayIso) + deltaAmt) else current.todaySpend,
+            reminders = filteredReminders,
+            updatedAtMillis = System.currentTimeMillis()
+        )
+        saveWidgetSnapshot(appCtx, updated)
     }
 
     fun getTodaySpendFormatted(context: Context, style: WidgetStyle = WidgetStyle()): String {

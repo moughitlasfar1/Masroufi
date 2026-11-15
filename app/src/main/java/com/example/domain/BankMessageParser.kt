@@ -76,10 +76,24 @@ object BankMessageParser {
         "كلمة السر المؤقتة"
     )
 
+    private val ATM_WITHDRAWAL_KEYWORDS = listOf(
+        "retrait gab",
+        "retrait guichet",
+        "retrait dab",
+        "retrait espèces",
+        "retrait especes",
+        "guichet automatique",
+        "سحب من الشباك",
+        "سحب نقدي",
+        "الشباك الأوتوماتيكي",
+        "atm withdrawal"
+    )
+
     private val DEBIT_KEYWORDS = listOf(
         // French
+        "paiement tpe", "paiement e-commerce", "paiement ecommerce", "achat carte", "achat tpe",
         "paiement", "achat", "retrait", "prélèvement", "prelevement",
-        "débit", "debit", "payé", "paye", "facture", "tpe", "carte bancaire",
+        "débit", "debit", "payé", "paye", "facture", "tpe", "carte bancaire", "e-commerce",
         // English
         "payment", "purchase", "withdrawal", "debited", "spent", "charged", "pos purchase",
         // Arabic
@@ -101,25 +115,25 @@ object BankMessageParser {
             id = "cih",
             bankName = "CIH Bank",
             packageHints = listOf("cih", "com.cih.cihmobile"),
-            senderKeywords = listOf("cih", "cih bank")
+            senderKeywords = listOf("cih", "cih bank", "cih mobile")
         ),
         BankTemplate(
             id = "attijari",
             bankName = "Attijariwafa Bank",
-            packageHints = listOf("attijari", "awb", "wafacash"),
-            senderKeywords = listOf("attijari", "attijariwafa", "lbankalik")
+            packageHints = listOf("attijari", "awb", "wafacash", "lbankalik"),
+            senderKeywords = listOf("attijari", "attijariwafa", "lbankalik", "l'bankalik", "attijari mobile")
         ),
         BankTemplate(
             id = "bp",
             bankName = "Banque Populaire",
-            packageHints = listOf("gbp", "pocketbank", "banquepopulaire"),
-            senderKeywords = listOf("pocket bank", "banque populaire", "bp")
+            packageHints = listOf("gbp", "pocketbank", "banquepopulaire", "bcp", "chaabi"),
+            senderKeywords = listOf("pocket bank", "banque populaire", "chaabi net", "chaabi", "bcp", "bp")
         ),
         BankTemplate(
             id = "boa",
             bankName = "Bank of Africa / BMCE",
             packageHints = listOf("bmce", "bankofafrica", "agencedirecte"),
-            senderKeywords = listOf("bmce", "bank of africa", "boa")
+            senderKeywords = listOf("bmce", "bmce direct", "bank of africa", "boa")
         ),
         BankTemplate(
             id = "cfg",
@@ -131,7 +145,7 @@ object BankMessageParser {
             id = "barid",
             bankName = "Al Barid Bank",
             packageHints = listOf("barid", "baridbank"),
-            senderKeywords = listOf("barid bank", "al barid")
+            senderKeywords = listOf("barid bank", "al barid", "بريد بنك")
         ),
         BankTemplate(
             id = "generic",
@@ -331,14 +345,22 @@ object BankMessageParser {
         // 2. Amount + Currency extraction
         val (amount, currency) = extractAmountAndCurrency(normalized) ?: return null
 
-        // 3. Direction detection (debit/expense vs credit/income)
+        // 3. Direction detection (ATM withdrawal transfer vs debit/expense vs credit/income)
         val hasCredit = CREDIT_KEYWORDS.any { lower.contains(it) }
-        val hasDebit = DEBIT_KEYWORDS.any { lower.contains(it) }
+        val isAtmWithdrawal = !hasCredit && (
+            ATM_WITHDRAWAL_KEYWORDS.any { lower.contains(it) } ||
+                Regex("""\bgab\b""", RegexOption.IGNORE_CASE).containsMatchIn(lower)
+            )
+        val hasDebit = DEBIT_KEYWORDS.any { lower.contains(it) } || isAtmWithdrawal
         if (!hasCredit && !hasDebit) {
             // Require at least one financial transaction keyword so random chat messages with "50 DH" aren't treated as bank alerts
             return null
         }
-        val direction = if (hasCredit && !hasDebit) "income" else "expense"
+        val direction = when {
+            isAtmWithdrawal -> "transfer"
+            hasCredit && !hasDebit -> "income"
+            else -> "expense"
+        }
 
         // 4. Match BankTemplate
         val pkgLower = sourcePackage.lowercase(Locale.ROOT)
@@ -350,8 +372,9 @@ object BankMessageParser {
         } ?: BANK_TEMPLATES.last()
 
         // 5. Extract Merchant
-        val extractedMerchant = extractMerchant(normalized)
+        val extractedMerchant = if (isAtmWithdrawal) "" else extractMerchant(normalized)
         val fallbackMerchant = when {
+            isAtmWithdrawal -> "Retrait GAB"
             direction == "income" -> when (language) {
                 "ar" -> "تحويل بنكي"
                 "darija" -> "تحويل بنكي"
@@ -366,33 +389,41 @@ object BankMessageParser {
                 else -> "Paiement carte"
             }
         }
-        val finalMerchant = extractedMerchant.ifBlank { fallbackMerchant }
+        val finalMerchant = if (isAtmWithdrawal) "Retrait GAB" else extractedMerchant.ifBlank { fallbackMerchant }
 
         // 6. Confidence score calculation
         var confidence = 0.55
         if (hasDebit || hasCredit) confidence += 0.15
-        if (extractedMerchant.isNotBlank()) confidence += 0.18
+        if (extractedMerchant.isNotBlank() || isAtmWithdrawal) confidence += 0.18
         if (matchedTemplate.id != "generic") confidence += 0.10
         val finalConfidence = confidence.coerceIn(0.0, 0.99)
-        val needsReview = finalConfidence < CONFIDENCE_REVIEW_THRESHOLD || extractedMerchant.isBlank()
+        val needsReview = !isAtmWithdrawal && (finalConfidence < CONFIDENCE_REVIEW_THRESHOLD || extractedMerchant.isBlank())
 
-        // 7. Category resolution (learned categories first, then Darija/FR keyword parser & DefaultCategoryResolver)
-        val learnedEnv = PayCycleEngine.getLearnedCategoryForDescription(finalMerchant).orEmpty()
-        val voiceGuess = if (learnedEnv.isBlank()) {
-            VoiceDarijaParser.parse("$finalMerchant ${amount.toInt()}", envelopes, language)?.envelopeKey.orEmpty()
-        } else ""
-        val resolvedEnvKey = when {
-            learnedEnv.isNotBlank() -> learnedEnv
-            voiceGuess.isNotBlank() -> voiceGuess
-            else -> PayCycleEngine.resolveEnvelopeKey(finalMerchant, finalMerchant, envelopes)
-        }.ifBlank { "autre" }
+        // 7. Category resolution (ATM transfers go to "autre", otherwise learned categories + Darija/FR parser)
+        val resolvedEnvKey = if (isAtmWithdrawal) {
+            "autre"
+        } else {
+            val learnedEnv = PayCycleEngine.getLearnedCategoryForDescription(finalMerchant).orEmpty()
+            val voiceGuess = if (learnedEnv.isBlank()) {
+                VoiceDarijaParser.parse("$finalMerchant ${amount.toInt()}", envelopes, language)?.envelopeKey.orEmpty()
+            } else ""
+            when {
+                learnedEnv.isNotBlank() -> learnedEnv
+                voiceGuess.isNotBlank() -> voiceGuess
+                else -> PayCycleEngine.resolveEnvelopeKey(finalMerchant, finalMerchant, envelopes)
+            }.ifBlank { "autre" }
+        }
 
-        val resolvedCategoryName = DefaultCategoryResolver.resolveTransactionCategoryDisplay(
-            rawCategory = resolvedEnvKey,
-            rawEnvelopeKey = resolvedEnvKey,
-            envelopes = envelopes,
-            lang = language
-        )
+        val resolvedCategoryName = if (isAtmWithdrawal) {
+            Translations.forLang(language).transferAction
+        } else {
+            DefaultCategoryResolver.resolveTransactionCategoryDisplay(
+                rawCategory = resolvedEnvKey,
+                rawEnvelopeKey = resolvedEnvKey,
+                envelopes = envelopes,
+                lang = language
+            )
+        }
 
         // 8. Deterministic dedupe hash (ignores re-posted or edited notifications for the same event)
         val dedupeSeed = "${sourcePackage.lowercase(Locale.ROOT)}|$direction|$amount|${finalMerchant.lowercase(Locale.ROOT)}|$isoDate|$notificationKey"

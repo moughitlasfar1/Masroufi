@@ -31,7 +31,7 @@ data class DetectedBankTransaction(
     val id: String,
     val amount: Double,
     val currency: String,
-    val direction: String, // "expense" or "income"
+    val direction: String, // "expense", "income", or "transfer"
     val merchant: String,
     val isoDate: String,
     val sourcePackage: String,

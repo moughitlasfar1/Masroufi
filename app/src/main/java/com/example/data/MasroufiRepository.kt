@@ -26,11 +26,16 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         )
     )
 
+    companion object {
+        const val LOCAL_DEVICE_USER_ID = "local_device_user"
+    }
+
     private val auth = Firebase.auth
 
-    private fun requireUserId(): String {
-        return auth.currentUser?.uid
-            ?: throw IllegalStateException("User must be signed in with Google before accessing Firestore.")
+    fun requireUserId(explicitUserId: String? = null): String {
+        return explicitUserId?.takeIf { it.isNotBlank() }
+            ?: auth.currentUser?.uid
+            ?: LOCAL_DEVICE_USER_ID
     }
 
     fun observeProfile(userId: String = requireUserId()): Flow<UserProfile?> = flow {
@@ -65,10 +70,20 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         )
     }
 
-    fun observeTransactions(userId: String = requireUserId()): Flow<List<TransactionItem>> = flow {
+    fun observeTransactions(
+        userId: String = requireUserId(),
+        minIsoDate: String? = null
+    ): Flow<List<TransactionItem>> = flow {
         val colRef = db.collection("users").document(userId).collection("transactions")
+        val cleanMinIso = minIsoDate?.trim()?.takeIf { it.isNotBlank() && PayCycleEngine.isValidIsoDate(it) }
+        val query = if (cleanMinIso != null) {
+            colRef.whereEqualTo("userId", userId)
+                .whereGreaterThanOrEqualTo("isoDate", cleanMinIso)
+        } else {
+            colRef.whereEqualTo("userId", userId)
+        }
         emitAll(
-            colRef.whereEqualTo("userId", userId).snapshots()
+            query.snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(TransactionItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
                         .map { tx ->
@@ -243,8 +258,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         )
     }
 
-    suspend fun saveProfile(profile: UserProfile) {
-        val uid = requireUserId()
+    suspend fun saveProfile(profile: UserProfile, userId: String = requireUserId()) {
+        val uid = requireUserId(userId)
         val docRef = db.collection("users").document(uid)
         try {
             docRef.set(buildProfilePayload(uid, profile)).await()
@@ -256,8 +271,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun upsertTransaction(tx: TransactionItem): String {
-        val uid = requireUserId()
+    suspend fun upsertTransaction(tx: TransactionItem, userId: String = requireUserId()): String {
+        val uid = requireUserId(userId)
         val colRef = db.collection("users").document(uid).collection("transactions")
         val cleanId = tx.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
         val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("tx_${System.currentTimeMillis()}")
@@ -285,9 +300,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun deleteTransaction(txId: String) {
+    suspend fun deleteTransaction(txId: String, userId: String = requireUserId()) {
         if (txId.isBlank()) return
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val docRef = db.collection("users").document(uid).collection("transactions").document(txId)
         try {
             docRef.delete().await()
@@ -299,8 +314,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun upsertAccount(account: AccountItem): String {
-        val uid = requireUserId()
+    suspend fun upsertAccount(account: AccountItem, userId: String = requireUserId()): String {
+        val uid = requireUserId(userId)
         val colRef = db.collection("users").document(uid).collection("accounts")
         val cleanId = account.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
         val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("acc_${System.currentTimeMillis()}")
@@ -315,9 +330,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun deleteAccount(accId: String) {
+    suspend fun deleteAccount(accId: String, userId: String = requireUserId()) {
         if (accId.isBlank()) return
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val docRef = db.collection("users").document(uid).collection("accounts").document(accId)
         try {
             docRef.delete().await()
@@ -329,8 +344,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun upsertEnvelope(envelope: EnvelopeConfig): String {
-        val uid = requireUserId()
+    suspend fun upsertEnvelope(envelope: EnvelopeConfig, userId: String = requireUserId()): String {
+        val uid = requireUserId(userId)
         val colRef = db.collection("users").document(uid).collection("envelopes")
         val cleanId = envelope.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
         val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("env_${System.currentTimeMillis()}")
@@ -348,9 +363,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     /**
      * Atomic batch update for multiple envelopes (e.g. Auto-Balance to 100%).
      */
-    suspend fun upsertEnvelopesAtomically(envelopes: List<EnvelopeConfig>) {
+    suspend fun upsertEnvelopesAtomically(envelopes: List<EnvelopeConfig>, userId: String = requireUserId()) {
         if (envelopes.isEmpty()) return
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val colRef = db.collection("users").document(uid).collection("envelopes")
         try {
             val batch = db.batch()
@@ -368,9 +383,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun deleteEnvelope(envId: String) {
+    suspend fun deleteEnvelope(envId: String, userId: String = requireUserId()) {
         if (envId.isBlank()) return
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val docRef = db.collection("users").document(uid).collection("envelopes").document(envId)
         try {
             docRef.delete().await()
@@ -382,8 +397,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun upsertFinancialItem(item: FinancialItem): String {
-        val uid = requireUserId()
+    suspend fun upsertFinancialItem(item: FinancialItem, userId: String = requireUserId()): String {
+        val uid = requireUserId(userId)
         val colRef = db.collection("users").document(uid).collection("items")
         val cleanId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
         val docRef = if (cleanId.isNotBlank()) colRef.document(cleanId) else colRef.document("item_${System.currentTimeMillis()}")
@@ -403,8 +418,12 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
      * (bill, goal, seasonal planner, Daret round, or debt) and record the corresponding TransactionItem.
      * Prevents partial writes if connectivity drops mid-operation.
      */
-    suspend fun upsertItemAndTransactionAtomically(item: FinancialItem, tx: TransactionItem) {
-        val uid = requireUserId()
+    suspend fun upsertItemAndTransactionAtomically(
+        item: FinancialItem,
+        tx: TransactionItem,
+        userId: String = requireUserId()
+    ) {
+        val uid = requireUserId(userId)
         val userRef = db.collection("users").document(uid)
         val itemCleanId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
         val itemRef = if (itemCleanId.isNotBlank()) {
@@ -431,9 +450,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun deleteFinancialItem(itemId: String) {
+    suspend fun deleteFinancialItem(itemId: String, userId: String = requireUserId()) {
         if (itemId.isBlank()) return
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val docRef = db.collection("users").document(uid).collection("items").document(itemId)
         try {
             docRef.delete().await()
@@ -520,8 +539,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
      * standard envelopes, and 1-tap quick-add presets — NO fake transactions or demo balances.
      * Users can optionally load Demo Data at any time with 1 tap.
      */
-    suspend fun ensureSeeded() {
-        val uid = requireUserId()
+    suspend fun ensureSeeded(userId: String = requireUserId()) {
+        val uid = requireUserId(userId)
         val profileRef = db.collection("users").document(uid)
         try {
             val snap = profileRef.get().await()
@@ -586,9 +605,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         existingAccounts: List<AccountItem> = emptyList(),
         existingEnvelopes: List<EnvelopeConfig> = emptyList(),
         existingItems: List<FinancialItem> = emptyList(),
-        existingTransactions: List<TransactionItem> = emptyList()
+        existingTransactions: List<TransactionItem> = emptyList(),
+        userId: String = requireUserId()
     ) {
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val profileRef = db.collection("users").document(uid)
         try {
             val accCreatedAt = existingAccounts.associate { it.id to it.createdAt }
@@ -660,9 +680,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
     suspend fun resetToCleanAccount(
         existingTxIds: List<String>,
         existingItemIdsToClear: List<String>,
-        existingAccounts: List<AccountItem>
+        existingAccounts: List<AccountItem>,
+        userId: String = requireUserId()
     ) {
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val profileRef = db.collection("users").document(uid)
         try {
             val accCreatedAt = existingAccounts.associate { it.id to it.createdAt }
@@ -726,9 +747,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) {
         staleItemIdsToDelete: List<String> = emptyList(),
         staleAccountIdsToDelete: List<String> = emptyList(),
         staleEnvelopeIdsToDelete: List<String> = emptyList(),
-        onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit = { _, _ -> }
+        onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit = { _, _ -> },
+        userId: String = requireUserId()
     ) {
-        val uid = requireUserId()
+        val uid = requireUserId(userId)
         val userRef = db.collection("users").document(uid)
         try {
             // Phase 1: Pre-build every set & delete operation in memory before touching Firestore

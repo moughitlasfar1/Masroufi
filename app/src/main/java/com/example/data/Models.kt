@@ -394,9 +394,15 @@ data class CustomizationPrefs(
     val showBillsCard: Boolean = true,
     val showSmartInsightsCard: Boolean = true,
     val dashboardOrder: List<String> = DEFAULT_DASHBOARD_ORDER,
-    val themeMode: String = "system" // "system", "light", "dark"
+    val themeMode: String = "system", // "system", "light", "dark"
+    val eurToMadRate: Double = 10.85,
+    val usdToMadRate: Double = 9.95
 ) {
     fun normalizedThemeMode(): String = normalizeThemeMode(themeMode)
+
+    fun normalizedEurRate(): Double = if (eurToMadRate.isFinite() && eurToMadRate in 0.5..500.0) eurToMadRate else 10.85
+
+    fun normalizedUsdRate(): Double = if (usdToMadRate.isFinite() && usdToMadRate in 0.5..500.0) usdToMadRate else 9.95
 
     fun resolveIsDark(systemInDark: Boolean): Boolean = when (normalizedThemeMode()) {
         "light" -> false
@@ -472,6 +478,10 @@ data class CustomizationPrefs(
             val currency = parts.getOrNull(1)?.ifBlank { "DH" } ?: "DH"
             val orderList = normalizeOrderString(parts.getOrNull(2))
             val parsedThemeMode = normalizeThemeMode(parts.getOrNull(3))
+            val parsedEurRate = parts.getOrNull(4)?.replace(",", ".")?.toDoubleOrNull()
+                ?.takeIf { it.isFinite() && it in 0.5..500.0 } ?: 10.85
+            val parsedUsdRate = parts.getOrNull(5)?.replace(",", ".")?.toDoubleOrNull()
+                ?.takeIf { it.isFinite() && it in 0.5..500.0 } ?: 9.95
             val rawMask = if (item.dayOrTurn > 0) item.dayOrTurn else 127
             val hasInsightsBit = item.dayOrTurn >= 64 || item.dayOrTurn <= 0
             return CustomizationPrefs(
@@ -487,7 +497,9 @@ data class CustomizationPrefs(
                 showBillsCard = (rawMask and 32) != 0,
                 showSmartInsightsCard = if (hasInsightsBit) (rawMask and 64) != 0 else true,
                 dashboardOrder = orderList,
-                themeMode = parsedThemeMode
+                themeMode = parsedThemeMode,
+                eurToMadRate = parsedEurRate,
+                usdToMadRate = parsedUsdRate
             )
         }
     }

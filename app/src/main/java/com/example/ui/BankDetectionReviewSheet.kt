@@ -311,19 +311,45 @@ fun BankDetectionReviewSheet(
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
+                                        val amountPrefix = when (item.direction) {
+                                            "income" -> "+"
+                                            "transfer" -> "⇄ "
+                                            else -> "-"
+                                        }
+                                        val amountColor = when (item.direction) {
+                                            "income" -> AccentEmerald
+                                            "transfer" -> MaterialTheme.colorScheme.tertiary
+                                            else -> MaterialTheme.colorScheme.primary
+                                        }
                                         Text(
-                                            text = "${if (item.direction == "income") "+" else "-"}${PayCycleEngine.formatAmountOrMask(item.amount, state.hideAmounts)} $cur",
+                                            text = "$amountPrefix${PayCycleEngine.formatAmountOrMask(item.amount, state.hideAmounts)} $cur",
                                             style = MaterialTheme.typography.titleMedium,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = if (item.direction == "income") AccentEmerald else MaterialTheme.colorScheme.primary
+                                            color = amountColor
                                         )
                                     }
 
-                                    // Badges: Needs Review or Possible Duplicate
+                                    // Badges: Transfer (ATM), Needs Review, or Possible Duplicate
                                     Row(
+                                        modifier = Modifier.horizontalScroll(rememberScrollState()),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
+                                        if (item.direction == "transfer") {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                                                modifier = Modifier.testTag("bank_detect_transfer_badge_${item.id}")
+                                            ) {
+                                                Text(
+                                                    text = strings.bankDetectTransferBadge,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
                                         if (item.needsReview) {
                                             Surface(
                                                 shape = CircleShape,

@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -19,12 +20,23 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.MainActivity
 import com.example.R
+import com.example.data.FinancialItem
+import com.example.data.MasroufiRepository
+import com.example.data.TransactionItem
 import com.example.domain.PayCycleEngine
+import com.example.domain.Translations
 import com.example.ui.DashboardState
 import com.example.widget.MasroufiAppWidget
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
+import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -144,9 +156,12 @@ object MasroufiNotificationManager {
                 .forEach { bill ->
                     upcomingBillsArr.put(
                         JSONObject().apply {
+                            put("id", bill.id)
                             put("name", bill.name)
+                            put("subtitle", bill.subtitle)
                             put("amount", bill.amount)
                             put("dueDay", bill.dayOrTurn)
+                            put("dateOrCycle", bill.dateOrCycle)
                         }
                     )
                 }
@@ -157,11 +172,14 @@ object MasroufiNotificationManager {
                 if (daret.extraInt < totalMembers) {
                     activeDaretsArr.put(
                         JSONObject().apply {
+                            put("id", daret.id)
                             put("name", daret.name)
+                            put("subtitle", daret.subtitle)
                             put("amount", daret.amount)
                             put("myTurn", daret.dayOrTurn)
                             put("paidRounds", daret.extraInt)
                             put("totalMembers", totalMembers)
+                            put("dateOrCycle", daret.dateOrCycle)
                         }
                     )
                 }
@@ -188,6 +206,7 @@ object MasroufiNotificationManager {
             val snapshot = JSONObject().apply {
                 put("lang", state.profile.language)
                 put("currency", cur)
+                put("cycleKey", cycleKey)
                 put("hideAmounts", hide)
                 put("todayTxCount", todayTxCount)
                 put("totalUsagePct", totalUsagePct)
@@ -239,13 +258,18 @@ object MasroufiNotificationManager {
         val hide = obj.optBoolean("hideAmounts", false)
         var postedCount = 0
 
+        val strings = Translations.forLang(lang)
+        val cycleKey = obj.optString("cycleKey", PayCycleEngine.currentCycleKey(1))
+
         // 1. Upcoming Bills
         if (isBillsAlertEnabled(context)) {
             val bills = obj.optJSONArray("upcomingBills")
             if (bills != null && bills.length() > 0) {
                 val first = bills.getJSONObject(0)
+                val billId = first.optString("id", "")
                 val name = first.optString("name", "Facture")
-                val amt = PayCycleEngine.formatCurrencyOrMask(first.optDouble("amount", 0.0), cur, hide)
+                val rawAmt = first.optDouble("amount", 0.0)
+                val amt = PayCycleEngine.formatCurrencyOrMask(rawAmt, cur, hide)
                 val day = first.optInt("dueDay", 1)
                 val title = when (lang) {
                     "ar" -> "تذكير فاتورة قريباً: $name"
@@ -259,7 +283,29 @@ object MasroufiNotificationManager {
                     "en" -> "Due on day $day ($amt). Tap to review."
                     else -> "Échéance le $day du mois ($amt). Touchez pour régler."
                 }
-                postNotification(context, 4001, CHANNEL_BILLS_DARET, title, body, openQuickAdd = false)
+                val actionIntent = if (billId.isNotBlank()) {
+                    Intent(context, NotificationActionReceiver::class.java).apply {
+                        action = NotificationActionReceiver.ACTION_MARK_BILL_PAID
+                        putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, 4001)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, billId)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_NAME, name)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_SUBTITLE, first.optString("subtitle", name))
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, rawAmt)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_DUE_DAY, day)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_DATE_OR_CYCLE, first.optString("dateOrCycle", ""))
+                        putExtra(NotificationActionReceiver.EXTRA_CYCLE_KEY, cycleKey)
+                    }
+                } else null
+                val paidAction = actionIntent?.let { actIntent ->
+                    val actPi = PendingIntent.getBroadcast(
+                        context,
+                        5001,
+                        actIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    NotificationCompat.Action.Builder(0, strings.widgetPaidAction, actPi).build()
+                }
+                postNotification(context, 4001, CHANNEL_BILLS_DARET, title, body, openQuickAdd = false, notifAction = paidAction)
                 postedCount++
             }
         }
@@ -269,8 +315,10 @@ object MasroufiNotificationManager {
             val darets = obj.optJSONArray("activeDarets")
             if (darets != null && darets.length() > 0) {
                 val first = darets.getJSONObject(0)
+                val daretId = first.optString("id", "")
                 val name = first.optString("name", "Daret")
-                val amt = PayCycleEngine.formatCurrencyOrMask(first.optDouble("amount", 0.0), cur, hide)
+                val rawAmt = first.optDouble("amount", 0.0)
+                val amt = PayCycleEngine.formatCurrencyOrMask(rawAmt, cur, hide)
                 val myTurn = first.optInt("myTurn", 1)
                 val paid = first.optInt("paidRounds", 0)
                 val total = first.optInt("totalMembers", 10)
@@ -286,7 +334,30 @@ object MasroufiNotificationManager {
                     "en" -> "Your turn #$myTurn · Paid $paid/$total ($amt)."
                     else -> "Votre tour n°$myTurn · Cotisé $paid/$total ($amt)."
                 }
-                postNotification(context, 4002, CHANNEL_BILLS_DARET, title, body, openQuickAdd = false)
+                val actionIntent = if (daretId.isNotBlank()) {
+                    Intent(context, NotificationActionReceiver::class.java).apply {
+                        action = NotificationActionReceiver.ACTION_PAY_DARET_ROUND
+                        putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, 4002)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, daretId)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_NAME, name)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_SUBTITLE, first.optString("subtitle", ""))
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, rawAmt)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_DUE_DAY, myTurn)
+                        putExtra(NotificationActionReceiver.EXTRA_DARET_PAID_ROUNDS, paid)
+                        putExtra(NotificationActionReceiver.EXTRA_DARET_TOTAL_MEMBERS, total)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_DATE_OR_CYCLE, first.optString("dateOrCycle", ""))
+                    }
+                } else null
+                val paidAction = actionIntent?.let { actIntent ->
+                    val actPi = PendingIntent.getBroadcast(
+                        context,
+                        5002,
+                        actIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+                    NotificationCompat.Action.Builder(0, strings.widgetPaidAction, actPi).build()
+                }
+                postNotification(context, 4002, CHANNEL_BILLS_DARET, title, body, openQuickAdd = false, notifAction = paidAction)
                 postedCount++
             }
         }
@@ -354,13 +425,51 @@ object MasroufiNotificationManager {
         return postedCount
     }
 
+    internal fun removeBillOrAdvanceDaretInCachedSnapshot(
+        context: Context,
+        itemId: String,
+        isBill: Boolean
+    ) {
+        if (itemId.isBlank()) return
+        val raw = prefs(context).getString(KEY_SNAPSHOT_JSON, null) ?: return
+        val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        if (isBill) {
+            val arr = obj.optJSONArray("upcomingBills") ?: return
+            val filtered = JSONArray()
+            for (i in 0 until arr.length()) {
+                val entry = arr.optJSONObject(i) ?: continue
+                if (entry.optString("id") != itemId) filtered.put(entry)
+            }
+            obj.put("upcomingBills", filtered)
+        } else {
+            val arr = obj.optJSONArray("activeDarets") ?: return
+            val updated = JSONArray()
+            for (i in 0 until arr.length()) {
+                val entry = arr.optJSONObject(i) ?: continue
+                if (entry.optString("id") == itemId) {
+                    val total = entry.optInt("totalMembers", 10).coerceAtLeast(1)
+                    val nextPaid = (entry.optInt("paidRounds", 0) + 1).coerceAtMost(total)
+                    if (nextPaid < total) {
+                        entry.put("paidRounds", nextPaid)
+                        updated.put(entry)
+                    }
+                } else {
+                    updated.put(entry)
+                }
+            }
+            obj.put("activeDarets", updated)
+        }
+        prefs(context).edit().putString(KEY_SNAPSHOT_JSON, obj.toString()).apply()
+    }
+
     private fun postNotification(
         context: Context,
         id: Int,
         channelId: String,
         title: String,
         body: String,
-        openQuickAdd: Boolean
+        openQuickAdd: Boolean,
+        notifAction: NotificationCompat.Action? = null
     ) {
         if (!hasNotificationPermission(context)) return
         runCatching {
@@ -380,7 +489,7 @@ object MasroufiNotificationManager {
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            val notification = NotificationCompat.Builder(context, channelId)
+            val builder = NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(R.mipmap.ic_launcher_round)
                 .setContentTitle(title)
                 .setContentText(body)
@@ -388,9 +497,142 @@ object MasroufiNotificationManager {
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
-                .build()
 
-            NotificationManagerCompat.from(context).notify(id, notification)
+            if (notifAction != null) {
+                builder.addAction(notifAction)
+            }
+
+            NotificationManagerCompat.from(context).notify(id, builder.build())
+        }
+    }
+}
+
+class NotificationActionReceiver : BroadcastReceiver() {
+    companion object {
+        const val ACTION_MARK_BILL_PAID = "com.aistudio.masroufi.ACTION_MARK_BILL_PAID"
+        const val ACTION_PAY_DARET_ROUND = "com.aistudio.masroufi.ACTION_PAY_DARET_ROUND"
+        const val EXTRA_NOTIF_ID = "extra_notif_id"
+        const val EXTRA_ITEM_ID = "extra_item_id"
+        const val EXTRA_ITEM_NAME = "extra_item_name"
+        const val EXTRA_ITEM_SUBTITLE = "extra_item_subtitle"
+        const val EXTRA_ITEM_AMOUNT = "extra_item_amount"
+        const val EXTRA_ITEM_DUE_DAY = "extra_item_due_day"
+        const val EXTRA_ITEM_DATE_OR_CYCLE = "extra_item_date_or_cycle"
+        const val EXTRA_CYCLE_KEY = "extra_cycle_key"
+        const val EXTRA_DARET_PAID_ROUNDS = "extra_daret_paid_rounds"
+        const val EXTRA_DARET_TOTAL_MEMBERS = "extra_daret_total_members"
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        val action = intent.action ?: return
+        if (action != ACTION_MARK_BILL_PAID && action != ACTION_PAY_DARET_ROUND) return
+
+        val appCtx = context.applicationContext
+        val itemId = intent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
+        if (itemId.isBlank()) return
+        val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, if (action == ACTION_MARK_BILL_PAID) 4001 else 4002)
+        val name = intent.getStringExtra(EXTRA_ITEM_NAME).orEmpty().ifBlank { "Opération" }
+        val subtitle = intent.getStringExtra(EXTRA_ITEM_SUBTITLE).orEmpty()
+        val amount = intent.getDoubleExtra(EXTRA_ITEM_AMOUNT, 0.0).coerceAtLeast(1.0)
+        val dueDayOrTurn = intent.getIntExtra(EXTRA_ITEM_DUE_DAY, 1).coerceIn(1, 365)
+        val existingDateOrCycle = intent.getStringExtra(EXTRA_ITEM_DATE_OR_CYCLE).orEmpty()
+
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val isBill = action == ACTION_MARK_BILL_PAID
+                MasroufiNotificationManager.removeBillOrAdvanceDaretInCachedSnapshot(
+                    context = appCtx,
+                    itemId = itemId,
+                    isBill = isBill
+                )
+                com.example.widget.MasroufiWidgetStore.markBillOrDaretPaidInSnapshot(
+                    context = appCtx,
+                    itemId = itemId,
+                    kind = if (isBill) "bill" else "daret"
+                )
+                runCatching {
+                    NotificationManagerCompat.from(appCtx).cancel(notifId)
+                }
+
+                val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull().orEmpty().ifBlank { MasroufiRepository.LOCAL_DEVICE_USER_ID }
+                val todayIso = PayCycleEngine.todayIso()
+                val (updatedItem, tx) = if (isBill) {
+                    val cycleKey = intent.getStringExtra(EXTRA_CYCLE_KEY).orEmpty().ifBlank {
+                        PayCycleEngine.currentCycleKey(1, todayIso)
+                    }
+                    val updatedCycles = (existingDateOrCycle.split(",").filter { it.isNotBlank() } + cycleKey)
+                        .distinct()
+                        .joinToString(",")
+                        .take(250)
+                    val bill = FinancialItem(
+                        id = itemId,
+                        userId = uid,
+                        itemType = "bill",
+                        name = name.take(120),
+                        subtitle = subtitle.take(250),
+                        amount = PayCycleEngine.roundMoney(amount),
+                        secondaryAmount = 0.0,
+                        dayOrTurn = dueDayOrTurn,
+                        extraInt = 0,
+                        dateOrCycle = updatedCycles
+                    )
+                    val billTx = TransactionItem(
+                        id = "tx_bill_${itemId}_$cycleKey",
+                        userId = uid,
+                        type = "expense",
+                        amount = PayCycleEngine.roundMoney(amount),
+                        category = "charges",
+                        envelopeKey = "charges",
+                        accountId = "acc_bank",
+                        toAccountId = "",
+                        desc = name.take(250),
+                        isoDate = todayIso
+                    )
+                    bill to billTx
+                } else {
+                    val totalMembers = intent.getIntExtra(EXTRA_DARET_TOTAL_MEMBERS, 10).coerceAtLeast(1)
+                    val prevPaid = intent.getIntExtra(EXTRA_DARET_PAID_ROUNDS, 0).coerceAtLeast(0)
+                    val nextPaid = (prevPaid + 1).coerceAtMost(totalMembers)
+                    val daret = FinancialItem(
+                        id = itemId,
+                        userId = uid,
+                        itemType = "daret",
+                        name = name.take(120),
+                        subtitle = subtitle.take(250),
+                        amount = PayCycleEngine.roundMoney(amount),
+                        secondaryAmount = totalMembers.toDouble(),
+                        dayOrTurn = dueDayOrTurn,
+                        extraInt = nextPaid,
+                        dateOrCycle = existingDateOrCycle.take(250)
+                    )
+                    val daretTx = TransactionItem(
+                        id = "tx_daret_${itemId}_round_$nextPaid",
+                        userId = uid,
+                        type = "expense",
+                        amount = PayCycleEngine.roundMoney(amount),
+                        category = "epargne",
+                        envelopeKey = "epargne",
+                        accountId = "acc_bank",
+                        toAccountId = "",
+                        desc = "Cotisation $name ($nextPaid/$totalMembers)".take(250),
+                        isoDate = todayIso
+                    )
+                    daret to daretTx
+                }
+
+                runCatching {
+                    val dbId = appCtx.getString(R.string.firestore_database_id)
+                    val repo = MasroufiRepository(FirebaseFirestore.getInstance(dbId))
+                    if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
+                        withTimeoutOrNull(2500L) {
+                            repo.upsertItemAndTransactionAtomically(updatedItem, tx, userId = uid)
+                        }
+                    }
+                }
+            } finally {
+                pendingResult.finish()
+            }
         }
     }
 }

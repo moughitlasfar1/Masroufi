@@ -236,7 +236,16 @@ data class AppStrings(
     val themeModeLabel: String = "Thème",
     val themeModeSystem: String = "Appareil (Auto)",
     val themeModeLight: String = "Clair",
-    val themeModeDark: String = "Sombre"
+    val themeModeDark: String = "Sombre",
+    val fxRatesSectionTitle: String = "Taux de change (MRE / Voyages)",
+    val fxEurRateLabel: String = "1 EUR en DH",
+    val fxUsdRateLabel: String = "1 USD en DH",
+    val bankDetectTransferBadge: String = "⇄ Retrait / Transfert (Banque → Cash)",
+    val daretCollectPotBtn: String = "Encaisser le pot",
+    val daretPotCollectedBadge: String = "Pot encaissé ✓",
+    val daretCollectAccountBank: String = "Banque",
+    val daretCollectAccountCash: String = "Cash",
+    val daretPotCollectedToast: String = "✓ Pot Daret encaissé !"
 )
 
 object Translations {
@@ -475,7 +484,16 @@ object Translations {
         themeModeLabel = "Thème",
         themeModeSystem = "Appareil (Auto)",
         themeModeLight = "Clair",
-        themeModeDark = "Sombre"
+        themeModeDark = "Sombre",
+        fxRatesSectionTitle = "Taux de change (MRE / Voyages)",
+        fxEurRateLabel = "1 EUR en DH",
+        fxUsdRateLabel = "1 USD en DH",
+        bankDetectTransferBadge = "⇄ Retrait / Transfert (Banque → Cash)",
+        daretCollectPotBtn = "Encaisser le pot",
+        daretPotCollectedBadge = "Pot encaissé ✓",
+        daretCollectAccountBank = "Banque",
+        daretCollectAccountCash = "Cash",
+        daretPotCollectedToast = "✓ Pot Daret encaissé !"
     )
 
     val EN = AppStrings(
@@ -713,7 +731,16 @@ object Translations {
         themeModeLabel = "Theme",
         themeModeSystem = "Device (Auto)",
         themeModeLight = "Light",
-        themeModeDark = "Dark"
+        themeModeDark = "Dark",
+        fxRatesSectionTitle = "Exchange Rates (EUR / USD)",
+        fxEurRateLabel = "1 EUR to DH",
+        fxUsdRateLabel = "1 USD to DH",
+        bankDetectTransferBadge = "⇄ ATM / Transfer (Bank → Cash)",
+        daretCollectPotBtn = "Collect pot",
+        daretPotCollectedBadge = "Pot collected ✓",
+        daretCollectAccountBank = "Bank",
+        daretCollectAccountCash = "Cash",
+        daretPotCollectedToast = "✓ Daret pot collected!"
     )
 
     val AR = AppStrings(
@@ -951,7 +978,16 @@ object Translations {
         themeModeLabel = "المظهر",
         themeModeSystem = "الجهاز (تلقائي)",
         themeModeLight = "فاتح",
-        themeModeDark = "داكن"
+        themeModeDark = "داكن",
+        fxRatesSectionTitle = "أسعار الصرف (أورو / دولار)",
+        fxEurRateLabel = "1 أورو بالدرهم",
+        fxUsdRateLabel = "1 دولار بالدرهم",
+        bankDetectTransferBadge = "⇄ سحب / تحويل (بنك ← نقداً)",
+        daretCollectPotBtn = "استلام مبلغ دارت",
+        daretPotCollectedBadge = "تم الاستلام ✓",
+        daretCollectAccountBank = "البنك",
+        daretCollectAccountCash = "نقداً",
+        daretPotCollectedToast = "✓ تم استلام مبلغ دارت!"
     )
 
     val DARIJA = AppStrings(
@@ -1189,7 +1225,16 @@ object Translations {
         themeModeLabel = "المظهر",
         themeModeSystem = "التيليفون (أوطو)",
         themeModeLight = "مضوي",
-        themeModeDark = "مظلم"
+        themeModeDark = "مظلم",
+        fxRatesSectionTitle = "صرف العملات (أورو / دولار)",
+        fxEurRateLabel = "1 أورو بالدرهم",
+        fxUsdRateLabel = "1 دولار بالدرهم",
+        bankDetectTransferBadge = "⇄ سحب GAB / تحويل (بنك ← كاش)",
+        daretCollectPotBtn = "شد الفلوس د دارت",
+        daretPotCollectedBadge = "شديتيها ✓",
+        daretCollectAccountBank = "البنكة",
+        daretCollectAccountCash = "الكاش",
+        daretPotCollectedToast = "✓ تقيدات فلوس دارت!"
     )
 
     fun forLang(lang: String): AppStrings = when (lang) {

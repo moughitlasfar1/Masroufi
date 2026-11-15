@@ -88,7 +88,13 @@ fun AddFinancialItemSheet(
         mutableStateOf((existingItem?.dayOrTurn ?: 1).toString())
     }
     var dateOrDirText by remember {
-        mutableStateOf(existingItem?.dateOrCycle?.ifBlank { "2027-01-01" } ?: "2027-01-01")
+        mutableStateOf(
+            if (itemType == "daret" && existingItem != null) {
+                PayCycleEngine.daretPayoutDateOnly(existingItem).ifBlank { "2027-01-01" }
+            } else {
+                existingItem?.dateOrCycle?.ifBlank { "2027-01-01" } ?: "2027-01-01"
+            }
+        )
     }
     var itemSubtitleText by remember {
         mutableStateOf(existingItem?.subtitle ?: "")
@@ -443,6 +449,10 @@ fun AddFinancialItemSheet(
                                         dateOrCycle = when (itemType) {
                                             "preset" -> selectedPresetAccountId
                                             "bill" -> existingItem?.dateOrCycle ?: ""
+                                            "daret" -> if (existingItem != null && PayCycleEngine.isDaretPotCollected(existingItem)) {
+                                                val clean = dateOrDirText.trim()
+                                                if (clean.isNotBlank()) "$clean|pot_collected".take(250) else "pot_collected"
+                                            } else dateOrDirText
                                             else -> dateOrDirText
                                         }
                                     )

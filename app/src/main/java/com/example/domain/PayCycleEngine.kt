@@ -7,8 +7,10 @@ import com.example.data.TransactionItem
 import com.example.data.DefaultCategoryResolver
 import java.text.NumberFormat
 import java.util.Calendar
+import java.util.Collections
 import java.util.Locale
 import java.util.TimeZone
+import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -864,23 +866,180 @@ object PayCycleEngine {
         }
     }
 
-    private val learnedCategoryMap = mutableMapOf<String, String>()
+    private const val MAX_LEARNED_CATEGORIES = 80
+    private const val DARET_POT_COLLECTED_MARKER = "pot_collected"
+
+    private val learnedCategoryMap: MutableMap<String, String> =
+        Collections.synchronizedMap(LinkedHashMap<String, String>())
 
     fun learnCategoryForDescription(description: String, envelopeKey: String) {
         val cleanDesc = description.trim().lowercase(Locale.ROOT)
+            .replace("|", " ")
+            .replace("=", " ")
+            .trim()
+            .take(40)
         val cleanKey = envelopeKey.trim().lowercase(Locale.ROOT)
+            .replace("|", "")
+            .replace("=", "")
+            .take(30)
         if (cleanDesc.length >= 2 && cleanKey.isNotBlank()) {
-            learnedCategoryMap[cleanDesc] = cleanKey
+            synchronized(learnedCategoryMap) {
+                learnedCategoryMap.remove(cleanDesc)
+                learnedCategoryMap[cleanDesc] = cleanKey
+                while (learnedCategoryMap.size > MAX_LEARNED_CATEGORIES) {
+                    val oldestKey = learnedCategoryMap.keys.firstOrNull() ?: break
+                    learnedCategoryMap.remove(oldestKey)
+                }
+            }
         }
     }
 
     fun getLearnedCategoryForDescription(description: String): String? {
         val cleanDesc = description.trim().lowercase(Locale.ROOT)
         if (cleanDesc.length < 2) return null
-        learnedCategoryMap[cleanDesc]?.let { return it }
-        return learnedCategoryMap.entries.firstOrNull { (k, _) ->
-            cleanDesc.contains(k) || k.contains(cleanDesc)
-        }?.value
+        synchronized(learnedCategoryMap) {
+            learnedCategoryMap[cleanDesc]?.let { return it }
+            return learnedCategoryMap.entries.firstOrNull { (k, _) ->
+                cleanDesc.contains(k) || k.contains(cleanDesc)
+            }?.value
+        }
+    }
+
+    fun getAllLearnedCategories(): Map<String, String> = synchronized(learnedCategoryMap) {
+        learnedCategoryMap.toMap()
+    }
+
+    fun exportLearnedCategoriesJson(): String {
+        val obj = JSONObject()
+        synchronized(learnedCategoryMap) {
+            for ((k, v) in learnedCategoryMap) {
+                obj.put(k, v)
+            }
+        }
+        return obj.toString()
+    }
+
+    fun importLearnedCategoriesJson(rawJson: String, merge: Boolean = true) {
+        if (rawJson.isBlank()) return
+        runCatching {
+            val obj = JSONObject(rawJson)
+            synchronized(learnedCategoryMap) {
+                if (!merge) learnedCategoryMap.clear()
+                val keys = obj.keys()
+                while (keys.hasNext()) {
+                    val desc = keys.next().trim().lowercase(Locale.ROOT)
+                    val env = obj.optString(desc, "").trim().lowercase(Locale.ROOT)
+                    if (desc.length >= 2 && env.isNotBlank()) {
+                        learnedCategoryMap.remove(desc)
+                        learnedCategoryMap[desc] = env
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Packs learned mappings (most recent first) into two <=240-char strings compatible with
+     * firestore.rules (`subtitle` <= 250, `dateOrCycle` <= 250).
+     */
+    fun exportLearnedCategoriesEncoded(maxChunkLen: Int = 240): Pair<String, String> {
+        val entries = synchronized(learnedCategoryMap) {
+            learnedCategoryMap.entries.toList().reversed()
+        }
+        val firstChunk = StringBuilder()
+        val secondChunk = StringBuilder()
+        for ((k, v) in entries) {
+            val safeKey = k.replace("|", " ").replace("=", " ").trim()
+            val safeVal = v.replace("|", "").replace("=", "").trim()
+            if (safeKey.length < 2 || safeVal.isBlank()) continue
+            val token = "$safeKey=$safeVal"
+            val sep1 = if (firstChunk.isNotEmpty()) "|" else ""
+            if (firstChunk.length + sep1.length + token.length <= maxChunkLen) {
+                firstChunk.append(sep1).append(token)
+            } else {
+                val sep2 = if (secondChunk.isNotEmpty()) "|" else ""
+                if (secondChunk.length + sep2.length + token.length <= maxChunkLen) {
+                    secondChunk.append(sep2).append(token)
+                }
+            }
+        }
+        return firstChunk.toString() to secondChunk.toString()
+    }
+
+    fun importLearnedCategoriesEncoded(primary: String, secondary: String = "", merge: Boolean = true) {
+        val combined = listOf(primary.trim(), secondary.trim()).filter { it.isNotBlank() }
+        if (combined.isEmpty()) return
+        synchronized(learnedCategoryMap) {
+            if (!merge) learnedCategoryMap.clear()
+            for (chunk in combined) {
+                if (chunk.startsWith("{")) {
+                    importLearnedCategoriesJson(chunk, merge = true)
+                    continue
+                }
+                val pairs = chunk.split("|").reversed()
+                for (pair in pairs) {
+                    val eqIdx = pair.indexOf('=')
+                    if (eqIdx <= 0) continue
+                    val desc = pair.substring(0, eqIdx).trim().lowercase(Locale.ROOT)
+                    val env = pair.substring(eqIdx + 1).trim().lowercase(Locale.ROOT)
+                    if (desc.length >= 2 && env.isNotBlank()) {
+                        learnedCategoryMap.remove(desc)
+                        learnedCategoryMap[desc] = env
+                    }
+                }
+            }
+        }
+    }
+
+    fun buildLearnedCategoriesFinancialItem(
+        userId: String,
+        existingCreatedAt: com.google.firebase.Timestamp? = null
+    ): FinancialItem {
+        val (part1, part2) = exportLearnedCategoriesEncoded()
+        return FinancialItem(
+            id = "learned_categories",
+            userId = userId,
+            itemType = "custom_prefs",
+            name = "learned_categories",
+            subtitle = part1,
+            amount = 0.0,
+            secondaryAmount = 0.0,
+            dayOrTurn = 0,
+            extraInt = 0,
+            dateOrCycle = part2,
+            createdAt = existingCreatedAt
+        )
+    }
+
+    fun importLearnedCategoriesFromFinancialItem(item: FinancialItem?) {
+        if (item == null) return
+        importLearnedCategoriesEncoded(item.subtitle, item.dateOrCycle, merge = true)
+    }
+
+    fun isDaretPotCollected(daret: FinancialItem): Boolean {
+        return daret.dateOrCycle.contains(DARET_POT_COLLECTED_MARKER, ignoreCase = true)
+    }
+
+    fun daretPayoutDateOnly(daret: FinancialItem): String {
+        return daret.dateOrCycle
+            .split("|")
+            .firstOrNull { it.isNotBlank() && !it.equals(DARET_POT_COLLECTED_MARKER, ignoreCase = true) }
+            ?.trim()
+            .orEmpty()
+    }
+
+    fun markDaretPotCollected(daret: FinancialItem): FinancialItem {
+        val cleanDate = daretPayoutDateOnly(daret)
+        val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+        val markedDateOrCycle = if (cleanDate.isNotBlank()) {
+            "$cleanDate|$DARET_POT_COLLECTED_MARKER"
+        } else {
+            DARET_POT_COLLECTED_MARKER
+        }
+        return daret.copy(
+            extraInt = maxOf(daret.extraInt, daret.dayOrTurn).coerceAtMost(totalMembers),
+            dateOrCycle = markedDateOrCycle.take(250)
+        )
     }
 
     fun clearLearnedCategories() {

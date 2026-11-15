@@ -24,12 +24,14 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -56,7 +58,8 @@ data class ParsedBackupPayload(
     val accounts: List<AccountItem>,
     val envelopes: List<EnvelopeConfig>,
     val financialItems: List<FinancialItem>,
-    val transactions: List<TransactionItem>
+    val transactions: List<TransactionItem>,
+    val learnedCategories: Map<String, String> = emptyMap()
 )
 
 data class BackupImportPreview(
@@ -141,8 +144,15 @@ object BackupSerializer {
                     put("visibilityMask", state.customPrefs.toVisibilityMask())
                     put("dashboardOrder", state.customPrefs.normalizedOrder().joinToString(","))
                     put("themeMode", state.customPrefs.normalizedThemeMode())
+                    put("eurToMadRate", state.customPrefs.normalizedEurRate())
+                    put("usdToMadRate", state.customPrefs.normalizedUsdRate())
                 }
             )
+            val learnedObj = JSONObject()
+            PayCycleEngine.getAllLearnedCategories().forEach { (k, v) ->
+                learnedObj.put(k, v)
+            }
+            put("learnedCategories", learnedObj)
 
             val accArr = JSONArray()
             state.accounts.forEach { accWithBal ->
@@ -328,7 +338,11 @@ object BackupSerializer {
                 showBillsCard = (mask and 32) != 0,
                 showSmartInsightsCard = if (hasInsightsBit) (mask and 64) != 0 else true,
                 dashboardOrder = CustomizationPrefs.normalizeOrderString(orderStr),
-                themeMode = CustomizationPrefs.normalizeThemeMode(customObj.optString("themeMode", "system"))
+                themeMode = CustomizationPrefs.normalizeThemeMode(customObj.optString("themeMode", "system")),
+                eurToMadRate = customObj.optDouble("eurToMadRate", 10.85)
+                    .let { if (!it.isNaN() && !it.isInfinite() && it in 0.5..500.0) it else 10.85 },
+                usdToMadRate = customObj.optDouble("usdToMadRate", 9.95)
+                    .let { if (!it.isNaN() && !it.isInfinite() && it in 0.5..500.0) it else 9.95 }
             )
         } else null
 
@@ -448,6 +462,18 @@ object BackupSerializer {
         }
 
         val txsList = parseTransactionsArray(txArr, currentUserId)
+        val learnedMap = linkedMapOf<String, String>()
+        val learnedObj = obj.optJSONObject("learnedCategories")
+        if (learnedObj != null) {
+            val keys = learnedObj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next().trim().lowercase()
+                val v = learnedObj.optString(k, "").trim().lowercase()
+                if (k.length >= 2 && v.isNotBlank()) {
+                    learnedMap[k] = v
+                }
+            }
+        }
 
         return ParsedBackupPayload(
             backupVersion = version,
@@ -457,7 +483,8 @@ object BackupSerializer {
             accounts = accountsList,
             envelopes = envelopesList,
             financialItems = itemsList,
-            transactions = txsList
+            transactions = txsList,
+            learnedCategories = learnedMap
         )
     }
 
@@ -636,11 +663,14 @@ class MasroufiViewModel(
     initialHideAmounts: Boolean = false,
     initialRollbackSnapshot: String? = null,
     initialDismissedSubscriptions: Set<String> = emptySet(),
+    initialLearnedCategoriesJson: String? = null,
     private val onRollbackSnapshotChanged: (String?) -> Unit = {},
-    private val onDismissSubscription: (String) -> Unit = {}
+    private val onDismissSubscription: (String) -> Unit = {},
+    private val onLearnedCategoriesUpdated: (String) -> Unit = {}
 ) : ViewModel() {
 
     private val _selectedCycleKey = MutableStateFlow<String?>(null)
+    private val _historyMinIsoDate = MutableStateFlow<String?>(null)
     private val _filterState = MutableStateFlow(FilterState())
     private val _whatIfState = MutableStateFlow(WhatIfSimulatorState())
     private val _hideAmounts = MutableStateFlow(initialHideAmounts)
@@ -650,6 +680,8 @@ class MasroufiViewModel(
     private val _lastDeletedItem = MutableStateFlow<FinancialItem?>(null)
     val lastDeletedItem: StateFlow<FinancialItem?> = _lastDeletedItem.asStateFlow()
     private val _pendingWritesCount = MutableStateFlow(0)
+    private val _learnedCategoriesCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
+    private var lastSyncedLearnedSignature: String = ""
 
     // Instant optimistic local overrides so UI never lags or reverts on rapid clicks (and works in local mode)
     private val isLocalOnlyUser = currentUserId == LOCAL_DEVICE_USER_ID
@@ -750,16 +782,27 @@ class MasroufiViewModel(
             emit(UserProfile(userId = currentUserId))
         }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private val transactionsFlow = combine(
-        repository.observeTransactions(currentUserId).catch { e ->
-            if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing transactions")
-            if (!isLocalOnlyUser) {
-                _errorMessage.value = "Impossible de charger les transactions en direct. Vérifiez votre connexion."
+        _historyMinIsoDate.flatMapLatest { minIso ->
+            repository.observeTransactions(currentUserId, minIsoDate = minIso).catch { e ->
+                if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing transactions")
+                if (!isLocalOnlyUser) {
+                    _errorMessage.value = "Impossible de charger les transactions en direct. Vérifiez votre connexion."
+                }
+                emit(emptyList())
             }
-            emit(emptyList())
         },
         _localTransactions
     ) { remote, local -> local ?: remote }
+
+    fun setTransactionHistoryMinDate(minIsoDate: String?) {
+        _historyMinIsoDate.value = minIsoDate
+    }
+
+    fun loadFullTransactionHistory() {
+        _historyMinIsoDate.value = null
+    }
 
     private val accountsFlow = combine(
         repository.observeAccounts(currentUserId).catch { e ->
@@ -807,9 +850,24 @@ class MasroufiViewModel(
         val dismissedSubs = (extraList.getOrNull(7) as? Set<String>) ?: emptySet()
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
-        val storedPrefsItem = finItems.find { it.itemType == "custom_prefs" || it.id == "custom_prefs" }
+        val storedPrefsItem = finItems.find {
+            it.id == "custom_prefs" ||
+                (it.itemType == "custom_prefs" && it.id != "learned_categories" && it.name != "learned_categories")
+        }
         if (storedPrefsItem?.createdAt != null) {
             _customPrefsItemCreatedAt.value = storedPrefsItem.createdAt
+        }
+        val learnedCategoriesItem = finItems.find { it.id == "learned_categories" }
+        if (learnedCategoriesItem != null) {
+            if (learnedCategoriesItem.createdAt != null) {
+                _learnedCategoriesCreatedAt.value = learnedCategoriesItem.createdAt
+            }
+            val sig = "${learnedCategoriesItem.subtitle}|${learnedCategoriesItem.dateOrCycle}"
+            if (sig != lastSyncedLearnedSignature && sig != "|") {
+                lastSyncedLearnedSignature = sig
+                PayCycleEngine.importLearnedCategoriesFromFinancialItem(learnedCategoriesItem)
+                onLearnedCategoriesUpdated(PayCycleEngine.exportLearnedCategoriesJson())
+            }
         }
         val customPrefs = optCustomPrefs ?: CustomizationPrefs.fromFinancialItem(storedPrefsItem)
         val curSymbol = customPrefs.currencySymbol.ifBlank { "DH" }
@@ -1046,8 +1104,29 @@ class MasroufiViewModel(
     )
 
     init {
+        if (!initialLearnedCategoriesJson.isNullOrBlank()) {
+            PayCycleEngine.importLearnedCategoriesJson(initialLearnedCategoriesJson, merge = true)
+        }
         safeLaunch("ensureSeeded") {
             repository.ensureSeeded()
+        }
+    }
+
+    private fun persistLearnedCategories() {
+        val json = PayCycleEngine.exportLearnedCategoriesJson()
+        onLearnedCategoriesUpdated(json)
+        val item = PayCycleEngine.buildLearnedCategoriesFinancialItem(
+            userId = currentUserId,
+            existingCreatedAt = _learnedCategoriesCreatedAt.value
+        )
+        lastSyncedLearnedSignature = "${item.subtitle}|${item.dateOrCycle}"
+        if (isLocalOnlyUser) {
+            val currentItems = (_localItems.value ?: emptyList()).filterNot { it.id == "learned_categories" }
+            _localItems.value = currentItems + item
+            return
+        }
+        safeLaunch("persistLearnedCategories") {
+            repository.upsertFinancialItem(item)
         }
     }
 
@@ -1194,12 +1273,15 @@ class MasroufiViewModel(
         existingCreatedAt: com.google.firebase.Timestamp? = null
     ): FinancialItem {
         val orderCsv = prefs.normalizedOrder().joinToString(",")
+        val eurStr = String.format(java.util.Locale.US, "%.4f", prefs.normalizedEurRate())
+        val usdStr = String.format(java.util.Locale.US, "%.4f", prefs.normalizedUsdRate())
+        val encodedSub = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}|$orderCsv|${prefs.normalizedThemeMode()}|$eurStr|$usdStr".take(250)
         return FinancialItem(
             id = "custom_prefs",
             userId = currentUserId,
             itemType = "custom_prefs",
             name = prefs.customTitle.ifBlank { "Masroufi" }.take(80),
-            subtitle = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}|$orderCsv|${prefs.normalizedThemeMode()}",
+            subtitle = encodedSub,
             amount = 0.0,
             secondaryAmount = 0.0,
             dayOrTurn = prefs.toVisibilityMask(),
@@ -1264,8 +1346,13 @@ class MasroufiViewModel(
         val resolvedEnvKey = envelopeKey.ifBlank {
             PayCycleEngine.resolveEnvelopeKey(category, desc, uiState.value.envelopes.map { it.config })
         }
+        var learnedNewCategory = false
         if (type == "expense" && desc.isNotBlank() && resolvedEnvKey.isNotBlank()) {
             PayCycleEngine.learnCategoryForDescription(desc, resolvedEnvKey)
+            learnedNewCategory = true
+        }
+        if (learnedNewCategory) {
+            persistLearnedCategories()
         }
         val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(category, resolvedEnvKey)
         val newTx = TransactionItem(
@@ -1432,6 +1519,7 @@ class MasroufiViewModel(
         val baseTime = System.currentTimeMillis()
         val envConfigs = s.envelopes.map { it.config }
 
+        var learnedAny = false
         val createdTxs = items.mapIndexedNotNull { idx, parsed ->
             val roundedAmt = PayCycleEngine.roundMoney(parsed.amount)
             if (roundedAmt <= 0.0) return@mapIndexedNotNull null
@@ -1440,6 +1528,7 @@ class MasroufiViewModel(
             }
             if (parsed.txType == "expense" && parsed.description.isNotBlank() && resolvedEnvKey.isNotBlank()) {
                 PayCycleEngine.learnCategoryForDescription(parsed.description, resolvedEnvKey)
+                learnedAny = true
             }
             val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(
                 parsed.categoryName,
@@ -1460,6 +1549,9 @@ class MasroufiViewModel(
         }
 
         if (createdTxs.isEmpty()) return emptyList()
+        if (learnedAny) {
+            persistLearnedCategories()
+        }
 
         if (isLocalOnlyUser) {
             val curList = _localTransactions.value ?: s.allTransactions
@@ -1677,7 +1769,7 @@ class MasroufiViewModel(
         val cycleKey = uiState.value.activeWindow.cycleKey
         if (PayCycleEngine.isBillPaidInCycle(bill, cycleKey)) return
         val updatedCycles = (bill.dateOrCycle.split(",").filter { it.isNotBlank() } + cycleKey).distinct().joinToString(",")
-        val updatedBill = bill.copy(dateOrCycle = updatedCycles)
+        val updatedBill = bill.copy(dateOrCycle = updatedCycles, userId = currentUserId)
         val txId = "tx_bill_${bill.id}_$cycleKey"
         val existingTx = uiState.value.allTransactions.find { it.id == txId }
         val tx = TransactionItem(
@@ -1692,6 +1784,13 @@ class MasroufiViewModel(
             isoDate = PayCycleEngine.todayIso(),
             createdAt = existingTx?.createdAt
         )
+        if (isLocalOnlyUser) {
+            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedBill.id }
+            _localItems.value = items + updatedBill
+            val txs = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
+            _localTransactions.value = listOf(tx) + txs
+            return
+        }
         safeLaunch("payRecurringBill") {
             repository.upsertItemAndTransactionAtomically(updatedBill, tx)
         }
@@ -1700,7 +1799,10 @@ class MasroufiViewModel(
     fun contributeToGoalOrSeasonal(item: FinancialItem, addAmount: Double) {
         val roundedAdd = PayCycleEngine.roundMoney(addAmount)
         if (roundedAdd <= 0.0) return
-        val updatedItem = item.copy(secondaryAmount = PayCycleEngine.roundMoney(item.secondaryAmount + roundedAdd))
+        val updatedItem = item.copy(
+            secondaryAmount = PayCycleEngine.roundMoney(item.secondaryAmount + roundedAdd),
+            userId = currentUserId
+        )
         val tx = TransactionItem(
             id = "tx_contrib_${item.id}_${System.currentTimeMillis()}",
             userId = currentUserId,
@@ -1712,6 +1814,13 @@ class MasroufiViewModel(
             desc = item.name,
             isoDate = PayCycleEngine.todayIso()
         )
+        if (isLocalOnlyUser) {
+            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedItem.id }
+            _localItems.value = items + updatedItem
+            val txs = _localTransactions.value ?: uiState.value.allTransactions
+            _localTransactions.value = listOf(tx) + txs
+            return
+        }
         safeLaunch("contributeToGoalOrSeasonal") {
             repository.upsertItemAndTransactionAtomically(updatedItem, tx)
         }
@@ -1720,7 +1829,7 @@ class MasroufiViewModel(
     fun payDaretRound(daret: FinancialItem) {
         val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
         val nextPaid = (daret.extraInt + 1).coerceAtMost(totalMembers)
-        val updatedDaret = daret.copy(extraInt = nextPaid)
+        val updatedDaret = daret.copy(extraInt = nextPaid, userId = currentUserId)
         val txId = "tx_daret_${daret.id}_round_$nextPaid"
         val existingTx = uiState.value.allTransactions.find { it.id == txId }
         val tx = TransactionItem(
@@ -1735,7 +1844,49 @@ class MasroufiViewModel(
             isoDate = PayCycleEngine.todayIso(),
             createdAt = existingTx?.createdAt
         )
+        if (isLocalOnlyUser) {
+            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedDaret.id }
+            _localItems.value = items + updatedDaret
+            val txs = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
+            _localTransactions.value = listOf(tx) + txs
+            return
+        }
         safeLaunch("payDaretRound") {
+            repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
+        }
+    }
+
+    fun collectDaretPot(daret: FinancialItem, targetAccountId: String = "acc_bank") {
+        if (PayCycleEngine.isDaretPotCollected(daret)) return
+        val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+        val totalPot = PayCycleEngine.roundMoney(daret.amount.coerceAtLeast(1.0) * totalMembers)
+        val updatedDaret = PayCycleEngine.markDaretPotCollected(daret).copy(userId = currentUserId)
+        val validAccId = targetAccountId.takeIf {
+            it == "acc_bank" || it == "acc_cash" || uiState.value.accounts.any { acc -> acc.account.id == it }
+        } ?: "acc_bank"
+        val txId = "tx_daret_pot_${daret.id}_turn_${daret.dayOrTurn}"
+        val existingTx = uiState.value.allTransactions.find { it.id == txId }
+        val tx = TransactionItem(
+            id = txId,
+            userId = currentUserId,
+            type = "income",
+            amount = totalPot,
+            category = "epargne",
+            envelopeKey = "epargne",
+            accountId = validAccId,
+            toAccountId = "",
+            desc = "Pot Daret ${daret.name} (Tour ${daret.dayOrTurn}/$totalMembers)".take(250),
+            isoDate = PayCycleEngine.todayIso(),
+            createdAt = existingTx?.createdAt
+        )
+        if (isLocalOnlyUser) {
+            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedDaret.id }
+            _localItems.value = items + updatedDaret
+            val txs = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
+            _localTransactions.value = listOf(tx) + txs
+            return
+        }
+        safeLaunch("collectDaretPot") {
             repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
         }
     }
@@ -1883,15 +2034,30 @@ class MasroufiViewModel(
                 buildCustomPrefsFinancialItem(parsed.customPrefs, _customPrefsItemCreatedAt.value)
             } else null
 
+            if (parsed.learnedCategories.isNotEmpty()) {
+                parsed.learnedCategories.forEach { (k, v) ->
+                    PayCycleEngine.learnCategoryForDescription(k, v)
+                }
+                onLearnedCategoriesUpdated(PayCycleEngine.exportLearnedCategoriesJson())
+            }
+            val learnedRestoreItems = if (parsed.learnedCategories.isNotEmpty()) {
+                listOf(
+                    PayCycleEngine.buildLearnedCategoriesFinancialItem(
+                        userId = currentUserId,
+                        existingCreatedAt = _learnedCategoriesCreatedAt.value
+                    )
+                )
+            } else emptyList()
+
             val accountsWithCreatedAt = parsed.accounts.map { acc ->
                 acc.copy(createdAt = existingAccMap[acc.id])
             }
             val envelopesWithCreatedAt = parsed.envelopes.map { env ->
                 env.copy(createdAt = existingEnvMap[env.id])
             }
-            val itemsWithCreatedAt = parsed.financialItems.map { item ->
-                item.copy(createdAt = existingItemMap[item.id])
-            }
+            val itemsWithCreatedAt = parsed.financialItems
+                .filterNot { it.id == "learned_categories" }
+                .map { item -> item.copy(createdAt = existingItemMap[item.id]) } + learnedRestoreItems
             val txsWithCreatedAt = parsed.transactions.map { tx ->
                 tx.copy(createdAt = existingTxMap[tx.id])
             }

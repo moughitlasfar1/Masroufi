@@ -123,6 +123,10 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".notifications.NotificationActionReceiver"
+            android:exported="false" />
+
         <service
             android:name=".notifications.BankNotificationListenerService"
             android:exported="true"
