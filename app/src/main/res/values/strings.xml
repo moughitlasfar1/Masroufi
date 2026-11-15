@@ -1,7 +1,11 @@
 <resources>
     <string name="app_name">Masroufi</string>
-    <string name="shortcut_quick_add_short">Zid Dépense</string>
-    <string name="shortcut_quick_add_long">Ajouter une dépense rapide</string>
-    <string name="widget_description">Affiche vos dépenses du jour et permet d\'ajouter une dépense en 1 geste ou en Darija.</string>
-    <string name="quick_tile_label">Zid Dépense</string>
+    <string name="shortcut_quick_add_short">Ajouter dépense</string>
+    <string name="shortcut_quick_add_long">Ajout rapide au clavier (5s)</string>
+    <string name="shortcut_voice_short">Moonshine Voix</string>
+    <string name="shortcut_voice_long">Ajout vocal rapide en Darija / FR / AR</string>
+    <string name="widget_description">Widgets intelligents Masroufi : Reste aujourd\'hui, Ajout 1-Tap, Moonshine Voix, Enveloppes, Échéances et Smart Slot.</string>
+    <string name="quick_tile_label">Ajouter dépense</string>
+    <string name="voice_tile_label">Masroufi Voix</string>
+    <string name="safe_today_tile_label">Dispo aujourd\'hui</string>
 </resources>

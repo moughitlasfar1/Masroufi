@@ -656,6 +656,32 @@ fun SettingsBottomSheet(
                         )
                     }
 
+                    var allowQuickCaptureWhenLocked by remember {
+                        mutableStateOf(AppSecurityManager.isQuickCaptureAllowedWhenLocked(context))
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.quickCaptureWhenLockedLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = allowQuickCaptureWhenLocked,
+                            onCheckedChange = { allowed ->
+                                allowQuickCaptureWhenLocked = allowed
+                                AppSecurityManager.setQuickCaptureAllowedWhenLocked(context, allowed)
+                            },
+                            modifier = Modifier.testTag("settings_quick_capture_locked_switch")
+                        )
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -681,6 +707,86 @@ fun SettingsBottomSheet(
                                 onFlagSecureChanged(enabled)
                             },
                             modifier = Modifier.testTag("settings_flag_secure_switch")
+                        )
+                    }
+                }
+            }
+
+            // SECTION 3B: WIDGETS & TUILES RAPIDES (Phase 3)
+            var tileFeedback by remember { mutableStateOf<String?>(null) }
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_widgets_tiles_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = strings.settingsTilesAndWidgetsSection,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                com.example.widget.requestAddMasroufiTile(
+                                    context = context,
+                                    tileServiceClass = com.example.widget.MasroufiVoiceTileService::class.java,
+                                    label = strings.tileVoiceLabel,
+                                    onResultMessage = { tileFeedback = it }
+                                )
+                            },
+                            modifier = Modifier.testTag("settings_add_voice_tile_btn")
+                        ) {
+                            Text(strings.addVoiceTileBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                com.example.widget.requestAddMasroufiTile(
+                                    context = context,
+                                    tileServiceClass = com.example.widget.MasroufiQuickTileService::class.java,
+                                    label = strings.tileKeypadLabel,
+                                    onResultMessage = { tileFeedback = it }
+                                )
+                            },
+                            modifier = Modifier.testTag("settings_add_keypad_tile_btn")
+                        ) {
+                            Text(strings.addKeypadTileBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        FilledTonalButton(
+                            onClick = {
+                                com.example.widget.requestAddMasroufiTile(
+                                    context = context,
+                                    tileServiceClass = com.example.widget.MasroufiSafeTodayTileService::class.java,
+                                    label = strings.tileLeftTodayLabel,
+                                    onResultMessage = { tileFeedback = it }
+                                )
+                            },
+                            modifier = Modifier.testTag("settings_add_safe_tile_btn")
+                        ) {
+                            Text(strings.addSafeTodayTileBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (!tileFeedback.isNullOrBlank()) {
+                        Text(
+                            text = tileFeedback!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }

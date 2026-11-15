@@ -202,6 +202,18 @@ object AppSecurityManager {
     }
 
     /**
+     * Phase 2 App Lock setting for QuickCaptureActivity:
+     * When true (default), allows write-only quick expense capture (showing zero balances)
+     * without requiring biometric/PIN unlock first. When false, requires unlock first.
+     */
+    fun isQuickCaptureAllowedWhenLocked(context: Context): Boolean =
+        prefs(context).getBoolean("sec_quick_capture_when_locked", true)
+
+    fun setQuickCaptureAllowedWhenLocked(context: Context, allowed: Boolean) {
+        prefs(context).edit().putBoolean("sec_quick_capture_when_locked", allowed).apply()
+    }
+
+    /**
      * SEC-05: Clear local Firestore cache on sign-out defaults to true so shared devices
      * never retain unencrypted cached transactions after sign-out.
      */

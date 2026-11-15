@@ -1,6 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut
+        android:shortcutId="quick_voice_capture"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher_round"
+        android:shortcutShortLabel="@string/shortcut_voice_short"
+        android:shortcutLongLabel="@string/shortcut_voice_long">
+        <intent
+            android:action="com.aistudio.masroufi.ACTION_QUICK_VOICE"
+            android:targetPackage="com.aistudio.masroufi.kxmpzq"
+            android:targetClass="com.example.widget.QuickCaptureActivity" />
+    </shortcut>
+    <shortcut
         android:shortcutId="quick_add_expense"
         android:enabled="true"
         android:icon="@mipmap/ic_launcher_round"
@@ -9,6 +20,6 @@
         <intent
             android:action="com.aistudio.masroufi.ACTION_QUICK_ADD"
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
-            android:targetClass="com.example.MainActivity" />
+            android:targetClass="com.example.widget.QuickCaptureActivity" />
     </shortcut>
 </shortcuts>

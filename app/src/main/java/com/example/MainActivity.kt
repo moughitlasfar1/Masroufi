@@ -330,10 +330,12 @@ class MainActivity : FragmentActivity() {
         initFirestoreOfflineCache()
         val launchedFromQuickAdd = intent?.action == MasroufiAppWidget.ACTION_QUICK_ADD
         val launchedFromQuickVoice = intent?.action == MasroufiAppWidget.ACTION_QUICK_VOICE
+        val targetTabExtra = intent?.getStringExtra(MasroufiAppWidget.EXTRA_TARGET_TAB).orEmpty()
         setContent {
             AppNavigation(
                 openQuickAddOnLaunch = launchedFromQuickAdd || launchedFromQuickVoice,
-                openQuickVoiceOnLaunch = launchedFromQuickVoice
+                openQuickVoiceOnLaunch = launchedFromQuickVoice,
+                initialTargetTab = targetTabExtra
             )
         }
     }
@@ -355,7 +357,8 @@ class MainActivity : FragmentActivity() {
 fun AppNavigation(
     auth: FirebaseAuth? = null,
     openQuickAddOnLaunch: Boolean = false,
-    openQuickVoiceOnLaunch: Boolean = false
+    openQuickVoiceOnLaunch: Boolean = false,
+    initialTargetTab: String = ""
 ) {
     val context = LocalContext.current
     val resolvedAuth = remember(auth, context) {
@@ -387,7 +390,8 @@ fun AppNavigation(
                 localModeEnabled = false
             },
             openQuickAddOnLaunch = openQuickAddOnLaunch,
-            openQuickVoiceOnLaunch = openQuickVoiceOnLaunch
+            openQuickVoiceOnLaunch = openQuickVoiceOnLaunch,
+            initialTargetTab = initialTargetTab
         )
     }
 }
@@ -399,7 +403,8 @@ fun MainFeatureScreen(
     isLocalMode: Boolean = currentUserId == LOCAL_DEVICE_USER_ID,
     onExitLocalModeToGoogleSignIn: () -> Unit = {},
     openQuickAddOnLaunch: Boolean = false,
-    openQuickVoiceOnLaunch: Boolean = false
+    openQuickVoiceOnLaunch: Boolean = false,
+    initialTargetTab: String = ""
 ) {
     val viewModel: MasroufiViewModel = viewModel(
         key = currentUserId,
@@ -444,33 +449,29 @@ fun MainFeatureScreen(
         viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
     }
 
-    // Sync Home-Screen Widget, Quick Settings Tile & WorkManager Smart Notifications whenever DashboardState updates
+    // Sync Home-Screen Widget (full WidgetSnapshot), Quick Settings Tiles & WorkManager Smart Notifications whenever DashboardState updates
     LaunchedEffect(
         state.cycleTransactions,
         state.safeToSpendToday,
         state.customPrefs.currencySymbol,
+        state.customPrefs.accentPalette,
         state.hideAmounts,
         state.profile.language,
+        state.profile.isDarkTheme,
         state.smartReminders,
-        state.envelopes
+        state.envelopes,
+        state.goals,
+        state.presets,
+        state.weekDaysSpend
     ) {
-        val todayIso = PayCycleEngine.todayIso()
-        val todaySpend = state.cycleTransactions
-            .filter { it.type == "expense" && it.isoDate == todayIso }
-            .sumOf { it.amount }
-        MasroufiWidgetStore.saveSnapshot(
-            context = context,
-            todaySpend = todaySpend,
-            safeToSpendToday = state.safeToSpendToday,
-            currencySymbol = state.customPrefs.currencySymbol.ifBlank { "DH" },
-            hideAmounts = state.hideAmounts,
-            language = state.profile.language
-        )
+        MasroufiWidgetStore.saveFullSnapshot(context, state)
         MasroufiNotificationManager.syncStateAndScheduleWork(context, state)
     }
 
-    // Phase 4: Migrate saved last tab ("mois" -> Insights / Month)
-    val rawInitialTab = remember { AppSecurityManager.getLastActiveTab(context) }
+    // Phase 4: Migrate saved last tab ("mois" -> Insights / Month), or jump to widget EXTRA_TARGET_TAB
+    val rawInitialTab = remember {
+        initialTargetTab.takeIf { it in MAIN_TAB_KEYS } ?: AppSecurityManager.getLastActiveTab(context)
+    }
     val migratedTabAndSub = remember(rawInitialTab) { resolveSavedTabMigration(rawInitialTab) }
     val initialTabKey = migratedTabAndSub.first
     var insightsSubTab by remember { mutableStateOf(migratedTabAndSub.second) }
@@ -554,6 +555,24 @@ fun MainFeatureScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && AppSecurityManager.isAppLockEnabled(context)) {
                 isSessionUnlocked = false
+            }
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val pendingQuickTxs = MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context)
+                if (pendingQuickTxs.isNotEmpty()) {
+                    val existingIds = viewModel.uiState.value.allTransactions.map { it.id }.toSet()
+                    pendingQuickTxs.filter { it.id !in existingIds }.forEach { tx ->
+                        viewModel.saveTransaction(
+                            existingId = tx.id,
+                            type = tx.type,
+                            amount = tx.amount,
+                            category = tx.category,
+                            envelopeKey = tx.envelopeKey,
+                            accountId = tx.accountId,
+                            desc = tx.desc,
+                            isoDate = tx.isoDate
+                        )
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

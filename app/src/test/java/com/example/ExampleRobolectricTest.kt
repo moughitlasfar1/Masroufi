@@ -1084,6 +1084,144 @@ class ExampleRobolectricTest {
         ) as com.example.domain.VoiceBatchParseResult.BudgetQuery
         assertTrue(maskedQa.displayValue.contains("••••"))
     }
+
+    @Test
+    fun `smart widgets, midnight rollover, SmartSlotEngine priority rules 1 to 5, quick capture undo, and per-widget style persistence work accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // 1. Phase 1: Midnight rollover resets todaySpend to 0.0 and recomputes safeToSpendToday when date advances
+        val yesterdaySnapshot = com.example.widget.WidgetSnapshot(
+            snapshotDateIso = "2026-05-10",
+            todaySpend = 120.0,
+            safeToSpendToday = 100.0,
+            remainingBudget = 1400.0,
+            daysRemainingInCycle = 15,
+            currencySymbol = "DH",
+            language = "fr"
+        )
+        assertEquals(120.0, yesterdaySnapshot.effectiveTodaySpend("2026-05-10"), 0.01)
+        assertEquals(0.0, yesterdaySnapshot.effectiveTodaySpend("2026-05-11"), 0.01)
+
+        val rolledOver = yesterdaySnapshot.withMidnightRolloverIfNeeded("2026-05-11")
+        assertEquals("2026-05-11", rolledOver.snapshotDateIso)
+        assertEquals(0.0, rolledOver.todaySpend, 0.01)
+        assertEquals(14, rolledOver.daysRemainingInCycle)
+        assertEquals(100.0, rolledOver.safeToSpendToday, 0.01) // 1400 / 14 days = 100 DH/day
+
+        // 2. Phase 7: Pure SmartSlotEngine priority rules 1 through 5
+        val baseSmartSnap = com.example.widget.WidgetSnapshot(
+            snapshotDateIso = "2026-05-11",
+            todaySpend = 45.0,
+            safeToSpendToday = 150.0,
+            remainingBudget = 2100.0,
+            cycleExpenses = 1900.0,
+            totalAvailableBudget = 4000.0,
+            daysRemainingInCycle = 14,
+            alertLevel = "NONE",
+            language = "fr",
+            currencySymbol = "DH"
+        )
+
+        // Priority 1: Bill or Daret due within 2 days
+        val snapWithUrgentBill = baseSmartSnap.copy(
+            reminders = listOf(
+                com.example.widget.WidgetReminderItem(
+                    id = "rem_1",
+                    itemId = "b_1",
+                    kind = "bill",
+                    title = "Fibre Orange",
+                    subtitle = "Échéance J-1",
+                    amount = 249.0,
+                    dueDay = 12,
+                    dueWithinDays = 1,
+                    actionLabel = "Payé"
+                )
+            ),
+            envelopes = listOf(
+                com.example.widget.WidgetEnvelopeItem(
+                    key = "cafe",
+                    name = "Café",
+                    spent = 950.0,
+                    totalAvailable = 1000.0,
+                    usagePercent = 95,
+                    hasCap = true,
+                    isOver90Percent = true
+                )
+            ),
+            alertLevel = "RED"
+        )
+        val p1 = com.example.widget.SmartSlotEngine.resolveSmartSlot(snapWithUrgentBill, currentHourOfDay = 10, nowIso = "2026-05-11")
+        assertEquals(1, p1.priorityRank)
+        assertTrue(p1.headlineValue.contains("Fibre Orange"))
+        assertEquals("categories", p1.targetTabKey)
+
+        // Priority 2: Envelope >= 90% when no bill is due within 2 days
+        val snapWithOver90Env = snapWithUrgentBill.copy(reminders = emptyList())
+        val p2 = com.example.widget.SmartSlotEngine.resolveSmartSlot(snapWithOver90Env, currentHourOfDay = 10, nowIso = "2026-05-11")
+        assertEquals(2, p2.priorityRank)
+        assertTrue(p2.headlineValue.contains("95%"))
+        assertEquals("categories", p2.targetTabKey)
+
+        // Priority 3: High projection alert (RED or AMBER) when no urgent bill or >=90% envelope
+        val snapWithProjectionAlert = baseSmartSnap.copy(
+            alertLevel = "AMBER",
+            monthEndForecastMessage = "Rythme élevé en fin de cycle"
+        )
+        val p3 = com.example.widget.SmartSlotEngine.resolveSmartSlot(snapWithProjectionAlert, currentHourOfDay = 10, nowIso = "2026-05-11")
+        assertEquals(3, p3.priorityRank)
+        assertEquals("semaine", p3.targetTabKey)
+
+        // Priority 4: Morning (< 17h) -> Left Today (Safe to spend)
+        val p4Morning = com.example.widget.SmartSlotEngine.resolveSmartSlot(baseSmartSnap, currentHourOfDay = 9, nowIso = "2026-05-11")
+        assertEquals(4, p4Morning.priorityRank)
+        assertTrue(p4Morning.headlineValue.contains("150"))
+        assertEquals("vue", p4Morning.targetTabKey)
+
+        // Priority 5: Evening (>= 17h) -> Spent Today
+        val p5Evening = com.example.widget.SmartSlotEngine.resolveSmartSlot(baseSmartSnap, currentHourOfDay = 19, nowIso = "2026-05-11")
+        assertEquals(5, p5Evening.priorityRank)
+        assertTrue(p5Evening.headlineValue.contains("45"))
+
+        // 3. Phase 4: Per-widget style persistence & privacy modes
+        val customStyle = com.example.widget.WidgetStyle(
+            appWidgetId = 77,
+            widgetKind = com.example.widget.WidgetKind.ENVELOPES,
+            themeMode = "accent",
+            glassEnabled = true,
+            glassOpacityLevel = 4,
+            density = "compact",
+            privacyMode = "always_hide",
+            onlyOver90Envelopes = true
+        )
+        com.example.widget.MasroufiWidgetStore.saveWidgetStyle(context, customStyle)
+        val loadedStyle = com.example.widget.MasroufiWidgetStore.loadWidgetStyle(context, 77)
+        assertEquals(com.example.widget.WidgetKind.ENVELOPES, loadedStyle.widgetKind)
+        assertEquals(4, loadedStyle.glassOpacityLevel)
+        assertEquals("compact", loadedStyle.density)
+        assertTrue(loadedStyle.shouldMaskAmounts(snapshotHideAmounts = false, appLockEnabled = false))
+
+        // 4. Phase 2: Quick Capture multi-expense batch recording & 5-second Undo
+        val todayIso = PayCycleEngine.todayIso()
+        com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(
+            context,
+            baseSmartSnap.copy(snapshotDateIso = todayIso, todaySpend = 20.0, remainingBudget = 1400.0, daysRemainingInCycle = 10)
+        )
+        val batchItems = com.example.domain.VoiceDarijaParser.parseMultiExpenses("9ahwa 15 w taxi 25", emptyList(), "darija")
+        assertEquals(2, batchItems.size)
+
+        val recordedTxs = com.example.widget.MasroufiWidgetStore.recordQuickCaptureTransactions(context, batchItems)
+        assertEquals(2, recordedTxs.size)
+        val afterRecordSnap = com.example.widget.MasroufiWidgetStore.loadSnapshot(context, todayIso)
+        assertEquals(60.0, afterRecordSnap.todaySpend, 0.01) // 20 + 15 + 25 = 60 DH
+
+        // Undo batch restores previous todaySpend and removes from pending queue
+        com.example.widget.MasroufiWidgetStore.undoQuickCaptureBatch(context, recordedTxs)
+        val afterUndoSnap = com.example.widget.MasroufiWidgetStore.loadSnapshot(context, todayIso)
+        assertEquals(20.0, afterUndoSnap.todaySpend, 0.01)
+        val drainedAfterUndo = com.example.widget.MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context)
+        assertTrue(drainedAfterUndo.none { it.id in recordedTxs.map { r -> r.id } })
+    }
 }
+
 
 

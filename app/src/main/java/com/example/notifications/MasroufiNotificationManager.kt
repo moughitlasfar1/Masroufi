@@ -364,11 +364,15 @@ object MasroufiNotificationManager {
     ) {
         if (!hasNotificationPermission(context)) return
         runCatching {
-            val intent = Intent(context, MainActivity::class.java).apply {
-                if (openQuickAdd) {
+            val intent = if (openQuickAdd) {
+                Intent(context, com.example.widget.QuickCaptureActivity::class.java).apply {
                     action = MasroufiAppWidget.ACTION_QUICK_ADD
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            } else {
+                Intent(context, MainActivity::class.java).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
             }
             val pendingIntent = PendingIntent.getActivity(
                 context,
@@ -397,6 +401,9 @@ class MasroufiNotificationWorker(
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
+        // Also normalize midnight rollover and refresh widgets & tiles every 6 hours
+        val snapshot = com.example.widget.MasroufiWidgetStore.loadSnapshot(applicationContext)
+        com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(applicationContext, snapshot)
         MasroufiNotificationManager.evaluateAndPostNotifications(applicationContext)
         return Result.success()
     }
