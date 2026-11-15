@@ -1221,7 +1221,259 @@ class ExampleRobolectricTest {
         val drainedAfterUndo = com.example.widget.MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context)
         assertTrue(drainedAfterUndo.none { it.id in recordedTxs.map { r -> r.id } })
     }
+
+    @Test
+    fun `phase 9 quick capture notification, phase 10 bank notification parser and store, and phase 11 voice launcher alias work accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // --- PHASE 9: QuickCaptureNotification ---
+        context.getSharedPreferences("masroufi_quick_capture_notif_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        assertFalse(com.example.notifications.QuickCaptureNotification.isEnabled(context))
+        assertTrue(com.example.notifications.QuickCaptureNotification.isShowLeftTodayEnabled(context))
+        assertFalse(com.example.notifications.QuickCaptureNotification.isShowLockScreenAmountsEnabled(context))
+        assertFalse(com.example.notifications.QuickCaptureNotification.isQuietHoursEnabled(context))
+
+        // Quiet hours window (22h -> 07h)
+        assertTrue(com.example.notifications.QuickCaptureNotification.isHourInQuietWindow(23, 22, 7))
+        assertTrue(com.example.notifications.QuickCaptureNotification.isHourInQuietWindow(2, 22, 7))
+        assertFalse(com.example.notifications.QuickCaptureNotification.isHourInQuietWindow(8, 22, 7))
+        assertFalse(com.example.notifications.QuickCaptureNotification.isHourInQuietWindow(21, 22, 7))
+
+        val qcSnap = com.example.widget.WidgetSnapshot(
+            snapshotDateIso = PayCycleEngine.todayIso(),
+            todaySpend = 50.0,
+            safeToSpendToday = 180.0,
+            currencySymbol = "DH",
+            hideAmounts = false,
+            language = "fr",
+            presets = listOf(com.example.widget.WidgetPresetItem("p1", "Café", 15.0, "cafe"))
+        )
+        com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(context, qcSnap)
+
+        // When POST_NOTIFICATIONS is not granted on Android 13+, enabling switches back off cleanly
+        org.robolectric.Shadows.shadowOf(context as android.app.Application)
+            .denyPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        com.example.notifications.QuickCaptureNotification.setEnabled(context, true)
+        assertFalse(com.example.notifications.QuickCaptureNotification.isEnabled(context))
+
+        // Grant POST_NOTIFICATIONS and enable
+        org.robolectric.Shadows.shadowOf(context)
+            .grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        com.example.notifications.QuickCaptureNotification.setEnabled(context, true)
+        assertTrue(com.example.notifications.QuickCaptureNotification.isEnabled(context))
+        com.example.notifications.QuickCaptureNotification.setSelectedPresetId(context, "p1")
+        val specDefaultLock = com.example.notifications.QuickCaptureNotification.buildSpec(context, currentHourOfDay = 10)
+        assertNotNull(specDefaultLock)
+        assertEquals(androidx.core.app.NotificationCompat.VISIBILITY_PRIVATE, specDefaultLock!!.visibility)
+        assertTrue(specDefaultLock.bodyText.contains("180"))
+        assertTrue(specDefaultLock.actionLabels.any { it.contains("Café") })
+
+        // When hideAmounts is on, amounts are masked in QuickCaptureNotification
+        com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(context, qcSnap.copy(hideAmounts = true))
+        val specMasked = com.example.notifications.QuickCaptureNotification.buildSpec(context, currentHourOfDay = 10)
+        assertNotNull(specMasked)
+        assertTrue(specMasked!!.bodyText.contains("••••"))
+
+        // When lock-screen amounts toggle is explicitly enabled and hideAmounts is off -> VISIBILITY_PUBLIC
+        com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(context, qcSnap.copy(hideAmounts = false))
+        com.example.notifications.QuickCaptureNotification.setShowLockScreenAmountsEnabled(context, true)
+        val specPublicLock = com.example.notifications.QuickCaptureNotification.buildSpec(context, currentHourOfDay = 10)
+        assertNotNull(specPublicLock)
+        assertEquals(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC, specPublicLock!!.visibility)
+
+        // --- PHASE 10C: Pure Kotlin BankMessageParser (FR, AR, EN, OTP discard, formats) ---
+        // 1. OTP / security code messages must be discarded first
+        assertTrue(
+            com.example.domain.BankMessageParser.isOtpOrSecurityCodeMessage(
+                "Votre code de sécurité 3D Secure pour valider votre paiement de 250.00 MAD est 482910"
+            )
+        )
+        assertNull(
+            com.example.domain.BankMessageParser.parse(
+                rawTitle = "CIH Bank",
+                rawBody = "Code OTP: 839201 pour opération de 500 MAD",
+                sourcePackage = "com.cih.bank",
+                isoDate = "2026-05-11"
+            )
+        )
+
+        // 2. French debit notification with thousand space separator ("1 234,50 MAD") and merchant ("chez Marjane")
+        val frDebit = com.example.domain.BankMessageParser.parse(
+            rawTitle = "Attijariwafa",
+            rawBody = "Paiement par carte de 1 234,50 MAD chez MARJANE CALIFORNIE le 11/05",
+            sourcePackage = "com.attijari.mobile",
+            isoDate = "2026-05-11"
+        )
+        assertNotNull(frDebit)
+        assertEquals(1234.50, frDebit!!.amount, 0.01)
+        assertEquals("expense", frDebit.direction)
+        assertTrue(frDebit.merchant.contains("MARJANE", ignoreCase = true))
+        assertEquals("charges", frDebit.suggestedEnvelopeKey)
+        assertFalse(frDebit.needsReview)
+
+        // 3. European dot thousand separator ("1.234,50 DH") credit notification
+        val frCredit = com.example.domain.BankMessageParser.parse(
+            rawTitle = "Banque Populaire",
+            rawBody = "Virement reçu de 1.234,50 DH sur votre compte",
+            sourcePackage = "com.bp.pocketbank",
+            isoDate = "2026-05-11"
+        )
+        assertNotNull(frCredit)
+        assertEquals(1234.50, frCredit!!.amount, 0.01)
+        assertEquals("income", frCredit.direction)
+
+        // 4. Arabic notification with Arabic-Indic digits ("١٢٠.٥٠ درهم") and merchant ("لدى مقهى أرابيكا")
+        val arDebit = com.example.domain.BankMessageParser.parse(
+            rawTitle = "بريد بنك",
+            rawBody = "عملية أداء بمبلغ ١٢٠.٥٠ درهم لدى مقهى أرابيكا",
+            sourcePackage = "ma.baridbank.mobile",
+            isoDate = "2026-05-11"
+        )
+        assertNotNull(arDebit)
+        assertEquals(120.50, arDebit!!.amount, 0.01)
+        assertEquals("expense", arDebit.direction)
+        assertTrue(arDebit.merchant.contains("مقهى"))
+
+        // 5. English notification with missing merchant -> needsReview = true
+        val enNoMerchant = com.example.domain.BankMessageParser.parse(
+            rawTitle = "CFG Bank",
+            rawBody = "Card purchase of 85.00 MAD completed.",
+            sourcePackage = "com.cfgbank.app",
+            isoDate = "2026-05-11"
+        )
+        assertNotNull(enNoMerchant)
+        assertEquals(85.0, enNoMerchant!!.amount, 0.01)
+        assertEquals("expense", enNoMerchant.direction)
+        assertTrue(enNoMerchant.needsReview)
+
+        // 6. Masked sample helper replaces digits with 'X'
+        val maskedSample = com.example.domain.BankMessageParser.maskSampleText(
+            "Paiement carte 9876 de 145,00 MAD chez Carrefour"
+        )
+        assertFalse(maskedSample.contains("9876"))
+        assertFalse(maskedSample.contains("145"))
+        assertTrue(maskedSample.contains("XXXX"))
+
+        // 7. Duplicate detection within ±10 minutes of a manual transaction
+        val nowMs = System.currentTimeMillis()
+        val manualTxs = listOf(
+            TransactionItem(
+                id = "tx_man_1",
+                type = "expense",
+                amount = 145.0,
+                category = "Marché",
+                envelopeKey = "marche",
+                desc = "Carrefour",
+                isoDate = "2026-05-11",
+                createdAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 3 * 60_000L))
+            )
+        )
+        val matchedManual = com.example.domain.BankMessageParser.findRecentManualMatch(
+            amount = 145.0,
+            direction = "expense",
+            isoDate = "2026-05-11",
+            allTransactions = manualTxs,
+            nowMs = nowMs
+        )
+        assertNotNull(matchedManual)
+        assertEquals("tx_man_1", matchedManual!!.id)
+
+        // --- PHASE 10A & 10D: BankDetectionStore allowlist, cap (40), 14-day expiry, kill switches, SmartSlot ---
+        context.getSharedPreferences("masroufi_bank_detection_prefs", Context.MODE_PRIVATE).edit().clear().commit()
+        // Allowlist starts empty
+        assertTrue(com.example.notifications.BankDetectionStore.getAllowedPackages(context).isEmpty())
+
+        // Non-allowlisted package is ignored
+        assertNull(
+            com.example.notifications.BankDetectionStore.processIncomingNotification(
+                context = context,
+                sourcePackage = "com.untrusted.app",
+                rawTitle = "Alert",
+                rawBody = "Paiement par carte de 90 MAD chez Marjane"
+            )
+        )
+
+        // Add package to allowlist and ingest
+        com.example.notifications.BankDetectionStore.setPackageAllowed(context, "com.cih.bank", true)
+        val ingested = com.example.notifications.BankDetectionStore.processIncomingNotification(
+            context = context,
+            sourcePackage = "com.cih.bank",
+            rawTitle = "CIH Bank",
+            rawBody = "Paiement par carte de 90 MAD chez Marjane",
+            notificationKey = "n1",
+            nowMillis = nowMs
+        )
+        assertNotNull(ingested)
+        assertEquals(1, com.example.notifications.BankDetectionStore.loadPendingItems(context, nowMs).size)
+
+        // Dedupe hash blocks identical notification with the same key
+        val duplicateIngest = com.example.notifications.BankDetectionStore.processIncomingNotification(
+            context = context,
+            sourcePackage = "com.cih.bank",
+            rawTitle = "CIH Bank",
+            rawBody = "Paiement par carte de 90 MAD chez Marjane",
+            notificationKey = "n1",
+            nowMillis = nowMs + 10_000L
+        )
+        assertNull(duplicateIngest)
+        assertEquals(1, com.example.notifications.BankDetectionStore.loadPendingItems(context, nowMs).size)
+
+        // 14-day expiry removes stale items automatically
+        val fifteenDaysLaterMs = nowMs + 15L * 24L * 3600_000L
+        assertEquals(0, com.example.notifications.BankDetectionStore.loadPendingItems(context, fifteenDaysLaterMs).size)
+
+        // 40-item cap enforcement
+        for (i in 1..45) {
+            com.example.notifications.BankDetectionStore.processIncomingNotification(
+                context = context,
+                sourcePackage = "com.cih.bank",
+                rawTitle = "CIH Bank",
+                rawBody = "Paiement par carte de ${10 + i} MAD chez Marchand_$i",
+                notificationKey = "n_batch_$i",
+                nowMillis = nowMs + i * 1000L
+            )
+        }
+        assertEquals(
+            com.example.notifications.BankDetectionStore.MAX_PENDING_ITEMS,
+            com.example.notifications.BankDetectionStore.loadPendingItems(context, nowMs + 60_000L).size
+        )
+
+        // SmartSlot Rule 1B (between Rule 1 and Rule 2): 3+ pending items or oldest > 24h
+        val snapWithPendingDetections = qcSnap.copy(
+            snapshotDateIso = "2026-05-11",
+            pendingDetectionsCount = 3,
+            oldestPendingDetectionHours = 2,
+            envelopes = listOf(
+                com.example.widget.WidgetEnvelopeItem(
+                    key = "cafe",
+                    name = "Café",
+                    spent = 950.0,
+                    totalAvailable = 1000.0,
+                    usagePercent = 95,
+                    hasCap = true,
+                    isOver90Percent = true
+                )
+            )
+        )
+        val smartSlotPending = com.example.widget.SmartSlotEngine.resolveSmartSlot(
+            snapWithPendingDetections,
+            currentHourOfDay = 10,
+            nowIso = "2026-05-11"
+        )
+        assertEquals(
+            com.example.widget.SmartSlotReason.PENDING_BANK_DETECTIONS,
+            smartSlotPending.reason
+        )
+
+        // Kill switch: Delete all detected data clears pending queue
+        com.example.notifications.BankDetectionStore.deleteAllDetectedData(context)
+        assertEquals(0, com.example.notifications.BankDetectionStore.loadPendingItems(context).size)
+
+        // --- PHASE 11A: VoiceLauncherAliasManager ---
+        assertFalse(com.example.notifications.VoiceLauncherAliasManager.isVoiceAliasEnabled(context))
+        com.example.notifications.VoiceLauncherAliasManager.setVoiceAliasEnabled(context, true)
+        assertTrue(com.example.notifications.VoiceLauncherAliasManager.isVoiceAliasEnabled(context))
+        com.example.notifications.VoiceLauncherAliasManager.setVoiceAliasEnabled(context, false)
+        assertFalse(com.example.notifications.VoiceLauncherAliasManager.isVoiceAliasEnabled(context))
+    }
 }
-
-
-

@@ -10,6 +10,11 @@
             android:action="com.aistudio.masroufi.ACTION_QUICK_VOICE"
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
             android:targetClass="com.example.widget.QuickCaptureActivity" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
+            <parameter-binding
+                android:key="feature"
+                android:value="voice_expense" />
+        </capability-binding>
     </shortcut>
     <shortcut
         android:shortcutId="quick_add_expense"
@@ -22,4 +27,15 @@
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
             android:targetClass="com.example.widget.QuickCaptureActivity" />
     </shortcut>
+
+    <capability android:name="actions.intent.OPEN_APP_FEATURE">
+        <intent
+            android:action="com.aistudio.masroufi.ACTION_QUICK_VOICE"
+            android:targetPackage="com.aistudio.masroufi.kxmpzq"
+            android:targetClass="com.example.widget.QuickCaptureActivity">
+            <Parameter
+                android:name="feature"
+                android:key="feature" />
+        </intent>
+    </capability>
 </shortcuts>

@@ -8,4 +8,5 @@
     <string name="quick_tile_label">Ajouter dépense</string>
     <string name="voice_tile_label">Masroufi Voix</string>
     <string name="safe_today_tile_label">Dispo aujourd\'hui</string>
+    <string name="voice_launcher_alias_label">Masroufi Voice</string>
 </resources>

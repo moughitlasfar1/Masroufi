@@ -150,7 +150,9 @@ fun OverviewScreen(
     onDismissDetectedSubscription: (DetectedSubscription) -> Unit = {},
     onShareText: (String) -> Unit = {},
     onEditTransaction: (TransactionItem) -> Unit = {},
-    onSeeAllTransactions: () -> Unit = {}
+    onSeeAllTransactions: () -> Unit = {},
+    pendingBankDetectionsCount: Int = 0,
+    onOpenBankDetections: () -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val lang = state.profile.language
@@ -253,6 +255,45 @@ fun OverviewScreen(
                 strings = strings,
                 onToggleHideAmounts = onToggleHideAmounts
             )
+        }
+
+        if (pendingBankDetectionsCount > 0) {
+            item(key = "pending_bank_detections_chip_item") {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .clickable { onOpenBankDetections() }
+                        .testTag("pending_bank_detections_chip")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.bankDetectPendingChipFmt.replace(
+                                "{count}",
+                                pendingBankDetectionsCount.toString()
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = strings.bankDetectConfirmBtn,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
         }
 
         item(key = "home_recent_transactions") {

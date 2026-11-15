@@ -210,6 +210,7 @@ sealed interface ActiveSheet {
     data object QuickOnboarding : ActiveSheet
     data object RestoreBackup : ActiveSheet
     data object SplitBill : ActiveSheet
+    data object BankDetections : ActiveSheet
 }
 private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
 private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
@@ -444,9 +445,12 @@ fun MainFeatureScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Restore persistent privacy mask
+    val pendingBankDetections by com.example.notifications.BankDetectionStore.pendingItemsFlow.collectAsStateWithLifecycle()
+
+    // Restore persistent privacy mask & load pending bank detections
     LaunchedEffect(Unit) {
         viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
+        com.example.notifications.BankDetectionStore.loadPendingItems(context)
     }
 
     // Sync Home-Screen Widget (full WidgetSnapshot), Quick Settings Tiles & WorkManager Smart Notifications whenever DashboardState updates
@@ -557,6 +561,7 @@ fun MainFeatureScreen(
                 isSessionUnlocked = false
             }
             if (event == Lifecycle.Event.ON_RESUME) {
+                com.example.notifications.BankDetectionStore.loadPendingItems(context)
                 val pendingQuickTxs = MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context)
                 if (pendingQuickTxs.isNotEmpty()) {
                     val existingIds = viewModel.uiState.value.allTransactions.map { it.id }.toSet()
@@ -1052,6 +1057,10 @@ fun MainFeatureScreen(
                                             scope.launch {
                                                 pagerState.animateScrollToPage(3)
                                             }
+                                        },
+                                        pendingBankDetectionsCount = pendingBankDetections.size,
+                                        onOpenBankDetections = {
+                                            activeSheet = ActiveSheet.BankDetections
                                         }
                                     )
 
@@ -1469,6 +1478,9 @@ fun MainFeatureScreen(
                         pendingRestoreRawContent = ""
                         activeSheet = ActiveSheet.RestoreBackup
                     },
+                    onOpenBankDetections = {
+                        activeSheet = ActiveSheet.BankDetections
+                    },
                     onSignOut = {
                         setLocalModeEnabled(context, false)
                         signOutUser(
@@ -1477,6 +1489,61 @@ fun MainFeatureScreen(
                             scope = scope
                         )
                     }
+                )
+
+                ActiveSheet.BankDetections -> com.example.ui.BankDetectionReviewSheet(
+                    state = state,
+                    strings = strings,
+                    pendingItems = pendingBankDetections,
+                    onConfirmDetection = { item ->
+                        com.example.notifications.BankDetectionStore.removePendingItem(context, item.id)
+                        viewModel.saveTransaction(
+                            existingId = "tx_${System.currentTimeMillis()}",
+                            type = item.direction,
+                            amount = item.amount,
+                            category = item.suggestedCategoryName,
+                            envelopeKey = item.suggestedEnvelopeKey,
+                            accountId = "acc_bank",
+                            desc = item.merchant.ifBlank { item.suggestedCategoryName },
+                            isoDate = item.isoDate
+                        )
+                        scope.launch {
+                            snackbarHostState.showSnackbar("✓ ${item.merchant.ifBlank { item.suggestedCategoryName }}")
+                        }
+                    },
+                    onEditDetection = { item ->
+                        com.example.notifications.BankDetectionStore.removePendingItem(context, item.id)
+                        val prefilled = TransactionItem(
+                            id = "tx_${System.currentTimeMillis()}",
+                            type = item.direction,
+                            amount = item.amount,
+                            category = item.suggestedCategoryName,
+                            envelopeKey = item.suggestedEnvelopeKey,
+                            accountId = "acc_bank",
+                            desc = item.merchant.ifBlank { item.suggestedCategoryName },
+                            isoDate = item.isoDate
+                        )
+                        activeSheet = ActiveSheet.AddOrEditTransaction(
+                            existingTx = prefilled,
+                            initialType = prefilled.type,
+                            autoLaunchVoice = false
+                        )
+                    },
+                    onIgnoreDetection = { item ->
+                        com.example.notifications.BankDetectionStore.removePendingItem(context, item.id)
+                    },
+                    onAlwaysIgnoreMerchant = { item ->
+                        com.example.notifications.BankDetectionStore.addIgnoredMerchant(context, item.merchant)
+                    },
+                    onRefreshPending = {
+                        com.example.notifications.BankDetectionStore.loadPendingItems(context)
+                    },
+                    onShowMessage = { msg ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar(msg)
+                        }
+                    },
+                    onDismiss = { activeSheet = ActiveSheet.None }
                 )
 
                 ActiveSheet.CustomizationStudio -> CustomizationStudioSheet(

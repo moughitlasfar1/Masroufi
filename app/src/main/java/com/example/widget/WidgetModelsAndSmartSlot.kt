@@ -156,6 +156,8 @@ data class WidgetSnapshot(
     val currencySymbol: String = "DH",
     val accentPalette: String = "majorelle",
     val isDarkTheme: Boolean = false,
+    val pendingDetectionsCount: Int = 0,
+    val oldestPendingDetectionHours: Int = 0,
     val updatedAtMillis: Long = System.currentTimeMillis()
 ) {
     /**
@@ -204,6 +206,8 @@ data class WidgetSnapshot(
         put("currencySymbol", currencySymbol)
         put("accentPalette", accentPalette)
         put("isDarkTheme", isDarkTheme)
+        put("pendingDetectionsCount", pendingDetectionsCount)
+        put("oldestPendingDetectionHours", oldestPendingDetectionHours)
         put("updatedAtMillis", updatedAtMillis)
 
         put("envelopes", JSONArray().apply {
@@ -473,6 +477,8 @@ data class WidgetSnapshot(
                 currencySymbol = obj.optString("currencySymbol", "DH"),
                 accentPalette = obj.optString("accentPalette", "majorelle"),
                 isDarkTheme = obj.optBoolean("isDarkTheme", false),
+                pendingDetectionsCount = obj.optInt("pendingDetectionsCount", 0),
+                oldestPendingDetectionHours = obj.optInt("oldestPendingDetectionHours", 0),
                 updatedAtMillis = obj.optLong("updatedAtMillis", 0L)
             )
         }
@@ -481,6 +487,7 @@ data class WidgetSnapshot(
 
 enum class SmartSlotReason {
     DUE_BILL_OR_DARET,
+    PENDING_BANK_DETECTIONS,
     ENVELOPE_OVER_90,
     HIGH_PROJECTION_ALERT,
     MORNING_LEFT_TODAY,
@@ -498,6 +505,7 @@ data class SmartSlotCard(
     val priorityRank: Int
         get() = when (reason) {
             SmartSlotReason.DUE_BILL_OR_DARET -> 1
+            SmartSlotReason.PENDING_BANK_DETECTIONS -> 2
             SmartSlotReason.ENVELOPE_OVER_90 -> 2
             SmartSlotReason.HIGH_PROJECTION_ALERT -> 3
             SmartSlotReason.MORNING_LEFT_TODAY -> 4
@@ -506,8 +514,9 @@ data class SmartSlotCard(
 }
 
 /**
- * Phase 7: Pure Smart Slot selector implementing the 5 priority rules:
+ * Phase 7 & 10D: Pure Smart Slot selector implementing the priority rules:
  * 1. A bill or Daret turn due within 2 days.
+ * 1B (Phase 10D). 3+ pending bank detections or oldest pending item > 24 hours old.
  * 2. An envelope at or above 90%.
  * 3. A high projection alert for the cycle.
  * 4. Morning (< 17h): "Left today".
@@ -537,6 +546,19 @@ object SmartSlotEngine {
                 subtitle = urgentReminder.subtitle,
                 statusColorHex = "#F59E0B",
                 targetTabKey = "categories"
+            )
+        }
+
+        // Rule 1B (Phase 10D, placed between rules 1 and 2): 3+ pending bank items or oldest > 24h
+        if (fresh.pendingDetectionsCount >= 3 || fresh.oldestPendingDetectionHours > 24) {
+            val countStr = strings.bankDetectPendingChipFmt.replace("{count}", fresh.pendingDetectionsCount.coerceAtLeast(1).toString())
+            return SmartSlotCard(
+                reason = SmartSlotReason.PENDING_BANK_DETECTIONS,
+                badgeTitle = strings.bankDetectToConfirmTitle,
+                headlineValue = countStr,
+                subtitle = strings.bankDetectSectionTitle,
+                statusColorHex = "#F59E0B",
+                targetTabKey = "vue"
             )
         }
 

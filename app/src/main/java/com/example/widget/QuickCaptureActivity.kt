@@ -99,7 +99,15 @@ class QuickCaptureActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val action = intent?.action ?: MasroufiAppWidget.ACTION_QUICK_ADD
+        val launchedViaVoiceAlias = intent?.component?.className?.endsWith("MasroufiVoiceLauncherAlias") == true
+        val rawAction = intent?.action
+        val action = when {
+            launchedViaVoiceAlias -> MasroufiAppWidget.ACTION_QUICK_VOICE
+            rawAction == MasroufiAppWidget.ACTION_QUICK_VOICE -> MasroufiAppWidget.ACTION_QUICK_VOICE
+            rawAction == MasroufiAppWidget.ACTION_QUICK_PRESET -> MasroufiAppWidget.ACTION_QUICK_PRESET
+            rawAction == MasroufiAppWidget.ACTION_QUICK_ADD -> MasroufiAppWidget.ACTION_QUICK_ADD
+            else -> MasroufiAppWidget.ACTION_QUICK_ADD
+        }
         val presetName = intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_NAME).orEmpty()
         val presetAmount = intent?.getDoubleExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, 0.0) ?: 0.0
         val presetEnvelope = intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE).orEmpty()

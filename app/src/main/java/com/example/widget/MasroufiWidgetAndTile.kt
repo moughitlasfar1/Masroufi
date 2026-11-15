@@ -148,8 +148,18 @@ object MasroufiWidgetStore {
             language = prefs.getString(KEY_LANG, "fr").orEmpty().ifBlank { "fr" }
         )
 
+        val pendingList = runCatching {
+            com.example.notifications.BankDetectionStore.loadPendingItems(appCtx)
+        }.getOrDefault(emptyList())
+        val oldestHours = if (pendingList.isNotEmpty()) {
+            val oldestMs = pendingList.minOf { it.createdAtMillis }
+            ((System.currentTimeMillis() - oldestMs) / (3600_000L)).toInt().coerceAtLeast(0)
+        } else 0
+
         val rolledOver = resolved.withMidnightRolloverIfNeeded(nowIso).copy(
-            appLockEnabled = AppSecurityManager.isAppLockEnabled(appCtx)
+            appLockEnabled = AppSecurityManager.isAppLockEnabled(appCtx),
+            pendingDetectionsCount = max(resolved.pendingDetectionsCount, pendingList.size),
+            oldestPendingDetectionHours = max(resolved.oldestPendingDetectionHours, oldestHours)
         )
         if (rolledOver.snapshotDateIso != resolved.snapshotDateIso) {
             // Persist midnight reset immediately so subsequent reads are up to date
@@ -413,6 +423,11 @@ object MasroufiWidgetStore {
         val appCtx = context.applicationContext
         MasroufiAppWidget.updateAllWidgets(appCtx)
         runCatching {
+            if (com.example.notifications.QuickCaptureNotification.isEnabled(appCtx)) {
+                com.example.notifications.QuickCaptureNotification.refresh(appCtx)
+            }
+        }
+        runCatching {
             TileService.requestListeningState(appCtx, ComponentName(appCtx, MasroufiQuickTileService::class.java))
             TileService.requestListeningState(appCtx, ComponentName(appCtx, MasroufiVoiceTileService::class.java))
             TileService.requestListeningState(appCtx, ComponentName(appCtx, MasroufiSafeTodayTileService::class.java))
@@ -632,7 +647,15 @@ class MasroufiAppWidget : AppWidgetProvider() {
                     views.setTextColor(R.id.widget_safe_badge, Color.parseColor(statusHex))
                     views.setTextViewText(R.id.widget_today_spend, safeStr)
                     views.setTextColor(R.id.widget_today_spend, Color.parseColor(statusHex))
-                    views.setViewVisibility(R.id.widget_secondary_line, View.GONE)
+                    if (snapshot.pendingDetectionsCount > 0) {
+                        views.setViewVisibility(R.id.widget_secondary_line, View.VISIBLE)
+                        views.setTextViewText(
+                            R.id.widget_secondary_line,
+                            strings.bankDetectPendingChipFmt.replace("{count}", snapshot.pendingDetectionsCount.toString())
+                        )
+                    } else {
+                        views.setViewVisibility(R.id.widget_secondary_line, View.GONE)
+                    }
                     views.setViewVisibility(R.id.widget_action_row, if (isCompactHeight) View.GONE else View.VISIBLE)
                     views.setViewVisibility(R.id.widget_btn_preset_two, View.GONE)
                 }

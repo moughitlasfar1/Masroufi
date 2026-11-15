@@ -97,6 +97,7 @@ fun SettingsBottomSheet(
     onExportJsonFile: (String) -> Unit = {},
     onExportCsvFile: () -> Unit = {},
     onOpenRestoreModal: () -> Unit = {},
+    onOpenBankDetections: () -> Unit = {},
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
@@ -788,6 +789,237 @@ fun SettingsBottomSheet(
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    // Phase 11A: Optional "Masroufi Voice" launcher icon alias
+                    var voiceAliasEnabled by remember {
+                        mutableStateOf(com.example.notifications.VoiceLauncherAliasManager.isVoiceAliasEnabled(context))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.voiceLauncherAliasToggleLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = voiceAliasEnabled,
+                            onCheckedChange = { enabled ->
+                                voiceAliasEnabled = enabled
+                                com.example.notifications.VoiceLauncherAliasManager.setVoiceAliasEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_voice_launcher_alias_switch")
+                        )
+                    }
+
+                    // Phase 10: Bank Notification Auto-Detection entry
+                    val pendingDetectionsCount = remember {
+                        com.example.notifications.BankDetectionStore.loadPendingItems(context).size
+                    }
+                    FilledTonalButton(
+                        onClick = {
+                            onDismiss()
+                            onOpenBankDetections()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_open_bank_detections_btn")
+                    ) {
+                        Text(
+                            text = if (pendingDetectionsCount > 0) {
+                                "${strings.bankDetectSectionTitle} ($pendingDetectionsCount)"
+                            } else {
+                                strings.bankDetectSectionTitle
+                            },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+
+            // SECTION 3C: PHASE 9 — OPTIONAL QUICK-CAPTURE NOTIFICATION (Off by default)
+            var qcNotifEnabled by remember {
+                mutableStateOf(com.example.notifications.QuickCaptureNotification.isEnabled(context))
+            }
+            var qcShowLeftToday by remember {
+                mutableStateOf(com.example.notifications.QuickCaptureNotification.isShowLeftTodayEnabled(context))
+            }
+            var qcLockScreenAmounts by remember {
+                mutableStateOf(com.example.notifications.QuickCaptureNotification.isShowLockScreenAmountsEnabled(context))
+            }
+            var qcQuietHours by remember {
+                mutableStateOf(com.example.notifications.QuickCaptureNotification.isQuietHoursEnabled(context))
+            }
+            var qcSelectedPresetId by remember {
+                mutableStateOf<String>(com.example.notifications.QuickCaptureNotification.getSelectedPresetId(context))
+            }
+            var qcPermExplanation by remember { mutableStateOf<String?>(null) }
+
+            val qcNotifPermLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                if (granted) {
+                    qcNotifEnabled = true
+                    qcPermExplanation = null
+                    com.example.notifications.QuickCaptureNotification.setEnabled(context, true)
+                } else {
+                    qcNotifEnabled = false
+                    com.example.notifications.QuickCaptureNotification.setEnabled(context, false)
+                    qcPermExplanation = strings.quickCaptureNotifPermDeniedMsg
+                }
+            }
+
+            ExpressiveGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_quick_capture_notif_card")
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = strings.quickCaptureNotifToggleLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.quickCaptureNotifToggleLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = qcNotifEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    if (MasroufiNotificationManager.hasNotificationPermission(context)) {
+                                        qcNotifEnabled = true
+                                        qcPermExplanation = null
+                                        com.example.notifications.QuickCaptureNotification.setEnabled(context, true)
+                                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                        qcNotifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    }
+                                } else {
+                                    qcNotifEnabled = false
+                                    com.example.notifications.QuickCaptureNotification.setEnabled(context, false)
+                                }
+                            },
+                            modifier = Modifier.testTag("settings_qc_notif_switch")
+                        )
+                    }
+
+                    if (!qcPermExplanation.isNullOrBlank()) {
+                        Text(
+                            text = qcPermExplanation!!,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentCoral,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("settings_qc_notif_perm_error")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.quickCaptureNotifShowLeftTodayLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = qcShowLeftToday,
+                            onCheckedChange = { enabled ->
+                                qcShowLeftToday = enabled
+                                com.example.notifications.QuickCaptureNotification.setShowLeftTodayEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_qc_show_left_today_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.quickCaptureNotifLockScreenAmountsLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = qcLockScreenAmounts,
+                            onCheckedChange = { enabled ->
+                                qcLockScreenAmounts = enabled
+                                com.example.notifications.QuickCaptureNotification.setShowLockScreenAmountsEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_qc_lock_screen_switch")
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.quickCaptureNotifQuietHoursLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(
+                            checked = qcQuietHours,
+                            onCheckedChange = { enabled ->
+                                qcQuietHours = enabled
+                                com.example.notifications.QuickCaptureNotification.setQuietHoursEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_qc_quiet_hours_switch")
+                        )
+                    }
+
+                    if (state.presets.isNotEmpty()) {
+                        Text(
+                            text = strings.quickCaptureNotifPresetLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            state.presets.take(5).forEach { preset ->
+                                val isSel = qcSelectedPresetId == preset.id
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = {
+                                        val next = if (isSel) "" else preset.id
+                                        qcSelectedPresetId = next
+                                        com.example.notifications.QuickCaptureNotification.setSelectedPresetId(context, next)
+                                    },
+                                    label = { Text(preset.name, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.testTag("settings_qc_preset_${preset.id}")
+                                )
+                            }
+                        }
                     }
                 }
             }
