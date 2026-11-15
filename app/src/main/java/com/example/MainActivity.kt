@@ -370,7 +370,10 @@ fun AppNavigation(
     var localModeEnabled by remember { mutableStateOf(isLocalModeEnabled(context)) }
     val user = currentUser
     if (user == null && !localModeEnabled) {
-        MasroufiTheme(darkTheme = false, accentPalette = "majorelle") {
+        MasroufiTheme(
+            darkTheme = androidx.compose.foundation.isSystemInDarkTheme(),
+            accentPalette = "majorelle"
+        ) {
             AuthScreen(
                 onAuthSuccess = {
                     setLocalModeEnabled(context, false)
@@ -437,7 +440,16 @@ fun MainFeatureScreen(
         }
     )
 
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val rawState by viewModel.uiState.collectAsStateWithLifecycle()
+    val systemInDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val effectiveIsDark = rawState.customPrefs.resolveIsDark(systemInDark)
+    val state = remember(rawState, effectiveIsDark) {
+        if (rawState.profile.isDarkTheme == effectiveIsDark) {
+            rawState
+        } else {
+            rawState.copy(profile = rawState.profile.copy(isDarkTheme = effectiveIsDark))
+        }
+    }
     val strings = Translations.forLang(state.profile.language)
     val layoutDirection = if (strings.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
     val context = LocalContext.current
@@ -459,6 +471,7 @@ fun MainFeatureScreen(
         state.safeToSpendToday,
         state.customPrefs.currencySymbol,
         state.customPrefs.accentPalette,
+        state.customPrefs.themeMode,
         state.hideAmounts,
         state.profile.language,
         state.profile.isDarkTheme,
@@ -1433,8 +1446,14 @@ fun MainFeatureScreen(
                         viewModel.saveBudgetSettings(b, day, roll)
                     },
                     onToggleTheme = { viewModel.toggleTheme() },
+                    onSelectThemeMode = { modeKey ->
+                        viewModel.setThemeMode(modeKey, systemInDark)
+                    },
                     onSelectLanguage = { langCode -> viewModel.updateLanguage(langCode) },
-                    onSaveCustomPrefs = { prefs -> viewModel.saveCustomizationPrefs(prefs) },
+                    onSaveCustomPrefs = { prefs ->
+                        viewModel.setThemeMode(prefs.themeMode, systemInDark)
+                        viewModel.saveCustomizationPrefs(prefs)
+                    },
                     onOpenCustomizationStudio = { activeSheet = ActiveSheet.CustomizationStudio },
                     onOpenQuickOnboarding = { activeSheet = ActiveSheet.QuickOnboarding },
                     onLoadDemoData = {
@@ -1550,6 +1569,7 @@ fun MainFeatureScreen(
                     state = state,
                     onDismiss = { activeSheet = ActiveSheet.None },
                     onSaveCustomPrefs = { prefs ->
+                        viewModel.setThemeMode(prefs.themeMode, systemInDark)
                         viewModel.saveCustomizationPrefs(prefs)
                     }
                 )

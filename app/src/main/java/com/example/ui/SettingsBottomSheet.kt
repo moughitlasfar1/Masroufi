@@ -85,6 +85,7 @@ fun SettingsBottomSheet(
     onDismiss: () -> Unit,
     onSaveSettings: (Double, Int, Boolean) -> Unit,
     onToggleTheme: () -> Unit = {},
+    onSelectThemeMode: (String) -> Unit = {},
     onSelectLanguage: (String) -> Unit = {},
     onSaveCustomPrefs: (CustomizationPrefs) -> Unit = {},
     onOpenCustomizationStudio: () -> Unit = {},
@@ -358,27 +359,44 @@ fun SettingsBottomSheet(
                         )
                     }
 
-                    // Light / Dark Mode Switch (Instant save)
-                    Row(
+                    // 3-Way Theme Mode Selector: Device (Auto) / Light / Dark (Instant save)
+                    val activeThemeMode = state.customPrefs.normalizedThemeMode()
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = when (lang) {
-                                "ar" -> "الوضع الليلي"
-                                "darija" -> "الوضع الليلي"
-                                "en" -> "Dark Mode"
-                                else -> "Mode Sombre"
-                            },
+                            text = strings.themeModeLabel,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        Switch(
-                            checked = state.profile.isDarkTheme,
-                            onCheckedChange = { onToggleTheme() },
-                            modifier = Modifier.testTag("settings_dark_mode_switch")
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                Triple("system", "📱 ${strings.themeModeSystem}", "settings_theme_mode_system"),
+                                Triple("light", "☀️ ${strings.themeModeLight}", "settings_theme_mode_light"),
+                                Triple("dark", "🌙 ${strings.themeModeDark}", "settings_theme_mode_dark")
+                            ).forEach { (modeKey, label, tag) ->
+                                val isSelected = activeThemeMode == modeKey
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        onSelectThemeMode(modeKey)
+                                    },
+                                    label = {
+                                        Text(
+                                            text = label,
+                                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
+                                        )
+                                    },
+                                    modifier = Modifier.testTag(tag)
+                                )
+                            }
+                        }
                     }
 
                     // 3 Palettes (Indigo, Émeraude, Or)
@@ -1335,6 +1353,7 @@ fun CustomizationStudioSheet(
 ) {
     var selectedPalette by remember { mutableStateOf(state.customPrefs.accentPalette) }
     var currencySymbol by remember { mutableStateOf(state.customPrefs.currencySymbol.ifBlank { "DH" }) }
+    var selectedThemeMode by remember { mutableStateOf(state.customPrefs.normalizedThemeMode()) }
     val lang = state.profile.language
 
     ModalBottomSheet(
@@ -1364,6 +1383,26 @@ fun CustomizationStudioSheet(
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+            }
+
+            // 3-Way Theme Mode Selector in Studio
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    "system" to "📱 ${strings.themeModeSystem}",
+                    "light" to "☀️ ${strings.themeModeLight}",
+                    "dark" to "🌙 ${strings.themeModeDark}"
+                ).forEach { (modeKey, label) ->
+                    FilterChip(
+                        selected = selectedThemeMode == modeKey,
+                        onClick = { selectedThemeMode = modeKey },
+                        label = { Text(label, fontWeight = FontWeight.Bold) }
+                    )
+                }
             }
 
             Row(
@@ -1440,7 +1479,8 @@ fun CustomizationStudioSheet(
                     onSaveCustomPrefs(
                         state.customPrefs.copy(
                             accentPalette = selectedPalette,
-                            currencySymbol = currencySymbol.ifBlank { "DH" }
+                            currencySymbol = currencySymbol.ifBlank { "DH" },
+                            themeMode = selectedThemeMode
                         )
                     )
                     onDismiss()

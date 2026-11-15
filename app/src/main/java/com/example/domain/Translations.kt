@@ -232,7 +232,11 @@ data class AppStrings(
     val assistantTryCommandsLabel: String = "Dites par exemple à Google Assistant :",
     val assistantPinShortcutBtn: String = "+ Épingler raccourci Google Assistant",
     val assistantTestCommandBtn: String = "🎙️ Tester « Ok Google, Café 15 DH »",
-    val assistantAutoSavedBadge: String = "🎙️ Google Assistant · Enregistré automatiquement"
+    val assistantAutoSavedBadge: String = "🎙️ Google Assistant · Enregistré automatiquement",
+    val themeModeLabel: String = "Thème",
+    val themeModeSystem: String = "Appareil (Auto)",
+    val themeModeLight: String = "Clair",
+    val themeModeDark: String = "Sombre"
 )
 
 object Translations {
@@ -467,7 +471,11 @@ object Translations {
         assistantTryCommandsLabel = "Dites par exemple à Google Assistant :",
         assistantPinShortcutBtn = "+ Épingler raccourci Google Assistant",
         assistantTestCommandBtn = "🎙️ Tester « Ok Google, Café 15 DH »",
-        assistantAutoSavedBadge = "🎙️ Google Assistant · Enregistré automatiquement"
+        assistantAutoSavedBadge = "🎙️ Google Assistant · Enregistré automatiquement",
+        themeModeLabel = "Thème",
+        themeModeSystem = "Appareil (Auto)",
+        themeModeLight = "Clair",
+        themeModeDark = "Sombre"
     )
 
     val EN = AppStrings(
@@ -701,7 +709,11 @@ object Translations {
         assistantTryCommandsLabel = "Try saying to Google Assistant:",
         assistantPinShortcutBtn = "+ Pin Google Assistant Shortcut",
         assistantTestCommandBtn = "🎙️ Test 'Hey Google, Coffee 15 DH'",
-        assistantAutoSavedBadge = "🎙️ Google Assistant · Saved automatically"
+        assistantAutoSavedBadge = "🎙️ Google Assistant · Saved automatically",
+        themeModeLabel = "Theme",
+        themeModeSystem = "Device (Auto)",
+        themeModeLight = "Light",
+        themeModeDark = "Dark"
     )
 
     val AR = AppStrings(
@@ -935,7 +947,11 @@ object Translations {
         assistantTryCommandsLabel = "قل لمساعد Google مثلاً :",
         assistantPinShortcutBtn = "+ تثبيت اختصار مساعد Google",
         assistantTestCommandBtn = "🎙️ تجربة « Ok Google، قهوة 15 درهم »",
-        assistantAutoSavedBadge = "🎙️ مساعد Google · تم الحفظ تلقائياً"
+        assistantAutoSavedBadge = "🎙️ مساعد Google · تم الحفظ تلقائياً",
+        themeModeLabel = "المظهر",
+        themeModeSystem = "الجهاز (تلقائي)",
+        themeModeLight = "فاتح",
+        themeModeDark = "داكن"
     )
 
     val DARIJA = AppStrings(
@@ -1169,7 +1185,11 @@ object Translations {
         assistantTryCommandsLabel = "قول لـ Google Assistant مثلاً :",
         assistantPinShortcutBtn = "+ زيد اختصار Google Assistant",
         assistantTestCommandBtn = "🎙️ جرب « Ok Google, qahwa 15 DH »",
-        assistantAutoSavedBadge = "🎙️ Google Assistant · تقيدات أوتوماتيك"
+        assistantAutoSavedBadge = "🎙️ Google Assistant · تقيدات أوتوماتيك",
+        themeModeLabel = "المظهر",
+        themeModeSystem = "التيليفون (أوطو)",
+        themeModeLight = "مضوي",
+        themeModeDark = "مظلم"
     )
 
     fun forLang(lang: String): AppStrings = when (lang) {

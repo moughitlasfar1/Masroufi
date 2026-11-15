@@ -393,8 +393,17 @@ data class CustomizationPrefs(
     val showMonthlyReviewCard: Boolean = true,
     val showBillsCard: Boolean = true,
     val showSmartInsightsCard: Boolean = true,
-    val dashboardOrder: List<String> = DEFAULT_DASHBOARD_ORDER
+    val dashboardOrder: List<String> = DEFAULT_DASHBOARD_ORDER,
+    val themeMode: String = "system" // "system", "light", "dark"
 ) {
+    fun normalizedThemeMode(): String = normalizeThemeMode(themeMode)
+
+    fun resolveIsDark(systemInDark: Boolean): Boolean = when (normalizedThemeMode()) {
+        "light" -> false
+        "dark" -> true
+        else -> systemInDark
+    }
+
     fun toVisibilityMask(): Int {
         var mask = 0
         if (showSafeToSpend) mask = mask or 1
@@ -443,6 +452,12 @@ data class CustomizationPrefs(
             "monthly_review"
         )
 
+        fun normalizeThemeMode(raw: String?): String = when (raw?.trim()?.lowercase(Locale.ROOT)) {
+            "light" -> "light"
+            "dark" -> "dark"
+            else -> "system"
+        }
+
         fun normalizeOrderString(rawOrder: String?): List<String> {
             if (rawOrder.isNullOrBlank()) return DEFAULT_DASHBOARD_ORDER
             val parsed = rawOrder.split(",").map { it.trim() }.filter { it in DEFAULT_DASHBOARD_ORDER }.distinct()
@@ -456,6 +471,7 @@ data class CustomizationPrefs(
             val palette = parts.getOrNull(0)?.ifBlank { "majorelle" } ?: "majorelle"
             val currency = parts.getOrNull(1)?.ifBlank { "DH" } ?: "DH"
             val orderList = normalizeOrderString(parts.getOrNull(2))
+            val parsedThemeMode = normalizeThemeMode(parts.getOrNull(3))
             val rawMask = if (item.dayOrTurn > 0) item.dayOrTurn else 127
             val hasInsightsBit = item.dayOrTurn >= 64 || item.dayOrTurn <= 0
             return CustomizationPrefs(
@@ -470,7 +486,8 @@ data class CustomizationPrefs(
                 showMonthlyReviewCard = (rawMask and 16) != 0,
                 showBillsCard = (rawMask and 32) != 0,
                 showSmartInsightsCard = if (hasInsightsBit) (rawMask and 64) != 0 else true,
-                dashboardOrder = orderList
+                dashboardOrder = orderList,
+                themeMode = parsedThemeMode
             )
         }
     }

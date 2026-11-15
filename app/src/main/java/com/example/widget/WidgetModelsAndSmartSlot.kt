@@ -156,10 +156,27 @@ data class WidgetSnapshot(
     val currencySymbol: String = "DH",
     val accentPalette: String = "majorelle",
     val isDarkTheme: Boolean = false,
+    val appThemeMode: String = "system", // "system", "light", "dark"
     val pendingDetectionsCount: Int = 0,
     val oldestPendingDetectionHours: Int = 0,
     val updatedAtMillis: Long = System.currentTimeMillis()
 ) {
+    /**
+     * Resolves whether Dark Mode is active based on [appThemeMode] ("system", "light", "dark")
+     * and the phone's current night-mode state.
+     */
+    fun resolveEffectiveIsDark(systemInDark: Boolean): Boolean = when (appThemeMode.lowercase()) {
+        "light" -> false
+        "dark" -> true
+        else -> systemInDark
+    }
+
+    fun resolveEffectiveIsDark(context: android.content.Context): Boolean {
+        val nightFlags = context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+        val systemInDark = nightFlags == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        return resolveEffectiveIsDark(systemInDark)
+    }
+
     /**
      * Automatically resets today's spend to 0.0 if the calendar date has crossed midnight
      * since [snapshotDateIso] was recorded, even if the main app is closed.
@@ -206,6 +223,7 @@ data class WidgetSnapshot(
         put("currencySymbol", currencySymbol)
         put("accentPalette", accentPalette)
         put("isDarkTheme", isDarkTheme)
+        put("appThemeMode", appThemeMode)
         put("pendingDetectionsCount", pendingDetectionsCount)
         put("oldestPendingDetectionHours", oldestPendingDetectionHours)
         put("updatedAtMillis", updatedAtMillis)
@@ -376,7 +394,8 @@ data class WidgetSnapshot(
                 language = lang,
                 currencySymbol = cur,
                 accentPalette = state.customPrefs.accentPalette.ifBlank { "majorelle" },
-                isDarkTheme = state.profile.isDarkTheme
+                isDarkTheme = state.profile.isDarkTheme,
+                appThemeMode = state.customPrefs.normalizedThemeMode()
             )
         }
 
@@ -477,6 +496,7 @@ data class WidgetSnapshot(
                 currencySymbol = obj.optString("currencySymbol", "DH"),
                 accentPalette = obj.optString("accentPalette", "majorelle"),
                 isDarkTheme = obj.optBoolean("isDarkTheme", false),
+                appThemeMode = obj.optString("appThemeMode", "system"),
                 pendingDetectionsCount = obj.optInt("pendingDetectionsCount", 0),
                 oldestPendingDetectionHours = obj.optInt("oldestPendingDetectionHours", 0),
                 updatedAtMillis = obj.optLong("updatedAtMillis", 0L)

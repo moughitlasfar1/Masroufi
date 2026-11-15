@@ -1543,5 +1543,56 @@ class ExampleRobolectricTest {
             assertEquals(3, com.example.widget.GoogleAssistantExpenseBridge.sampleVoiceCommandsForLang(lang).size)
         }
     }
+
+    @Test
+    fun `three-way theme mode (System Device, Light, Dark) resolves and persists across CustomizationPrefs, WidgetSnapshot, and Translations accurately`() {
+        // 1. Default themeMode is "system" and follows phone dark/light theme
+        val defaultPrefs = CustomizationPrefs()
+        assertEquals("system", defaultPrefs.normalizedThemeMode())
+        assertTrue(defaultPrefs.resolveIsDark(systemInDark = true))
+        assertFalse(defaultPrefs.resolveIsDark(systemInDark = false))
+
+        // 2. Explicit "light" and "dark" override phone theme
+        val lightPrefs = defaultPrefs.copy(themeMode = "light")
+        assertFalse(lightPrefs.resolveIsDark(systemInDark = true))
+        assertFalse(lightPrefs.resolveIsDark(systemInDark = false))
+
+        val darkPrefs = defaultPrefs.copy(themeMode = "dark")
+        assertTrue(darkPrefs.resolveIsDark(systemInDark = true))
+        assertTrue(darkPrefs.resolveIsDark(systemInDark = false))
+
+        // 3. CustomizationPrefs.fromFinancialItem parses 4th pipe segment and defaults to "system" for legacy 3-part items
+        val legacyItem = FinancialItem(
+            id = "custom_prefs",
+            itemType = "custom_prefs",
+            name = "Masroufi",
+            subtitle = "majorelle|DH|accounts,presets",
+            dayOrTurn = 127
+        )
+        assertEquals("system", CustomizationPrefs.fromFinancialItem(legacyItem).normalizedThemeMode())
+
+        val darkItem = legacyItem.copy(subtitle = "majorelle|DH|accounts,presets|dark")
+        assertEquals("dark", CustomizationPrefs.fromFinancialItem(darkItem).normalizedThemeMode())
+
+        // 4. WidgetSnapshot serializes appThemeMode and resolves effective dark state
+        val snapSystem = com.example.widget.WidgetSnapshot(appThemeMode = "system", isDarkTheme = false)
+        assertTrue(snapSystem.resolveEffectiveIsDark(systemInDark = true))
+        assertFalse(snapSystem.resolveEffectiveIsDark(systemInDark = false))
+
+        val snapDarkJson = snapSystem.copy(appThemeMode = "dark", isDarkTheme = true).toJson()
+        val snapDecoded = com.example.widget.WidgetSnapshot.fromJson(snapDarkJson)
+        assertEquals("dark", snapDecoded.appThemeMode)
+        assertTrue(snapDecoded.resolveEffectiveIsDark(systemInDark = false))
+
+        // 5. Translations in FR, EN, AR, and Darija
+        listOf("fr", "en", "ar", "darija").forEach { lang ->
+            val s = Translations.forLang(lang)
+            assertTrue(s.themeModeLabel.isNotBlank())
+            assertTrue(s.themeModeSystem.isNotBlank())
+            assertTrue(s.themeModeLight.isNotBlank())
+            assertTrue(s.themeModeDark.isNotBlank())
+        }
+    }
 }
+
 

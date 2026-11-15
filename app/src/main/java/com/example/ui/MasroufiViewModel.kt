@@ -140,6 +140,7 @@ object BackupSerializer {
                     put("customSubtitle", state.customPrefs.customSubtitle)
                     put("visibilityMask", state.customPrefs.toVisibilityMask())
                     put("dashboardOrder", state.customPrefs.normalizedOrder().joinToString(","))
+                    put("themeMode", state.customPrefs.normalizedThemeMode())
                 }
             )
 
@@ -326,7 +327,8 @@ object BackupSerializer {
                 showMonthlyReviewCard = (mask and 16) != 0,
                 showBillsCard = (mask and 32) != 0,
                 showSmartInsightsCard = if (hasInsightsBit) (mask and 64) != 0 else true,
-                dashboardOrder = CustomizationPrefs.normalizeOrderString(orderStr)
+                dashboardOrder = CustomizationPrefs.normalizeOrderString(orderStr),
+                themeMode = CustomizationPrefs.normalizeThemeMode(customObj.optString("themeMode", "system"))
             )
         } else null
 
@@ -1103,10 +1105,31 @@ class MasroufiViewModel(
 
     fun toggleTheme() {
         val cur = uiState.value.profile
-        val updated = cur.copy(isDarkTheme = !cur.isDarkTheme)
+        val nextDark = !cur.isDarkTheme
+        val updated = cur.copy(isDarkTheme = nextDark)
         _optimisticProfile.value = updated
+        val curPrefs = uiState.value.customPrefs
+        val updatedPrefs = curPrefs.copy(themeMode = if (nextDark) "dark" else "light")
+        saveCustomizationPrefs(updatedPrefs)
         safeLaunch("toggleTheme") {
             repository.saveProfile(updated)
+        }
+    }
+
+    fun setThemeMode(mode: String, systemInDark: Boolean = false) {
+        val normalizedMode = CustomizationPrefs.normalizeThemeMode(mode)
+        val curPrefs = uiState.value.customPrefs
+        val updatedPrefs = curPrefs.copy(themeMode = normalizedMode)
+        saveCustomizationPrefs(updatedPrefs)
+
+        val resolvedDark = updatedPrefs.resolveIsDark(systemInDark)
+        val curProfile = uiState.value.profile
+        if (curProfile.isDarkTheme != resolvedDark) {
+            val updatedProfile = curProfile.copy(isDarkTheme = resolvedDark)
+            _optimisticProfile.value = updatedProfile
+            safeLaunch("setThemeMode") {
+                repository.saveProfile(updatedProfile)
+            }
         }
     }
 
@@ -1176,7 +1199,7 @@ class MasroufiViewModel(
             userId = currentUserId,
             itemType = "custom_prefs",
             name = prefs.customTitle.ifBlank { "Masroufi" }.take(80),
-            subtitle = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}|$orderCsv",
+            subtitle = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}|$orderCsv|${prefs.normalizedThemeMode()}",
             amount = 0.0,
             secondaryAmount = 0.0,
             dayOrTurn = prefs.toVisibilityMask(),

@@ -531,6 +531,13 @@ class WidgetRefreshWorker(
 
 class MasroufiAppWidget : AppWidgetProvider() {
 
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        if (intent.action == Intent.ACTION_CONFIGURATION_CHANGED) {
+            updateAllWidgets(context)
+        }
+    }
+
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
@@ -583,6 +590,7 @@ class MasroufiAppWidget : AppWidgetProvider() {
             appWidgetId: Int
         ) {
             val snapshot = MasroufiWidgetStore.loadSnapshot(context)
+            val effectiveIsDark = snapshot.resolveEffectiveIsDark(context)
             val style = MasroufiWidgetStore.loadWidgetStyle(context, appWidgetId)
             val strings = Translations.forLang(snapshot.language)
             val cur = snapshot.currencySymbol.ifBlank { "DH" }
@@ -608,14 +616,14 @@ class MasroufiAppWidget : AppWidgetProvider() {
                 when (style.themeMode) {
                     "light" -> R.drawable.bg_widget_solid_light
                     "accent" -> R.drawable.bg_widget_solid_accent
-                    "auto" -> if (snapshot.isDarkTheme) R.drawable.bg_widget_solid_dark else R.drawable.bg_widget_solid_light
+                    "auto" -> if (effectiveIsDark) R.drawable.bg_widget_solid_dark else R.drawable.bg_widget_solid_light
                     else -> R.drawable.bg_widget_solid_dark
                 }
             }
             views.setInt(R.id.widget_root, "setBackgroundResource", bgRes)
 
             val isLightSolid = !style.glassEnabled &&
-                (style.themeMode == "light" || (style.themeMode == "auto" && !snapshot.isDarkTheme))
+                (style.themeMode == "light" || (style.themeMode == "auto" && !effectiveIsDark))
             val primaryTextColor = if (isLightSolid) Color.parseColor("#0F172A") else Color.WHITE
             val secondaryTextColor = if (isLightSolid) Color.parseColor("#475569") else Color.parseColor("#CBD5E1")
             views.setTextColor(R.id.widget_title, secondaryTextColor)

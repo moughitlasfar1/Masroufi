@@ -130,9 +130,15 @@ class QuickCaptureActivity : FragmentActivity() {
                 (assistantResolution as? AssistantExpenseResolution.AutoLoggedBatch)?.items ?: emptyList()
             }
 
+            val systemInDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val effectiveIsDark = snapshot.resolveEffectiveIsDark(systemInDark)
+            val effectiveSnapshot = remember(snapshot, effectiveIsDark) {
+                snapshot.copy(isDarkTheme = effectiveIsDark)
+            }
+
             MasroufiTheme(
-                darkTheme = snapshot.isDarkTheme,
-                accentPalette = snapshot.accentPalette
+                darkTheme = effectiveIsDark,
+                accentPalette = effectiveSnapshot.accentPalette
             ) {
                 val requiresPinUnlock = remember {
                     AppSecurityManager.isAppLockEnabled(context) &&
@@ -142,8 +148,8 @@ class QuickCaptureActivity : FragmentActivity() {
 
                 if (!isUnlocked) {
                     MasroufiSecurityLockScreen(
-                        language = snapshot.language,
-                        accentPalette = snapshot.accentPalette,
+                        language = effectiveSnapshot.language,
+                        accentPalette = effectiveSnapshot.accentPalette,
                         onUnlocked = { isUnlocked = true },
                         onSignOutRecovery = { finish() }
                     )
@@ -154,7 +160,7 @@ class QuickCaptureActivity : FragmentActivity() {
                         presetAmount = presetAmount,
                         presetEnvelope = presetEnvelope,
                         assistantAutoItems = assistantAutoItems,
-                        snapshot = snapshot,
+                        snapshot = effectiveSnapshot,
                         onCloseActivity = { finish() }
                     )
                 }

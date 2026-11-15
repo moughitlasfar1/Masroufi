@@ -101,13 +101,18 @@ class WidgetConfigActivity : ComponentActivity() {
         val initialStyle = MasroufiWidgetStore.loadWidgetStyle(this, appWidgetId)
 
         setContent {
+            val systemInDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val effectiveIsDark = snapshot.resolveEffectiveIsDark(systemInDark)
+            val effectiveSnapshot = remember(snapshot, effectiveIsDark) {
+                snapshot.copy(isDarkTheme = effectiveIsDark)
+            }
             MasroufiTheme(
-                darkTheme = snapshot.isDarkTheme,
-                accentPalette = snapshot.accentPalette
+                darkTheme = effectiveIsDark,
+                accentPalette = effectiveSnapshot.accentPalette
             ) {
                 WidgetConfigScreen(
                     appWidgetId = appWidgetId,
-                    snapshot = snapshot,
+                    snapshot = effectiveSnapshot,
                     initialStyle = initialStyle,
                     onSaveStyle = { finalStyle ->
                         MasroufiWidgetStore.saveWidgetStyle(this@WidgetConfigActivity, finalStyle)
