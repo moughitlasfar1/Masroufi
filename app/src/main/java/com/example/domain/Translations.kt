@@ -1,6 +1,6 @@
 package com.example.domain
 
-data class AppStrings(
+class AppStrings(
     val isRtl: Boolean,
     val subTitle: String,
     val navVue: String,
@@ -226,27 +226,44 @@ data class AppStrings(
     val bankDetectNeedsReviewBadge: String = "À vérifier",
     val bankDetectDuplicateBadge: String = "Doublon possible (±10 min)",
     val bankDetectAutoConfirmLabel: String = "Auto-confirmer sous le plafond",
-    val voiceLauncherAliasToggleLabel: String = "Icône « Masroufi Voice » (Lancement vocal direct)",
-    val assistantSectionTitle: String = "Google Assistant (« Ok Google »)",
-    val assistantSectionSub: String = "Ajoutez une dépense à la voix avec Google Assistant en FR, Darija, Arabe ou EN.",
-    val assistantTryCommandsLabel: String = "Dites par exemple à Google Assistant :",
-    val assistantPinShortcutBtn: String = "+ Épingler raccourci Google Assistant",
-    val assistantTestCommandBtn: String = "🎙️ Tester « Ok Google, Café 15 DH »",
-    val assistantAutoSavedBadge: String = "🎙️ Google Assistant · Enregistré automatiquement",
-    val themeModeLabel: String = "Thème",
-    val themeModeSystem: String = "Appareil (Auto)",
-    val themeModeLight: String = "Clair",
-    val themeModeDark: String = "Sombre",
-    val fxRatesSectionTitle: String = "Taux de change (MRE / Voyages)",
-    val fxEurRateLabel: String = "1 EUR en DH",
-    val fxUsdRateLabel: String = "1 USD en DH",
-    val bankDetectTransferBadge: String = "⇄ Retrait / Transfert (Banque → Cash)",
-    val daretCollectPotBtn: String = "Encaisser le pot",
-    val daretPotCollectedBadge: String = "Pot encaissé ✓",
-    val daretCollectAccountBank: String = "Banque",
-    val daretCollectAccountCash: String = "Cash",
-    val daretPotCollectedToast: String = "✓ Pot Daret encaissé !"
-)
+    val voiceLauncherAliasToggleLabel: String = "Icône « Masroufi Voice » (Lancement vocal direct)"
+) {
+    var assistantSectionTitle: String = "Google Assistant (« Ok Google »)"
+    var assistantSectionSub: String = "Ajoutez une dépense à la voix avec Google Assistant en FR, Darija, Arabe ou EN."
+    var assistantTryCommandsLabel: String = "Dites par exemple à Google Assistant :"
+    var assistantPinShortcutBtn: String = "+ Épingler raccourci Google Assistant"
+    var assistantTestCommandBtn: String = "🎙️ Tester « Ok Google, Café 15 DH »"
+    var assistantAutoSavedBadge: String = "🎙️ Google Assistant · Enregistré automatiquement"
+    var themeModeLabel: String = "Thème"
+    var themeModeSystem: String = "Appareil (Auto)"
+    var themeModeLight: String = "Clair"
+    var themeModeDark: String = "Sombre"
+    var fxRatesSectionTitle: String = "Taux de change (MRE / Voyages)"
+    var fxEurRateLabel: String = "1 EUR en DH"
+    var fxUsdRateLabel: String = "1 USD en DH"
+    var bankDetectTransferBadge: String = "⇄ Retrait / Transfert (Banque → Cash)"
+    var daretCollectPotBtn: String = "Encaisser le pot"
+    var daretPotCollectedBadge: String = "Pot encaissé ✓"
+    var daretCollectAccountBank: String = "Banque"
+    var daretCollectAccountCash: String = "Cash"
+    var daretPotCollectedToast: String = "✓ Pot Daret encaissé !"
+    var impactGreenFitsTodayFmt: String = "✓ Dans le dispo du jour · Dispo/j : {newSafe} {cur}"
+    var impactAmberLowersDailyFmt: String = "⚠️ Sur le cycle · Dispo/j : {oldSafe} → {newSafe} {cur}"
+    var impactRedOverSafePoolFmt: String = "🚨 Dépasse le budget dispo de +{over} {cur}"
+    var impactEnvelopeUsageSuffixFmt: String = " · {env} {pct}%"
+    var timeAwareShortcutsHint: String = "Habitudes du moment (1-tap)"
+    var eveningReminderTimeLabel: String = "Heure du rappel du soir"
+    var eveningNotifBodyWithSafeFmt: String = "{safe} {cur} dispo aujourd'hui. Quelque chose à noter ?"
+    var eveningNotifAddExpenseAction: String = "Ajouter dépense"
+    var eveningNotifNothingTodayAction: String = "Rien aujourd'hui ✓"
+    var smartSuggestionsTitle: String = "Suggestions intelligentes"
+    var smartSuggestionsSub: String = "Impact en direct, raccourcis selon l'heure et rappel adaptatif (100% local)"
+    var resetLearningBtn: String = "Réinitialiser l'apprentissage"
+    var resetLearningToast: String = "✓ Apprentissage local réinitialisé"
+    var impactRunOutSuffixFmt: String = " · Épuisé le {day}"
+    var shortcutWhyThisFmt: String = "Pourquoi ? {count} fois vers cette heure"
+    var eveningNotifPendingBankSuffixFmt: String = " · {count} opération(s) bancaire(s) à vérifier"
+}
 
 object Translations {
     val FR = AppStrings(
@@ -474,27 +491,44 @@ object Translations {
         bankDetectNeedsReviewBadge = "À vérifier",
         bankDetectDuplicateBadge = "Doublon possible (±10 min)",
         bankDetectAutoConfirmLabel = "Auto-confirmer sous le plafond",
-        voiceLauncherAliasToggleLabel = "Icône « Masroufi Voice » (Lancement vocal direct)",
-        assistantSectionTitle = "Google Assistant (« Ok Google »)",
-        assistantSectionSub = "Ajoutez une dépense à la voix avec Google Assistant en FR, Darija, Arabe ou EN.",
-        assistantTryCommandsLabel = "Dites par exemple à Google Assistant :",
-        assistantPinShortcutBtn = "+ Épingler raccourci Google Assistant",
-        assistantTestCommandBtn = "🎙️ Tester « Ok Google, Café 15 DH »",
-        assistantAutoSavedBadge = "🎙️ Google Assistant · Enregistré automatiquement",
-        themeModeLabel = "Thème",
-        themeModeSystem = "Appareil (Auto)",
-        themeModeLight = "Clair",
-        themeModeDark = "Sombre",
-        fxRatesSectionTitle = "Taux de change (MRE / Voyages)",
-        fxEurRateLabel = "1 EUR en DH",
-        fxUsdRateLabel = "1 USD en DH",
-        bankDetectTransferBadge = "⇄ Retrait / Transfert (Banque → Cash)",
-        daretCollectPotBtn = "Encaisser le pot",
-        daretPotCollectedBadge = "Pot encaissé ✓",
-        daretCollectAccountBank = "Banque",
-        daretCollectAccountCash = "Cash",
+        voiceLauncherAliasToggleLabel = "Icône « Masroufi Voice » (Lancement vocal direct)"
+    ).apply {
+        assistantSectionTitle = "Google Assistant (« Ok Google »)"
+        assistantSectionSub = "Ajoutez une dépense à la voix avec Google Assistant en FR, Darija, Arabe ou EN."
+        assistantTryCommandsLabel = "Dites par exemple à Google Assistant :"
+        assistantPinShortcutBtn = "+ Épingler raccourci Google Assistant"
+        assistantTestCommandBtn = "🎙️ Tester « Ok Google, Café 15 DH »"
+        assistantAutoSavedBadge = "🎙️ Google Assistant · Enregistré automatiquement"
+        themeModeLabel = "Thème"
+        themeModeSystem = "Appareil (Auto)"
+        themeModeLight = "Clair"
+        themeModeDark = "Sombre"
+        fxRatesSectionTitle = "Taux de change (MRE / Voyages)"
+        fxEurRateLabel = "1 EUR en DH"
+        fxUsdRateLabel = "1 USD en DH"
+        bankDetectTransferBadge = "⇄ Retrait / Transfert (Banque → Cash)"
+        daretCollectPotBtn = "Encaisser le pot"
+        daretPotCollectedBadge = "Pot encaissé ✓"
+        daretCollectAccountBank = "Banque"
+        daretCollectAccountCash = "Cash"
         daretPotCollectedToast = "✓ Pot Daret encaissé !"
-    )
+        impactGreenFitsTodayFmt = "✓ Dans le dispo du jour · Dispo/j : {newSafe} {cur}"
+        impactAmberLowersDailyFmt = "⚠️ Sur le cycle · Dispo/j : {oldSafe} → {newSafe} {cur}"
+        impactRedOverSafePoolFmt = "🚨 Dépasse le budget dispo de +{over} {cur}"
+        impactEnvelopeUsageSuffixFmt = " · {env} {pct}%"
+        timeAwareShortcutsHint = "Habitudes du moment (1-tap)"
+        eveningReminderTimeLabel = "Heure du rappel du soir"
+        eveningNotifBodyWithSafeFmt = "{safe} {cur} dispo aujourd'hui. Quelque chose à noter ?"
+        eveningNotifAddExpenseAction = "Ajouter dépense"
+        eveningNotifNothingTodayAction = "Rien aujourd'hui ✓"
+        smartSuggestionsTitle = "Suggestions intelligentes"
+        smartSuggestionsSub = "Impact en direct, raccourcis selon l'heure et rappel adaptatif (100% local)"
+        resetLearningBtn = "Réinitialiser l'apprentissage"
+        resetLearningToast = "✓ Apprentissage local réinitialisé"
+        impactRunOutSuffixFmt = " · Épuisé le {day}"
+        shortcutWhyThisFmt = "Pourquoi ? {count} fois vers cette heure"
+        eveningNotifPendingBankSuffixFmt = " · {count} opération(s) bancaire(s) à vérifier"
+    }
 
     val EN = AppStrings(
         isRtl = false,
@@ -721,27 +755,44 @@ object Translations {
         bankDetectNeedsReviewBadge = "Needs review",
         bankDetectDuplicateBadge = "Possible duplicate (±10 min)",
         bankDetectAutoConfirmLabel = "Auto-confirm below cap",
-        voiceLauncherAliasToggleLabel = "'Masroufi Voice' launcher icon (Voice command)",
-        assistantSectionTitle = "Google Assistant ('Hey Google')",
-        assistantSectionSub = "Add expenses hands-free with Google Assistant in EN, FR, Darija, or Arabic.",
-        assistantTryCommandsLabel = "Try saying to Google Assistant:",
-        assistantPinShortcutBtn = "+ Pin Google Assistant Shortcut",
-        assistantTestCommandBtn = "🎙️ Test 'Hey Google, Coffee 15 DH'",
-        assistantAutoSavedBadge = "🎙️ Google Assistant · Saved automatically",
-        themeModeLabel = "Theme",
-        themeModeSystem = "Device (Auto)",
-        themeModeLight = "Light",
-        themeModeDark = "Dark",
-        fxRatesSectionTitle = "Exchange Rates (EUR / USD)",
-        fxEurRateLabel = "1 EUR to DH",
-        fxUsdRateLabel = "1 USD to DH",
-        bankDetectTransferBadge = "⇄ ATM / Transfer (Bank → Cash)",
-        daretCollectPotBtn = "Collect pot",
-        daretPotCollectedBadge = "Pot collected ✓",
-        daretCollectAccountBank = "Bank",
-        daretCollectAccountCash = "Cash",
+        voiceLauncherAliasToggleLabel = "'Masroufi Voice' launcher icon (Voice command)"
+    ).apply {
+        assistantSectionTitle = "Google Assistant ('Hey Google')"
+        assistantSectionSub = "Add expenses hands-free with Google Assistant in EN, FR, Darija, or Arabic."
+        assistantTryCommandsLabel = "Try saying to Google Assistant:"
+        assistantPinShortcutBtn = "+ Pin Google Assistant Shortcut"
+        assistantTestCommandBtn = "🎙️ Test 'Hey Google, Coffee 15 DH'"
+        assistantAutoSavedBadge = "🎙️ Google Assistant · Saved automatically"
+        themeModeLabel = "Theme"
+        themeModeSystem = "Device (Auto)"
+        themeModeLight = "Light"
+        themeModeDark = "Dark"
+        fxRatesSectionTitle = "Exchange Rates (EUR / USD)"
+        fxEurRateLabel = "1 EUR to DH"
+        fxUsdRateLabel = "1 USD to DH"
+        bankDetectTransferBadge = "⇄ ATM / Transfer (Bank → Cash)"
+        daretCollectPotBtn = "Collect pot"
+        daretPotCollectedBadge = "Pot collected ✓"
+        daretCollectAccountBank = "Bank"
+        daretCollectAccountCash = "Cash"
         daretPotCollectedToast = "✓ Daret pot collected!"
-    )
+        impactGreenFitsTodayFmt = "✓ Fits today's allowance · Daily: {newSafe} {cur}"
+        impactAmberLowersDailyFmt = "⚠️ Fits cycle · Daily allowance: {oldSafe} → {newSafe} {cur}"
+        impactRedOverSafePoolFmt = "🚨 Exceeds safe pool by +{over} {cur}"
+        impactEnvelopeUsageSuffixFmt = " · {env} {pct}%"
+        timeAwareShortcutsHint = "Smart for right now (1-tap)"
+        eveningReminderTimeLabel = "Evening reminder time"
+        eveningNotifBodyWithSafeFmt = "{safe} {cur} left today. Anything to log?"
+        eveningNotifAddExpenseAction = "Add expense"
+        eveningNotifNothingTodayAction = "Nothing today ✓"
+        smartSuggestionsTitle = "Smart suggestions"
+        smartSuggestionsSub = "Live purchase impact, time-aware chips & adaptive evening reminder (100% local)"
+        resetLearningBtn = "Reset learning"
+        resetLearningToast = "✓ Local learning reset"
+        impactRunOutSuffixFmt = " · You'd run out on the {day}"
+        shortcutWhyThisFmt = "Why this? {count} times around this hour"
+        eveningNotifPendingBankSuffixFmt = " · {count} bank transaction(s) waiting for review"
+    }
 
     val AR = AppStrings(
         isRtl = true,
@@ -968,27 +1019,44 @@ object Translations {
         bankDetectNeedsReviewBadge = "يحتاج مراجعة",
         bankDetectDuplicateBadge = "احتمال تكرار (±10 دقائق)",
         bankDetectAutoConfirmLabel = "تأكيد تلقائي تحت السقف",
-        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » للفتح الصوتي المباشر",
-        assistantSectionTitle = "مساعد Google (« Ok Google »)",
-        assistantSectionSub = "أضف مصاريفك صوتياً عبر مساعد Google بالعربية أو الدارجة أو الفرنسية.",
-        assistantTryCommandsLabel = "قل لمساعد Google مثلاً :",
-        assistantPinShortcutBtn = "+ تثبيت اختصار مساعد Google",
-        assistantTestCommandBtn = "🎙️ تجربة « Ok Google، قهوة 15 درهم »",
-        assistantAutoSavedBadge = "🎙️ مساعد Google · تم الحفظ تلقائياً",
-        themeModeLabel = "المظهر",
-        themeModeSystem = "الجهاز (تلقائي)",
-        themeModeLight = "فاتح",
-        themeModeDark = "داكن",
-        fxRatesSectionTitle = "أسعار الصرف (أورو / دولار)",
-        fxEurRateLabel = "1 أورو بالدرهم",
-        fxUsdRateLabel = "1 دولار بالدرهم",
-        bankDetectTransferBadge = "⇄ سحب / تحويل (بنك ← نقداً)",
-        daretCollectPotBtn = "استلام مبلغ دارت",
-        daretPotCollectedBadge = "تم الاستلام ✓",
-        daretCollectAccountBank = "البنك",
-        daretCollectAccountCash = "نقداً",
+        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » للفتح الصوتي المباشر"
+    ).apply {
+        assistantSectionTitle = "مساعد Google (« Ok Google »)"
+        assistantSectionSub = "أضف مصاريفك صوتياً عبر مساعد Google بالعربية أو الدارجة أو الفرنسية."
+        assistantTryCommandsLabel = "قل لمساعد Google مثلاً :"
+        assistantPinShortcutBtn = "+ تثبيت اختصار مساعد Google"
+        assistantTestCommandBtn = "🎙️ تجربة « Ok Google، قهوة 15 درهم »"
+        assistantAutoSavedBadge = "🎙️ مساعد Google · تم الحفظ تلقائياً"
+        themeModeLabel = "المظهر"
+        themeModeSystem = "الجهاز (تلقائي)"
+        themeModeLight = "فاتح"
+        themeModeDark = "داكن"
+        fxRatesSectionTitle = "أسعار الصرف (أورو / دولار)"
+        fxEurRateLabel = "1 أورو بالدرهم"
+        fxUsdRateLabel = "1 دولار بالدرهم"
+        bankDetectTransferBadge = "⇄ سحب / تحويل (بنك ← نقداً)"
+        daretCollectPotBtn = "استلام مبلغ دارت"
+        daretPotCollectedBadge = "تم الاستلام ✓"
+        daretCollectAccountBank = "البنك"
+        daretCollectAccountCash = "نقداً"
         daretPotCollectedToast = "✓ تم استلام مبلغ دارت!"
-    )
+        impactGreenFitsTodayFmt = "✓ ضمن المتاح اليوم · المتاح/يوم: {newSafe} {cur}"
+        impactAmberLowersDailyFmt = "⚠️ ضمن الدورة · المتاح اليومي: {oldSafe} ← {newSafe} {cur}"
+        impactRedOverSafePoolFmt = "🚨 يتجاوز الميزانية المتاحة بـ +{over} {cur}"
+        impactEnvelopeUsageSuffixFmt = " · {env} {pct}%"
+        timeAwareShortcutsHint = "مقترحات هذا الوقت (ضغطة واحدة)"
+        eveningReminderTimeLabel = "وقت التذكير المسائي"
+        eveningNotifBodyWithSafeFmt = "متبقي {safe} {cur} اليوم. هل لديك شيء لتسجيله؟"
+        eveningNotifAddExpenseAction = "إضافة مصروف"
+        eveningNotifNothingTodayAction = "لا شيء اليوم ✓"
+        smartSuggestionsTitle = "الاقتراحات الذكية"
+        smartSuggestionsSub = "تأثير الشراء الفوري، اختصارات حسب الوقت وتذكير مسائي ذكي (محلي 100%)"
+        resetLearningBtn = "إعادة ضبط التعلم"
+        resetLearningToast = "✓ تمت إعادة ضبط التعلم المحلي"
+        impactRunOutSuffixFmt = " · ينفد يوم {day}"
+        shortcutWhyThisFmt = "لماذا؟ {count} مرات في مثل هذا الوقت"
+        eveningNotifPendingBankSuffixFmt = " · {count} عمليات بنكية بانتظار المراجعة"
+    }
 
     val DARIJA = AppStrings(
         isRtl = true,
@@ -1215,27 +1283,44 @@ object Translations {
         bankDetectNeedsReviewBadge = "خاصو مراجعة",
         bankDetectDuplicateBadge = "يمكن معاود (±10 دقايق)",
         bankDetectAutoConfirmLabel = "أكد أوتوماتيك تحت السقف",
-        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » فـ الشاشة باش تحل بالصوت",
-        assistantSectionTitle = "مساعد Google (« Ok Google »)",
-        assistantSectionSub = "زيد مصروفك بالصوت مع Google Assistant بالدارجة أو العربية أو الفرنسية.",
-        assistantTryCommandsLabel = "قول لـ Google Assistant مثلاً :",
-        assistantPinShortcutBtn = "+ زيد اختصار Google Assistant",
-        assistantTestCommandBtn = "🎙️ جرب « Ok Google, qahwa 15 DH »",
-        assistantAutoSavedBadge = "🎙️ Google Assistant · تقيدات أوتوماتيك",
-        themeModeLabel = "المظهر",
-        themeModeSystem = "التيليفون (أوطو)",
-        themeModeLight = "مضوي",
-        themeModeDark = "مظلم",
-        fxRatesSectionTitle = "صرف العملات (أورو / دولار)",
-        fxEurRateLabel = "1 أورو بالدرهم",
-        fxUsdRateLabel = "1 دولار بالدرهم",
-        bankDetectTransferBadge = "⇄ سحب GAB / تحويل (بنك ← كاش)",
-        daretCollectPotBtn = "شد الفلوس د دارت",
-        daretPotCollectedBadge = "شديتيها ✓",
-        daretCollectAccountBank = "البنكة",
-        daretCollectAccountCash = "الكاش",
+        voiceLauncherAliasToggleLabel = "أيقونة « Masroufi Voice » فـ الشاشة باش تحل بالصوت"
+    ).apply {
+        assistantSectionTitle = "مساعد Google (« Ok Google »)"
+        assistantSectionSub = "زيد مصروفك بالصوت مع Google Assistant بالدارجة أو العربية أو الفرنسية."
+        assistantTryCommandsLabel = "قول لـ Google Assistant مثلاً :"
+        assistantPinShortcutBtn = "+ زيد اختصار Google Assistant"
+        assistantTestCommandBtn = "🎙️ جرب « Ok Google, qahwa 15 DH »"
+        assistantAutoSavedBadge = "🎙️ Google Assistant · تقيدات أوتوماتيك"
+        themeModeLabel = "المظهر"
+        themeModeSystem = "التيليفون (أوطو)"
+        themeModeLight = "مضوي"
+        themeModeDark = "مظلم"
+        fxRatesSectionTitle = "صرف العملات (أورو / دولار)"
+        fxEurRateLabel = "1 أورو بالدرهم"
+        fxUsdRateLabel = "1 دولار بالدرهم"
+        bankDetectTransferBadge = "⇄ سحب GAB / تحويل (بنك ← كاش)"
+        daretCollectPotBtn = "شد الفلوس د دارت"
+        daretPotCollectedBadge = "شديتيها ✓"
+        daretCollectAccountBank = "البنكة"
+        daretCollectAccountCash = "الكاش"
         daretPotCollectedToast = "✓ تقيدات فلوس دارت!"
-    )
+        impactGreenFitsTodayFmt = "✓ داخلة فمرتاح اليوم · للنهار: {newSafe} {cur}"
+        impactAmberLowersDailyFmt = "⚠️ داخلة فالشهر · للنهار: {oldSafe} ← {newSafe} {cur}"
+        impactRedOverSafePoolFmt = "🚨 فايت الباقي د الشهر بـ +{over} {cur}"
+        impactEnvelopeUsageSuffixFmt = " · {env} {pct}%"
+        timeAwareShortcutsHint = "مصاريف هاد الوقيتة (1-tap)"
+        eveningReminderTimeLabel = "وقت تذكير العشية"
+        eveningNotifBodyWithSafeFmt = "باقي ليك {safe} {cur} اليوم. واش كاين ما تقيد؟"
+        eveningNotifAddExpenseAction = "زيد مصروف"
+        eveningNotifNothingTodayAction = "والو اليوم ✓"
+        smartSuggestionsTitle = "الاقتراحات الذكية"
+        smartSuggestionsSub = "تأثير الصرف، اختصارات على حساب الوقت وتذكير العشية الذكي (فالتيليفون 100%)"
+        resetLearningBtn = "مسح التعلم الذكي"
+        resetLearningToast = "✓ تمسح التعلم المحلي"
+        impactRunOutSuffixFmt = " · غادي يتقادى نهار {day}"
+        shortcutWhyThisFmt = "علاش هادا؟ {count} مرات فهاد الوقيتة"
+        eveningNotifPendingBankSuffixFmt = " · {count} عمليات د البنكة كيتسناو التأكيد"
+    }
 
     fun forLang(lang: String): AppStrings = when (lang) {
         "ar" -> AR

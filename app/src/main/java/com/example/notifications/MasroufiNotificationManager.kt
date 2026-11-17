@@ -14,6 +14,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -31,6 +32,7 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
@@ -46,12 +48,27 @@ object MasroufiNotificationManager {
     private const val KEY_ENABLED_DARET = "notif_daret_enabled"
     private const val KEY_ENABLED_BUDGET_80 = "notif_budget_80_enabled"
     private const val KEY_ENABLED_EVENING = "notif_evening_enabled"
+    private const val KEY_EVENING_HOUR = "notif_evening_hour"
+    private const val KEY_EVENING_MINUTE = "notif_evening_minute"
+    private const val KEY_ADAPTIVE_EVENING_HOUR = "notif_adaptive_evening_hour"
+    private const val KEY_ADAPTIVE_EVENING_MINUTE = "notif_adaptive_evening_minute"
+    private const val KEY_LAST_EVENING_SHOWN_ISO = "notif_last_evening_shown_iso"
+    private const val KEY_NO_SPEND_CONFIRMED_ISO = "notif_no_spend_confirmed_iso"
+    private const val KEY_VERIFIED_ACTIVE_DATES = "notif_verified_active_dates_csv"
+    private const val KEY_EVENING_IGNORED_STREAK = "notif_evening_ignored_streak"
+    private const val KEY_SMART_SUGGESTIONS_ENABLED = "notif_smart_suggestions_enabled"
+    private const val KEY_SHORTCUT_EDIT_HISTORY_JSON = "notif_shortcut_edit_history_json"
+    private const val KEY_SHORTCUT_AMOUNT_OVERRIDES_JSON = "notif_shortcut_amount_overrides_json"
     private const val KEY_SNAPSHOT_JSON = "notif_snapshot_json"
+
+    const val DEFAULT_EVENING_HOUR = 20
+    const val DEFAULT_EVENING_MINUTE = 30
 
     const val CHANNEL_BILLS_DARET = "masroufi_channel_bills_daret"
     const val CHANNEL_BUDGET_80 = "masroufi_channel_budget_80"
     const val CHANNEL_EVENING = "masroufi_channel_evening"
     private const val PERIODIC_WORK_NAME = "masroufi_smart_alerts_periodic"
+    const val EVENING_WORK_NAME = "masroufi_evening_exact_reminder"
 
     fun isBillsAlertEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_ENABLED_BILLS, true)
@@ -88,10 +105,350 @@ object MasroufiNotificationManager {
 
     fun setEveningReminderEnabled(context: Context, enabled: Boolean) {
         prefs(context).edit().putBoolean(KEY_ENABLED_EVENING, enabled).apply()
+        scheduleNextEveningReminder(context)
     }
 
     fun isNotifyEveningEnabled(context: Context): Boolean = isEveningReminderEnabled(context)
     fun setNotifyEveningEnabled(context: Context, enabled: Boolean) = setEveningReminderEnabled(context, enabled)
+
+    fun getEveningReminderTime(context: Context): Pair<Int, Int> {
+        val p = prefs(context)
+        val h = p.getInt(KEY_EVENING_HOUR, DEFAULT_EVENING_HOUR).coerceIn(0, 23)
+        val m = p.getInt(KEY_EVENING_MINUTE, DEFAULT_EVENING_MINUTE).coerceIn(0, 59)
+        return h to m
+    }
+
+    fun getEveningReminderTimeFormatted(context: Context): String {
+        val (h, m) = getEveningReminderTime(context)
+        return String.format(Locale.US, "%02d:%02d", h, m)
+    }
+
+    fun setEveningReminderTime(context: Context, hour: Int, minute: Int) {
+        val clampedHour = hour.coerceIn(0, 23)
+        val clampedMinute = minute.coerceIn(0, 59)
+        prefs(context).edit()
+            .putInt(KEY_EVENING_HOUR, clampedHour)
+            .putInt(KEY_EVENING_MINUTE, clampedMinute)
+            .apply()
+        scheduleNextEveningReminder(context)
+    }
+
+    fun getLastEveningShownIso(context: Context): String =
+        prefs(context).getString(KEY_LAST_EVENING_SHOWN_ISO, "").orEmpty()
+
+    fun setLastEveningShownIso(context: Context, isoDate: String) {
+        prefs(context).edit().putString(KEY_LAST_EVENING_SHOWN_ISO, isoDate.trim()).apply()
+    }
+
+    fun getNoSpendConfirmedIso(context: Context): String =
+        prefs(context).getString(KEY_NO_SPEND_CONFIRMED_ISO, "").orEmpty()
+
+    fun isNoSpendConfirmedForDate(context: Context, isoDate: String = PayCycleEngine.todayIso()): Boolean =
+        getNoSpendConfirmedIso(context) == isoDate.trim()
+
+    fun recordVerifiedActiveDate(context: Context, isoDate: String = PayCycleEngine.todayIso()): Set<String> {
+        val clean = isoDate.trim()
+        if (!PayCycleEngine.isValidIsoDate(clean)) return getVerifiedActiveDates(context)
+        val existing = getVerifiedActiveDates(context)
+        val updated = (existing + clean).sorted().takeLast(120).toSet()
+        prefs(context).edit()
+            .putString(KEY_VERIFIED_ACTIVE_DATES, updated.joinToString(","))
+            .apply()
+        return updated
+    }
+
+    fun getVerifiedActiveDates(context: Context): Set<String> {
+        val raw = prefs(context).getString(KEY_VERIFIED_ACTIVE_DATES, "").orEmpty()
+        val confirmed = getNoSpendConfirmedIso(context)
+        val parsed = raw.split(",")
+            .map { it.trim() }
+            .filter { PayCycleEngine.isValidIsoDate(it) }
+            .toMutableSet()
+        if (PayCycleEngine.isValidIsoDate(confirmed)) {
+            parsed.add(confirmed)
+        }
+        return parsed
+    }
+
+    fun isSmartSuggestionsEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_SMART_SUGGESTIONS_ENABLED, true)
+
+    fun setSmartSuggestionsEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_SMART_SUGGESTIONS_ENABLED, enabled).apply()
+        runCatching {
+            val snap = com.example.widget.MasroufiWidgetStore.loadSnapshot(context)
+            com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(
+                context,
+                snap.copy(smartSuggestionsEnabled = enabled, updatedAtMillis = System.currentTimeMillis())
+            )
+        }
+        scheduleNextEveningReminder(context)
+    }
+
+    fun resetAllSmartLearning(context: Context) {
+        PayCycleEngine.clearLearnedCategories()
+        com.example.security.AppSecurityManager.saveLearnedCategoriesJson(context, "")
+        prefs(context).edit()
+            .remove(KEY_ADAPTIVE_EVENING_HOUR)
+            .remove(KEY_ADAPTIVE_EVENING_MINUTE)
+            .remove(KEY_EVENING_IGNORED_STREAK)
+            .remove(KEY_SHORTCUT_EDIT_HISTORY_JSON)
+            .remove(KEY_SHORTCUT_AMOUNT_OVERRIDES_JSON)
+            .apply()
+        scheduleNextEveningReminder(context)
+    }
+
+    fun getEveningIgnoredStreak(context: Context): Int =
+        prefs(context).getInt(KEY_EVENING_IGNORED_STREAK, 0).coerceAtLeast(0)
+
+    fun incrementEveningIgnoredStreak(context: Context): Int {
+        val next = (getEveningIgnoredStreak(context) + 1).coerceAtMost(99)
+        prefs(context).edit().putInt(KEY_EVENING_IGNORED_STREAK, next).apply()
+        return next
+    }
+
+    fun resetEveningIgnoredStreak(context: Context) {
+        prefs(context).edit().putInt(KEY_EVENING_IGNORED_STREAK, 0).apply()
+    }
+
+    /**
+     * Prompt 5.2: After 3 ignored reminders in a row, send only every other day.
+     * Returns true when today should be skipped because the reminder was shown yesterday.
+     */
+    fun shouldThrottleEveningForIgnoredStreak(
+        ignoredStreak: Int,
+        lastEveningShownIso: String,
+        todayIso: String = PayCycleEngine.todayIso()
+    ): Boolean {
+        if (ignoredStreak < 3) return false
+        val cleanLast = lastEveningShownIso.trim()
+        val cleanToday = todayIso.trim()
+        if (!PayCycleEngine.isValidIsoDate(cleanLast) || !PayCycleEngine.isValidIsoDate(cleanToday)) return false
+        val daysDelta = PayCycleEngine.parseEpochDays(cleanToday) - PayCycleEngine.parseEpochDays(cleanLast)
+        return daysDelta == 1L
+    }
+
+    fun shouldThrottleEveningForIgnoredStreak(
+        context: Context,
+        todayIso: String = PayCycleEngine.todayIso()
+    ): Boolean = shouldThrottleEveningForIgnoredStreak(
+        ignoredStreak = getEveningIgnoredStreak(context),
+        lastEveningShownIso = getLastEveningShownIso(context),
+        todayIso = todayIso
+    )
+
+    /**
+     * Prompt 5.1 & 5.4: Computes the adaptive evening reminder time:
+     * - Finds the median hour of the last expense of the day over the last 30 days (using hourOfDay).
+     * - Sends the reminder 1 hour after that, clamped to 18:00–22:30.
+     * - Falls back to the user's chosen time if there is too little data (< [minActiveDays]) or when
+     *   [smartSuggestionsEnabled] is false.
+     */
+    fun computeAdaptiveEveningReminderTime(
+        transactions: List<TransactionItem>,
+        todayIso: String = PayCycleEngine.todayIso(),
+        fallbackHour: Int = DEFAULT_EVENING_HOUR,
+        fallbackMinute: Int = DEFAULT_EVENING_MINUTE,
+        smartSuggestionsEnabled: Boolean = true,
+        minActiveDays: Int = 5
+    ): Pair<Int, Int> {
+        val safeFallback = fallbackHour.coerceIn(0, 23) to fallbackMinute.coerceIn(0, 59)
+        if (!smartSuggestionsEnabled || !PayCycleEngine.isValidIsoDate(todayIso)) {
+            return safeFallback
+        }
+        val todayEpoch = PayCycleEngine.parseEpochDays(todayIso)
+        val validExpenses = transactions.mapNotNull { tx ->
+            if (tx.type != "expense" || tx.amount <= 0.0 || !PayCycleEngine.isValidIsoDate(tx.isoDate)) {
+                return@mapNotNull null
+            }
+            val ageDays = (todayEpoch - PayCycleEngine.parseEpochDays(tx.isoDate)).toInt()
+            if (ageDays !in 0..30) return@mapNotNull null
+            val resolvedHour = tx.resolvedHourOfDay()
+            if (resolvedHour !in 0..23) return@mapNotNull null
+            tx.isoDate to resolvedHour
+        }
+
+        val lastHourByDay = validExpenses
+            .groupBy({ it.first }, { it.second })
+            .mapValues { (_, hours) -> hours.maxOrNull() ?: 0 }
+            .values
+            .sorted()
+
+        if (lastHourByDay.size < minActiveDays) {
+            return safeFallback
+        }
+
+        val medianHour = if (lastHourByDay.size % 2 == 1) {
+            lastHourByDay[lastHourByDay.size / 2]
+        } else {
+            val mid = lastHourByDay.size / 2
+            ((lastHourByDay[mid - 1] + lastHourByDay[mid]) / 2.0).roundToInt()
+        }
+
+        // Send 1 hour after the median last-expense hour, clamped to 18:00 (1080m) .. 22:30 (1350m)
+        val targetTotalMinutes = ((medianHour + 1) * 60).coerceIn(18 * 60, 22 * 60 + 30)
+        return (targetTotalMinutes / 60) to (targetTotalMinutes % 60)
+    }
+
+    fun computeAdaptiveEveningReminderTime(
+        context: Context,
+        allTransactions: List<TransactionItem>,
+        nowIso: String = PayCycleEngine.todayIso()
+    ): Pair<Int, Int> {
+        val (fbH, fbM) = getEveningReminderTime(context)
+        return computeAdaptiveEveningReminderTime(
+            transactions = allTransactions,
+            todayIso = nowIso,
+            fallbackHour = fbH,
+            fallbackMinute = fbM,
+            smartSuggestionsEnabled = isSmartSuggestionsEnabled(context)
+        )
+    }
+
+    fun getEffectiveEveningReminderTime(context: Context): Pair<Int, Int> {
+        val fallback = getEveningReminderTime(context)
+        if (!isSmartSuggestionsEnabled(context)) return fallback
+        val p = prefs(context)
+        val adaptiveH = p.getInt(KEY_ADAPTIVE_EVENING_HOUR, -1)
+        val adaptiveM = p.getInt(KEY_ADAPTIVE_EVENING_MINUTE, -1)
+        return if (adaptiveH in 0..23 && adaptiveM in 0..59) {
+            adaptiveH to adaptiveM
+        } else {
+            fallback
+        }
+    }
+
+    /**
+     * Prompt 7.4: If the user edits a pre-filled shortcut amount 3 times, use the edited amount
+     * as the new suggestion. Stored locally in SharedPreferences.
+     */
+    fun getShortcutAmountOverrides(context: Context): Map<String, Double> {
+        val raw = prefs(context).getString(KEY_SHORTCUT_AMOUNT_OVERRIDES_JSON, null) ?: return emptyMap()
+        val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
+        val result = mutableMapOf<String, Double>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val v = obj.optDouble(k, 0.0)
+            if (k.isNotBlank() && v > 0.0) {
+                result[k] = PayCycleEngine.roundMoney(v)
+            }
+        }
+        return result
+    }
+
+    fun recordShortcutAmountEdit(
+        context: Context,
+        desc: String,
+        suggestedAmount: Double,
+        savedAmount: Double
+    ): Double? {
+        val normKey = desc.trim().lowercase(Locale.ROOT)
+        val roundedEdited = PayCycleEngine.roundMoney(savedAmount)
+        val roundedOriginal = PayCycleEngine.roundMoney(suggestedAmount)
+        if (normKey.isEmpty() || roundedEdited <= 0.0 || kotlin.math.abs(roundedEdited - roundedOriginal) < 0.01) {
+            return getShortcutAmountOverrides(context)[normKey]
+        }
+
+        val p = prefs(context)
+        val historyObj = runCatching {
+            JSONObject(p.getString(KEY_SHORTCUT_EDIT_HISTORY_JSON, "{}") ?: "{}")
+        }.getOrDefault(JSONObject())
+        val existingArr = historyObj.optJSONArray(normKey) ?: JSONArray()
+        val edits = mutableListOf<Double>()
+        for (i in 0 until existingArr.length()) {
+            val v = existingArr.optDouble(i, 0.0)
+            if (v > 0.0) edits.add(PayCycleEngine.roundMoney(v))
+        }
+        edits.add(roundedEdited)
+        val trimmedEdits = edits.takeLast(12)
+        val nextArr = JSONArray()
+        trimmedEdits.forEach { nextArr.put(it) }
+        historyObj.put(normKey, nextArr)
+
+        var learnedOverride: Double? = null
+        val overridesObj = runCatching {
+            JSONObject(p.getString(KEY_SHORTCUT_AMOUNT_OVERRIDES_JSON, "{}") ?: "{}")
+        }.getOrDefault(JSONObject())
+
+        if (trimmedEdits.size >= 3) {
+            // Pick the mode of the edited amounts, tie-broken by the most recent edit
+            val grouped = trimmedEdits.withIndex().groupBy({ it.value }, { it.index })
+            val bestAmount = grouped.entries.sortedWith(
+                compareByDescending<Map.Entry<Double, List<Int>>> { it.value.size }
+                    .thenByDescending { it.value.maxOrNull() ?: 0 }
+            ).first().key
+            learnedOverride = bestAmount
+            overridesObj.put(normKey, bestAmount)
+        }
+
+        p.edit()
+            .putString(KEY_SHORTCUT_EDIT_HISTORY_JSON, historyObj.toString())
+            .putString(KEY_SHORTCUT_AMOUNT_OVERRIDES_JSON, overridesObj.toString())
+            .apply()
+
+        return learnedOverride
+    }
+
+    fun confirmNoSpendToday(context: Context, todayIso: String = PayCycleEngine.todayIso()) {
+        val clean = todayIso.trim()
+        prefs(context).edit()
+            .putString(KEY_NO_SPEND_CONFIRMED_ISO, clean)
+            .putString(KEY_LAST_EVENING_SHOWN_ISO, clean)
+            .putInt(KEY_EVENING_IGNORED_STREAK, 0)
+            .apply()
+        recordVerifiedActiveDate(context, clean)
+        runCatching {
+            val snap = com.example.widget.MasroufiWidgetStore.loadSnapshot(context, clean)
+            if (snap.effectiveTodaySpend(clean) <= 0.0) {
+                val nextStreak = snap.noSpendStreakDays.coerceAtLeast(1)
+                com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(
+                    context,
+                    snap.copy(noSpendStreakDays = nextStreak, updatedAtMillis = System.currentTimeMillis())
+                )
+            }
+        }
+    }
+
+    fun computeDelayMillisUntilNextEveningReminder(
+        hour: Int,
+        minute: Int,
+        nowMillis: Long = System.currentTimeMillis()
+    ): Long {
+        val nowCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
+        val targetCal = (nowCal.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, hour.coerceIn(0, 23))
+            set(Calendar.MINUTE, minute.coerceIn(0, 59))
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        if (targetCal.timeInMillis <= nowMillis + 10_000L) {
+            targetCal.add(Calendar.DAY_OF_YEAR, 1)
+        }
+        return (targetCal.timeInMillis - nowMillis).coerceAtLeast(60_000L)
+    }
+
+    fun scheduleNextEveningReminder(context: Context) {
+        runCatching {
+            val appCtx = context.applicationContext
+            val wm = WorkManager.getInstance(appCtx)
+            if (!isEveningReminderEnabled(appCtx)) {
+                wm.cancelUniqueWork(EVENING_WORK_NAME)
+                return
+            }
+            ensureChannels(appCtx)
+            val (hour, minute) = getEffectiveEveningReminderTime(appCtx)
+            val delayMs = computeDelayMillisUntilNextEveningReminder(hour, minute)
+            val req = OneTimeWorkRequestBuilder<EveningReminderWorker>()
+                .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+                .build()
+            wm.enqueueUniqueWork(
+                EVENING_WORK_NAME,
+                ExistingWorkPolicy.REPLACE,
+                req
+            )
+        }
+    }
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -199,24 +556,46 @@ object MasroufiNotificationManager {
                 }
 
             val todayTxCount = state.allTransactions.count { it.isoDate == todayIso }
+            if (todayTxCount > 0) {
+                resetEveningIgnoredStreak(context)
+            }
             val totalUsagePct = if (state.totalAvailableBudget > 0) {
                 ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).roundToInt()
             } else 0
+
+            val (userHour, userMinute) = getEveningReminderTime(context)
+            val smartEnabled = isSmartSuggestionsEnabled(context)
+            val (adaptiveHour, adaptiveMinute) = computeAdaptiveEveningReminderTime(
+                transactions = state.allTransactions,
+                todayIso = todayIso,
+                fallbackHour = userHour,
+                fallbackMinute = userMinute,
+                smartSuggestionsEnabled = smartEnabled
+            )
+            val pendingBankCount = runCatching { BankDetectionStore.loadPendingItems(context).size }.getOrDefault(0)
 
             val snapshot = JSONObject().apply {
                 put("lang", state.profile.language)
                 put("currency", cur)
                 put("cycleKey", cycleKey)
                 put("hideAmounts", hide)
+                put("safeToday", PayCycleEngine.roundMoney(state.safeToSpendToday))
                 put("todayTxCount", todayTxCount)
+                put("pendingBankCount", pendingBankCount)
                 put("totalUsagePct", totalUsagePct)
                 put("upcomingBills", upcomingBillsArr)
                 put("activeDarets", activeDaretsArr)
                 put("over80Envelopes", over80EnvelopesArr)
             }
 
-            prefs(context).edit().putString(KEY_SNAPSHOT_JSON, snapshot.toString()).apply()
+            prefs(context).edit()
+                .putString(KEY_SNAPSHOT_JSON, snapshot.toString())
+                .putInt(KEY_ADAPTIVE_EVENING_HOUR, adaptiveHour)
+                .putInt(KEY_ADAPTIVE_EVENING_MINUTE, adaptiveMinute)
+                .apply()
+            recordVerifiedActiveDate(context, todayIso)
             schedulePeriodicWorker(context)
+            scheduleNextEveningReminder(context)
         }
     }
 
@@ -239,13 +618,15 @@ object MasroufiNotificationManager {
         runCatching {
             val oneTime = OneTimeWorkRequestBuilder<MasroufiNotificationWorker>().build()
             WorkManager.getInstance(context.applicationContext).enqueue(oneTime)
+            scheduleNextEveningReminder(context)
         }
         return evaluateAndPostNotifications(context, forceEveningReminder = true)
     }
 
     internal fun evaluateAndPostNotifications(
         context: Context,
-        forceEveningReminder: Boolean = false
+        forceEveningReminder: Boolean = false,
+        fromScheduledEveningWorker: Boolean = false
     ): Int {
         if (!hasNotificationPermission(context)) return 0
         ensureChannels(context)
@@ -402,23 +783,118 @@ object MasroufiNotificationManager {
             }
         }
 
-        // 4. Evening Reminder (if after 18h or forced via test button)
+        // 4. Evening Reminder (adaptive or user-chosen time, or forced via test button; at most once per day)
+        val todayIso = PayCycleEngine.todayIso()
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val (targetHour, _) = getEffectiveEveningReminderTime(context)
         val todayTxCount = obj.optInt("todayTxCount", 0)
-        if (isEveningReminderEnabled(context) && (forceEveningReminder || (hour in 18..22 && todayTxCount == 0))) {
+        val safeToday = obj.optDouble("safeToday", 0.0)
+        val lastShownIso = getLastEveningShownIso(context)
+        val alreadyShownToday = lastShownIso == todayIso
+        val alreadyConfirmedNothing = isNoSpendConfirmedForDate(context, todayIso)
+        val ignoredStreak = getEveningIgnoredStreak(context)
+        val throttledByIgnoredStreak = shouldThrottleEveningForIgnoredStreak(
+            ignoredStreak = ignoredStreak,
+            lastEveningShownIso = lastShownIso,
+            todayIso = todayIso
+        )
+        val isWithinEveningWindow = fromScheduledEveningWorker || hour in 18..23 || hour == targetHour
+
+        val shouldPostEvening = isEveningReminderEnabled(context) && (
+            forceEveningReminder || (
+                isWithinEveningWindow &&
+                    !alreadyShownToday &&
+                    !alreadyConfirmedNothing &&
+                    !throttledByIgnoredStreak &&
+                    todayTxCount == 0
+                )
+            )
+
+        if (shouldPostEvening) {
             val title = when (lang) {
                 "ar" -> "تذكير المساء · هل سجلت مصاريف اليوم؟"
                 "darija" -> "تذكير العشية · واش قيدتي مصاريف اليوم؟"
                 "en" -> "Evening Reminder · Log today's expenses"
                 else -> "Rappel du soir · Notez vos dépenses du jour"
             }
-            val body = when (lang) {
-                "ar" -> "اضغط لتسجيل مصروف في ثانيتين (أرقام كبيرة أو بالصوت بالدارجة)."
-                "darija" -> "ورك هنا باش تزيد مصروف فـ جوج ضغطات أو بالصوت بالدارجة."
-                "en" -> "Tap to log an expense in 2 taps or by voice in Darija."
-                else -> "Touchez pour ajouter vos achats en 2 gestes ou à la voix en Darija."
+            val safeFormatted = PayCycleEngine.formatAmountOrMask(safeToday, hide)
+            val baseBody = strings.eveningNotifBodyWithSafeFmt
+                .replace("{safe}", safeFormatted)
+                .replace("{cur}", cur)
+
+            val pendingBankCount = runCatching {
+                BankDetectionStore.loadPendingItems(context).size
+            }.getOrDefault(0).coerceAtLeast(obj.optInt("pendingBankCount", 0))
+
+            val body = if (pendingBankCount > 0) {
+                baseBody + strings.eveningNotifPendingBankSuffixFmt.replace("{count}", pendingBankCount.toString())
+            } else {
+                baseBody
             }
-            postNotification(context, 4004, CHANNEL_EVENING, title, body, openQuickAdd = true)
+
+            val addExpenseIntent = Intent(context, com.example.widget.QuickCaptureActivity::class.java).apply {
+                action = MasroufiAppWidget.ACTION_QUICK_ADD
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val addExpensePi = PendingIntent.getActivity(
+                context,
+                5004,
+                addExpenseIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val addExpenseAction = NotificationCompat.Action.Builder(
+                0,
+                strings.eveningNotifAddExpenseAction,
+                addExpensePi
+            ).build()
+
+            val nothingTodayIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_CONFIRM_NO_SPEND_TODAY
+                putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, 4004)
+            }
+            val nothingTodayPi = PendingIntent.getBroadcast(
+                context,
+                5005,
+                nothingTodayIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val nothingTodayAction = NotificationCompat.Action.Builder(
+                0,
+                strings.eveningNotifNothingTodayAction,
+                nothingTodayPi
+            ).build()
+
+            val dismissIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_DISMISS_EVENING_REMINDER
+                putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, 4004)
+            }
+            val dismissPi = PendingIntent.getBroadcast(
+                context,
+                5006,
+                dismissIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val customContentIntent = if (pendingBankCount > 0) {
+                Intent(context, MainActivity::class.java).apply {
+                    putExtra(com.example.widget.MasroufiAppWidget.EXTRA_TARGET_TAB, "bank_detections")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+            } else null
+
+            postNotification(
+                context = context,
+                id = 4004,
+                channelId = CHANNEL_EVENING,
+                title = title,
+                body = body,
+                openQuickAdd = pendingBankCount == 0,
+                notifAction = addExpenseAction,
+                secondNotifAction = nothingTodayAction,
+                deletePendingIntent = dismissPi,
+                overrideContentIntent = customContentIntent
+            )
+            setLastEveningShownIso(context, todayIso)
             postedCount++
         }
 
@@ -469,11 +945,14 @@ object MasroufiNotificationManager {
         title: String,
         body: String,
         openQuickAdd: Boolean,
-        notifAction: NotificationCompat.Action? = null
+        notifAction: NotificationCompat.Action? = null,
+        secondNotifAction: NotificationCompat.Action? = null,
+        deletePendingIntent: PendingIntent? = null,
+        overrideContentIntent: Intent? = null
     ) {
         if (!hasNotificationPermission(context)) return
         runCatching {
-            val intent = if (openQuickAdd) {
+            val intent = overrideContentIntent ?: if (openQuickAdd) {
                 Intent(context, com.example.widget.QuickCaptureActivity::class.java).apply {
                     action = MasroufiAppWidget.ACTION_QUICK_ADD
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -498,8 +977,14 @@ object MasroufiNotificationManager {
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
 
+            if (deletePendingIntent != null) {
+                builder.setDeleteIntent(deletePendingIntent)
+            }
             if (notifAction != null) {
                 builder.addAction(notifAction)
+            }
+            if (secondNotifAction != null) {
+                builder.addAction(secondNotifAction)
             }
 
             NotificationManagerCompat.from(context).notify(id, builder.build())
@@ -511,6 +996,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_MARK_BILL_PAID = "com.aistudio.masroufi.ACTION_MARK_BILL_PAID"
         const val ACTION_PAY_DARET_ROUND = "com.aistudio.masroufi.ACTION_PAY_DARET_ROUND"
+        const val ACTION_CONFIRM_NO_SPEND_TODAY = "com.aistudio.masroufi.ACTION_CONFIRM_NO_SPEND_TODAY"
+        const val ACTION_DISMISS_EVENING_REMINDER = "com.aistudio.masroufi.ACTION_DISMISS_EVENING_REMINDER"
         const val EXTRA_NOTIF_ID = "extra_notif_id"
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_ITEM_NAME = "extra_item_name"
@@ -525,9 +1012,23 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action ?: return
-        if (action != ACTION_MARK_BILL_PAID && action != ACTION_PAY_DARET_ROUND) return
-
         val appCtx = context.applicationContext
+
+        if (action == ACTION_DISMISS_EVENING_REMINDER) {
+            MasroufiNotificationManager.incrementEveningIgnoredStreak(appCtx)
+            return
+        }
+
+        if (action == ACTION_CONFIRM_NO_SPEND_TODAY) {
+            val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 4004)
+            MasroufiNotificationManager.confirmNoSpendToday(appCtx, PayCycleEngine.todayIso())
+            runCatching {
+                NotificationManagerCompat.from(appCtx).cancel(notifId)
+            }
+            return
+        }
+
+        if (action != ACTION_MARK_BILL_PAID && action != ACTION_PAY_DARET_ROUND) return
         val itemId = intent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
         if (itemId.isBlank()) return
         val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, if (action == ACTION_MARK_BILL_PAID) 4001 else 4002)
@@ -647,6 +1148,22 @@ class MasroufiNotificationWorker(
         val snapshot = com.example.widget.MasroufiWidgetStore.loadSnapshot(applicationContext)
         com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(applicationContext, snapshot)
         MasroufiNotificationManager.evaluateAndPostNotifications(applicationContext)
+        return Result.success()
+    }
+}
+
+class EveningReminderWorker(
+    appContext: Context,
+    workerParams: WorkerParameters
+) : CoroutineWorker(appContext, workerParams) {
+
+    override suspend fun doWork(): Result {
+        MasroufiNotificationManager.evaluateAndPostNotifications(
+            context = applicationContext,
+            forceEveningReminder = false,
+            fromScheduledEveningWorker = true
+        )
+        MasroufiNotificationManager.scheduleNextEveningReminder(applicationContext)
         return Result.success()
     }
 }

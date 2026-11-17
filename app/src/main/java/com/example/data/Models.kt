@@ -276,6 +276,7 @@ data class TransactionItem(
     val toAccountId: String = "",
     val desc: String = "",
     val isoDate: String = "", // YYYY-MM-DD
+    val hourOfDay: Int = -1,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -286,6 +287,13 @@ data class TransactionItem(
             envelopes = envelopes,
             lang = lang
         )
+    }
+
+    fun resolvedHourOfDay(): Int {
+        if (hourOfDay in 0..23) return hourOfDay
+        val date = createdAt?.toDate() ?: return -1
+        val cal = java.util.Calendar.getInstance().apply { time = date }
+        return cal.get(java.util.Calendar.HOUR_OF_DAY)
     }
 }
 

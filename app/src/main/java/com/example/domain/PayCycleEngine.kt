@@ -60,6 +60,40 @@ data class EnvelopeStatus(
     val isOver90Percent: Boolean
 )
 
+enum class PurchaseVerdict {
+    FITS_TODAY,
+    LOWERS_ALLOWANCE,
+    OVER_POOL;
+
+    companion object {
+        val GREEN: PurchaseVerdict get() = FITS_TODAY
+        val AMBER: PurchaseVerdict get() = LOWERS_ALLOWANCE
+        val RED: PurchaseVerdict get() = OVER_POOL
+    }
+}
+
+data class PurchaseImpact(
+    val amount: Double,
+    val safePool: Double,
+    val daysRemaining: Int,
+    val currentDailyAllowance: Double,
+    val newSafeToday: Double,
+    val delta: Double,
+    val remainingTodayAllowance: Double,
+    val overSafePoolAmount: Double,
+    val verdict: PurchaseVerdict,
+    val runOutIso: String? = null,
+    val envelopeUsageAfter: Int? = null,
+    val envelopeKey: String? = null,
+    val envelopeNewSpent: Double? = null,
+    val envelopeRemainingAfter: Double? = null,
+    val envelopeHasCap: Boolean = false
+) {
+    val newDailyAllowance: Double get() = newSafeToday
+    val dailyAllowanceDelta: Double get() = delta
+    val envelopeNewUsagePercent: Int? get() = envelopeUsageAfter
+}
+
 data class SmartInsight(
     val id: String,
     val title: String,
@@ -778,11 +812,14 @@ object PayCycleEngine {
 
     /**
      * No-spend streak: counts consecutive days (up to [nowIso] within [window]) with 0 expense transactions.
+     * When [verifiedActiveDates] is provided, a 0-expense day only counts if the user opened the app,
+     * tapped "Nothing today", or logged a non-expense operation on that date.
      */
     fun computeNoSpendStreakDays(
         cycleTransactions: List<TransactionItem>,
         window: PayCycleWindow,
-        nowIso: String = todayIso()
+        nowIso: String = todayIso(),
+        verifiedActiveDates: Set<String>? = null
     ): Int {
         val anchorIso = if (nowIso in window.startIso..window.endIso) nowIso else window.endIso
         val startEpoch = parseEpochDays(window.startIso)
@@ -794,10 +831,23 @@ object PayCycleEngine {
             .map { parseEpochDays(it.isoDate) }
             .toSet()
 
+        val anyTxEpochDays = cycleTransactions
+            .filter { it.isoDate.isNotBlank() }
+            .map { parseEpochDays(it.isoDate) }
+            .toSet()
+
+        val verifiedEpochDays = verifiedActiveDates
+            ?.filter { it.isNotBlank() }
+            ?.map { parseEpochDays(it) }
+            ?.toSet()
+
         var streak = 0
         var d = anchorEpoch
         while (d >= startEpoch) {
             if (d in expenseEpochDays) {
+                break
+            }
+            if (verifiedEpochDays != null && d !in verifiedEpochDays && d !in anyTxEpochDays) {
                 break
             }
             streak++
@@ -808,10 +858,11 @@ object PayCycleEngine {
 
     fun computeNoSpendStreakDays(
         allTransactions: List<TransactionItem>,
-        nowIso: String = todayIso()
+        nowIso: String = todayIso(),
+        verifiedActiveDates: Set<String>? = null
     ): Int {
         val window = computeCycleWindow(1, 0, nowIso)
-        return computeNoSpendStreakDays(allTransactions, window, nowIso)
+        return computeNoSpendStreakDays(allTransactions, window, nowIso, verifiedActiveDates)
     }
 
     /**
@@ -1526,5 +1577,316 @@ object PayCycleEngine {
 
     fun formatCurrencyOrMask(value: Double, currencySymbol: String, hideAmounts: Boolean): String {
         return if (hideAmounts) "•••• $currencySymbol" else "${formatDh(value)} $currencySymbol"
+    }
+
+    /**
+     * Parses a user-typed amount supporting dots ("85.50"), commas ("85,50"), and whitespace.
+     */
+    fun parseFlexibleAmount(rawAmountText: String): Double {
+        val clean = rawAmountText
+            .replace("\u00A0", "")
+            .replace(" ", "")
+            .trim()
+            .replace(',', '.')
+        if (clean.isEmpty()) return 0.0
+        val parsed = clean.toDoubleOrNull() ?: return 0.0
+        if (parsed.isNaN() || parsed.isInfinite() || parsed < 0.0) return 0.0
+        return parsed
+    }
+
+    /**
+     * Computes 7 day-of-week weights (indexed by Calendar.SUNDAY..Calendar.SATURDAY = 1..7)
+     * from the last 8 weeks (56 days) of expenses (excluding transfers and income).
+     * Uses flat weights (all 1.0) if there are fewer than 14 days of expense data.
+     */
+    fun computeDayOfWeekWeights(
+        expenseHistory: List<TransactionItem>,
+        referenceIso: String = todayIso()
+    ): DoubleArray {
+        val flat = DoubleArray(8) { 1.0 }
+        if (!isValidIsoDate(referenceIso)) return flat
+        val refEpoch = parseEpochDays(referenceIso)
+
+        val recentExpenses = expenseHistory.filter { tx ->
+            if (tx.type != "expense" || tx.amount <= 0.0 || !isValidIsoDate(tx.isoDate)) return@filter false
+            val ageDays = (refEpoch - parseEpochDays(tx.isoDate)).toInt()
+            ageDays in 0..55
+        }
+
+        val distinctActiveDays = recentExpenses.map { it.isoDate }.distinct().size
+        if (distinctActiveDays < 14) {
+            return flat
+        }
+
+        val minEpoch = recentExpenses.minOf { parseEpochDays(it.isoDate) }.coerceAtLeast(refEpoch - 55L)
+        val spanDays = (refEpoch - minEpoch + 1L).toInt().coerceIn(14, 56)
+
+        val spendByIso = recentExpenses
+            .groupBy { it.isoDate }
+            .mapValues { (_, list) -> list.sumOf { it.amount } }
+
+        val sumByDow = DoubleArray(8)
+        val countByDow = IntArray(8)
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+
+        for (offset in 0 until spanDays) {
+            val dayEpoch = refEpoch - offset
+            val iso = epochDaysToIso(dayEpoch)
+            val parts = iso.split("-").mapNotNull { it.toIntOrNull() }
+            if (parts.size == 3) {
+                cal.clear()
+                cal.set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
+                val dow = cal.get(Calendar.DAY_OF_WEEK).coerceIn(1, 7)
+                countByDow[dow]++
+                sumByDow[dow] += spendByIso[iso] ?: 0.0
+            }
+        }
+
+        val meanByDow = DoubleArray(8)
+        var totalMeanSum = 0.0
+        var validDows = 0
+        for (dow in 1..7) {
+            val count = countByDow[dow]
+            if (count > 0) {
+                val m = sumByDow[dow] / count.toDouble()
+                meanByDow[dow] = m
+                totalMeanSum += m
+                validDows++
+            }
+        }
+
+        if (validDows == 0 || totalMeanSum <= 0.0) return flat
+        val overallDailyMean = totalMeanSum / validDows.toDouble()
+        if (overallDailyMean <= 0.0) return flat
+
+        val weights = DoubleArray(8) { 1.0 }
+        for (dow in 1..7) {
+            val rawRatio = meanByDow[dow] / overallDailyMean
+            weights[dow] = rawRatio.coerceIn(0.35, 2.5)
+        }
+        return weights
+    }
+
+    private fun dayOfWeekForEpochDay(epochDay: Long): Int {
+        val iso = epochDaysToIso(epochDay)
+        val parts = iso.split("-").mapNotNull { it.toIntOrNull() }
+        if (parts.size < 3) return Calendar.MONDAY
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
+        }
+        return cal.get(Calendar.DAY_OF_WEEK).coerceIn(1, 7)
+    }
+
+    /**
+     * Live "Can I afford this?" purchase impact calculator (Prompt 2):
+     * - Weights days of the week from the last 8 weeks of expenses (flat weights if < 14 days of data).
+     * - Re-runs [computeOverspendProjection] with spentSoFar + amount to compute [runOutIso].
+     * - Returns FITS_TODAY, LOWERS_ALLOWANCE, or OVER_POOL, plus [envelopeUsageAfter].
+     */
+    fun computePurchaseImpact(
+        amount: Double,
+        safePool: Double,
+        daysRemaining: Int,
+        expenseHistory: List<TransactionItem> = emptyList(),
+        window: PayCycleWindow? = null,
+        envelope: EnvelopeStatus? = null,
+        todayIso: String = todayIso()
+    ): PurchaseImpact {
+        val safeAmount = if (amount.isNaN() || amount.isInfinite() || amount < 0.0) 0.0 else roundMoney(amount)
+        val clampedPool = if (safePool.isNaN() || safePool.isInfinite() || safePool < 0.0) 0.0 else roundMoney(safePool)
+        val effectiveDays = max(1, daysRemaining)
+
+        val refIso = when {
+            isValidIsoDate(todayIso) && (window == null || isInWindow(todayIso, window)) -> todayIso
+            window != null && isValidIsoDate(window.startIso) -> {
+                val startEpoch = parseEpochDays(window.startIso)
+                val endEpoch = parseEpochDays(window.endIso)
+                val approxTodayEpoch = (endEpoch - max(0, daysRemaining - 1)).coerceIn(startEpoch, endEpoch)
+                epochDaysToIso(approxTodayEpoch)
+            }
+            else -> todayIso()
+        }
+        val refEpoch = parseEpochDays(refIso)
+        val dowWeights = computeDayOfWeekWeights(expenseHistory, refIso)
+
+        val todayShare = if (daysRemaining <= 1) {
+            1.0
+        } else {
+            val todayDow = dayOfWeekForEpochDay(refEpoch)
+            val todayWeight = dowWeights[todayDow]
+            var totalRemainingWeight = 0.0
+            for (d in 0 until effectiveDays) {
+                val dow = dayOfWeekForEpochDay(refEpoch + d)
+                totalRemainingWeight += dowWeights[dow]
+            }
+            if (totalRemainingWeight > 0.0) {
+                todayWeight / totalRemainingWeight
+            } else {
+                1.0 / effectiveDays.toDouble()
+            }
+        }
+
+        val currentDaily = roundMoney(clampedPool * todayShare)
+        val remainingPoolAfter = max(0.0, clampedPool - safeAmount)
+        val newDaily = roundMoney(remainingPoolAfter * todayShare)
+        val delta = roundMoney(newDaily - currentDaily)
+        val remainingToday = roundMoney(max(0.0, currentDaily - safeAmount))
+        val overPool = if (safeAmount > clampedPool) roundMoney(safeAmount - clampedPool) else 0.0
+
+        val verdict = when {
+            clampedPool <= 0.0 && safeAmount > 0.0 -> PurchaseVerdict.OVER_POOL
+            safeAmount <= currentDaily + 0.005 -> PurchaseVerdict.FITS_TODAY
+            safeAmount <= clampedPool + 0.005 -> PurchaseVerdict.LOWERS_ALLOWANCE
+            else -> PurchaseVerdict.OVER_POOL
+        }
+
+        // Re-run computeOverspendProjection with spentSoFar + amount to get runOutIso
+        val runOutIso: String? = if (window != null) {
+            val cycleExpensesSoFar = expenseHistory.filter {
+                it.type == "expense" && it.amount > 0.0 && isInWindow(it.isoDate, window) && it.isoDate <= refIso
+            }
+            val spentSoFar = cycleExpensesSoFar.sumOf { it.amount }
+            val totalAvailableBudget = spentSoFar + clampedPool
+            val proj = computeOverspendProjection(
+                window = window,
+                totalAvailableBudget = totalAvailableBudget,
+                spentSoFar = spentSoFar + safeAmount,
+                scheduledBills = 0.0,
+                pastOrTodayCycleTransactions = cycleExpensesSoFar
+            )
+            val dailyPace = when {
+                proj.medianDailyVariable > 0.0 -> proj.medianDailyVariable
+                window.daysElapsed > 0 && spentSoFar > 0.0 -> spentSoFar / window.daysElapsed.toDouble()
+                else -> 0.0
+            }
+            when {
+                safeAmount > clampedPool && safeAmount > 0.0 -> refIso
+                dailyPace > 0.0 && proj.projectedTotal > totalAvailableBudget + 0.01 -> {
+                    val daysLeftUntilExhausted = kotlin.math.floor(remainingPoolAfter / dailyPace).toLong().coerceAtLeast(0L)
+                    val runOutEpoch = (refEpoch + daysLeftUntilExhausted).coerceAtMost(parseEpochDays(window.endIso))
+                    val candidateIso = epochDaysToIso(runOutEpoch)
+                    if (candidateIso <= window.endIso) candidateIso else null
+                }
+                else -> null
+            }
+        } else {
+            null
+        }
+
+        val envNewSpent = envelope?.let { roundMoney(it.spent + safeAmount) }
+        val envHasCap = envelope != null && envelope.config.hasCap && envelope.totalAvailable > 0.0
+        val envNewPct = if (envelope != null && envHasCap) {
+            ((envNewSpent!! / envelope.totalAvailable) * 100.0).roundToInt().coerceAtLeast(0)
+        } else if (envelope != null) {
+            0
+        } else {
+            null
+        }
+        val envRemAfter = envelope?.let { roundMoney(it.totalAvailable - (envNewSpent ?: 0.0)) }
+
+        return PurchaseImpact(
+            amount = safeAmount,
+            safePool = clampedPool,
+            daysRemaining = max(0, daysRemaining),
+            currentDailyAllowance = currentDaily,
+            newSafeToday = newDaily,
+            delta = delta,
+            remainingTodayAllowance = remainingToday,
+            overSafePoolAmount = overPool,
+            verdict = verdict,
+            runOutIso = runOutIso,
+            envelopeUsageAfter = envNewPct,
+            envelopeKey = envelope?.config?.key,
+            envelopeNewSpent = envNewSpent,
+            envelopeRemainingAfter = envRemAfter,
+            envelopeHasCap = envHasCap
+        )
+    }
+
+    fun computePurchaseImpact(
+        rawAmountText: String,
+        safePool: Double,
+        daysRemaining: Int,
+        expenseHistory: List<TransactionItem> = emptyList(),
+        window: PayCycleWindow? = null,
+        envelope: EnvelopeStatus? = null,
+        todayIso: String = todayIso()
+    ): PurchaseImpact {
+        return computePurchaseImpact(
+            amount = parseFlexibleAmount(rawAmountText),
+            safePool = safePool,
+            daysRemaining = daysRemaining,
+            expenseHistory = expenseHistory,
+            window = window,
+            envelope = envelope,
+            todayIso = todayIso
+        )
+    }
+
+    private fun formatRunOutDayLabel(runOutIso: String, strings: AppStrings, hideAmounts: Boolean): String {
+        if (hideAmounts) return "••"
+        val day = runOutIso.split("-").getOrNull(2)?.toIntOrNull() ?: return runOutIso
+        val isEn = strings === Translations.EN
+        if (!isEn) return day.toString()
+        val mod100 = day % 100
+        val suffix = if (mod100 in 11..13) {
+            "th"
+        } else {
+            when (day % 10) {
+                1 -> "st"
+                2 -> "nd"
+                3 -> "rd"
+                else -> "th"
+            }
+        }
+        return "$day$suffix"
+    }
+
+    fun formatPurchaseImpactLine(
+        impact: PurchaseImpact,
+        currencySymbol: String,
+        hideAmounts: Boolean,
+        strings: AppStrings,
+        envelopeName: String? = null
+    ): String {
+        val cur = currencySymbol.ifBlank { "DH" }
+        val oldSafeStr = formatAmountOrMask(impact.currentDailyAllowance, hideAmounts)
+        val newSafeStr = formatAmountOrMask(impact.newSafeToday, hideAmounts)
+        val overStr = formatAmountOrMask(impact.overSafePoolAmount, hideAmounts)
+
+        val baseText = when (impact.verdict) {
+            PurchaseVerdict.FITS_TODAY -> strings.impactGreenFitsTodayFmt
+                .replace("{oldSafe}", oldSafeStr)
+                .replace("{newSafe}", newSafeStr)
+                .replace("{cur}", cur)
+            PurchaseVerdict.LOWERS_ALLOWANCE -> strings.impactAmberLowersDailyFmt
+                .replace("{oldSafe}", oldSafeStr)
+                .replace("{newSafe}", newSafeStr)
+                .replace("{cur}", cur)
+            PurchaseVerdict.OVER_POOL -> strings.impactRedOverSafePoolFmt
+                .replace("{over}", overStr)
+                .replace("{oldSafe}", oldSafeStr)
+                .replace("{newSafe}", newSafeStr)
+                .replace("{cur}", cur)
+        }
+
+        val runOutSuffix = if (!impact.runOutIso.isNullOrBlank()) {
+            val dayLabel = formatRunOutDayLabel(impact.runOutIso, strings, hideAmounts)
+            strings.impactRunOutSuffixFmt.replace("{day}", dayLabel)
+        } else {
+            ""
+        }
+
+        val envSuffix = if (impact.envelopeHasCap && impact.envelopeUsageAfter != null && !envelopeName.isNullOrBlank()) {
+            val pctStr = if (hideAmounts) "••" else impact.envelopeUsageAfter.toString()
+            strings.impactEnvelopeUsageSuffixFmt
+                .replace("{env}", envelopeName)
+                .replace("{pct}", pctStr)
+        } else {
+            ""
+        }
+
+        return baseText + runOutSuffix + envSuffix
     }
 }

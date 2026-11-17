@@ -382,6 +382,9 @@ class QuickCaptureBootReceiver : BroadcastReceiver() {
             if (QuickCaptureNotification.isEnabled(context)) {
                 QuickCaptureNotification.refresh(context)
             }
+            if (MasroufiNotificationManager.isEveningReminderEnabled(context)) {
+                MasroufiNotificationManager.scheduleNextEveningReminder(context)
+            }
         }
     }
 }

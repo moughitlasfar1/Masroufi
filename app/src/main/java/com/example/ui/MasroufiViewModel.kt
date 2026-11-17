@@ -220,6 +220,9 @@ object BackupSerializer {
                         put("toAccountId", t.toAccountId)
                         put("desc", t.desc)
                         put("iso", t.isoDate)
+                        if (t.hourOfDay in 0..23) {
+                            put("hourOfDay", t.hourOfDay)
+                        }
                     }
                 )
             }
@@ -574,6 +577,8 @@ object BackupSerializer {
             ).trim().ifBlank { "autre" }
             require(envKey.length in 1..60) { "envelopeKey invalide pour '$id'." }
 
+            val rawHour = item.optInt("hourOfDay", -1).let { if (it in 0..23) it else -1 }
+
             list.add(
                 TransactionItem(
                     id = id,
@@ -585,7 +590,8 @@ object BackupSerializer {
                     accountId = accountId,
                     toAccountId = toAccountId,
                     desc = desc,
-                    isoDate = validatedIso
+                    isoDate = validatedIso,
+                    hourOfDay = rawHour
                 )
             )
         }
@@ -618,6 +624,8 @@ data class DashboardState(
     val totalAvailableBudget: Double = 6400.0,
     val remainingBudget: Double = 6400.0,
     val unpaidBillsTotal: Double = 0.0,
+    val safePool: Double = 0.0,
+    val daysRemaining: Int = 30,
     val safeToSpendToday: Double = 0.0,
     val dailyAverageSpend: Double = 0.0,
     val projectedCycleSpend: Double = 0.0,
@@ -664,6 +672,7 @@ class MasroufiViewModel(
     initialRollbackSnapshot: String? = null,
     initialDismissedSubscriptions: Set<String> = emptySet(),
     initialLearnedCategoriesJson: String? = null,
+    initialVerifiedActiveDates: Set<String>? = null,
     private val onRollbackSnapshotChanged: (String?) -> Unit = {},
     private val onDismissSubscription: (String) -> Unit = {},
     private val onLearnedCategoriesUpdated: (String) -> Unit = {}
@@ -675,6 +684,8 @@ class MasroufiViewModel(
     private val _whatIfState = MutableStateFlow(WhatIfSimulatorState())
     private val _hideAmounts = MutableStateFlow(initialHideAmounts)
     private val _dismissedSubscriptions = MutableStateFlow(initialDismissedSubscriptions)
+    private val _verifiedActiveDates = MutableStateFlow<Set<String>?>(initialVerifiedActiveDates)
+    private val recentLocalTxHours = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private val _lastDeletedTx = MutableStateFlow<TransactionItem?>(null)
     val lastDeletedTx: StateFlow<TransactionItem?> = _lastDeletedTx.asStateFlow()
     private val _lastDeletedItem = MutableStateFlow<FinancialItem?>(null)
@@ -682,6 +693,15 @@ class MasroufiViewModel(
     private val _pendingWritesCount = MutableStateFlow(0)
     private val _learnedCategoriesCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
     private var lastSyncedLearnedSignature: String = ""
+
+    fun setVerifiedActiveDates(dates: Set<String>?) {
+        _verifiedActiveDates.value = dates
+    }
+
+    fun recordActiveOrConfirmedDate(isoDate: String = PayCycleEngine.todayIso()) {
+        val current = _verifiedActiveDates.value ?: emptySet()
+        _verifiedActiveDates.value = current + isoDate
+    }
 
     // Instant optimistic local overrides so UI never lags or reverts on rapid clicks (and works in local mode)
     private val isLocalOnlyUser = currentUserId == LOCAL_DEVICE_USER_ID
@@ -794,7 +814,17 @@ class MasroufiViewModel(
             }
         },
         _localTransactions
-    ) { remote, local -> local ?: remote }
+    ) { remote, local ->
+        val raw = local ?: remote
+        raw.map { tx ->
+            if (tx.hourOfDay in 0..23) {
+                tx
+            } else {
+                val cachedHour = recentLocalTxHours[tx.id]
+                if (cachedHour != null && cachedHour in 0..23) tx.copy(hourOfDay = cachedHour) else tx
+            }
+        }
+    }
 
     fun setTransactionHistoryMinDate(minIsoDate: String?) {
         _historyMinIsoDate.value = minIsoDate
@@ -834,9 +864,11 @@ class MasroufiViewModel(
         combine(
             combine(_selectedCycleKey, _filterState, _whatIfState) { c, f, w -> Triple(c, f, w) },
             combine(_optimisticCustomPrefs, _errorMessage, _hideAmounts) { cp, err, hide -> Triple(cp, err, hide) },
-            combine(_pendingWritesCount, _dismissedSubscriptions) { pCount, dismissed -> pCount to dismissed }
-        ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs) ->
-            listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs)
+            combine(_pendingWritesCount, _dismissedSubscriptions, _verifiedActiveDates) { pCount, dismissed, verified ->
+                Triple(pCount, dismissed, verified)
+            }
+        ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs, verifiedDates) ->
+            listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs, verifiedDates)
         }
     ) { (profileOpt, txs, _), (accs, envs, finItems), extraList ->
         val selCycle = extraList[0] as? String
@@ -848,6 +880,8 @@ class MasroufiViewModel(
         val isSyncingNow = extraList[6] as? Boolean ?: false
         @Suppress("UNCHECKED_CAST")
         val dismissedSubs = (extraList.getOrNull(7) as? Set<String>) ?: emptySet()
+        @Suppress("UNCHECKED_CAST")
+        val verifiedDates = extraList.getOrNull(8) as? Set<String>
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find {
@@ -991,7 +1025,8 @@ class MasroufiViewModel(
         val noSpendStreak = PayCycleEngine.computeNoSpendStreakDays(
             cycleTransactions = pastOrTodayCycleTxs,
             window = window,
-            nowIso = anchorIso
+            nowIso = anchorIso,
+            verifiedActiveDates = verifiedDates
         )
         val (biggestDayIso, biggestDayAmt) = PayCycleEngine.computeBiggestSpendingDayInCycle(pastOrTodayCycleTxs)
         val forecastMsg = if (spendProjection.showEstimateAlert) {
@@ -1059,6 +1094,8 @@ class MasroufiViewModel(
             totalAvailableBudget = totalAvailable,
             remainingBudget = remaining,
             unpaidBillsTotal = unpaidBills,
+            safePool = safePool,
+            daysRemaining = window.daysRemaining,
             safeToSpendToday = safeToday,
             dailyAverageSpend = dailyAvg,
             projectedCycleSpend = projectedSpend,
@@ -1110,6 +1147,13 @@ class MasroufiViewModel(
         safeLaunch("ensureSeeded") {
             repository.ensureSeeded()
         }
+    }
+
+    fun clearLearnedCategories() {
+        PayCycleEngine.clearLearnedCategories()
+        onLearnedCategoriesUpdated("")
+        val currentItems = (_localItems.value ?: emptyList()).filterNot { it.id == "learned_categories" }
+        _localItems.value = currentItems
     }
 
     private fun persistLearnedCategories() {
@@ -1355,8 +1399,12 @@ class MasroufiViewModel(
             persistLearnedCategories()
         }
         val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(category, resolvedEnvKey)
+        val resolvedHour = existing?.hourOfDay?.takeIf { it in 0..23 }
+            ?: java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val generatedId = existingId.ifBlank { "tx_${System.currentTimeMillis()}" }
+        recentLocalTxHours[generatedId] = resolvedHour
         val newTx = TransactionItem(
-            id = existingId.ifBlank { "tx_${System.currentTimeMillis()}" },
+            id = generatedId,
             userId = currentUserId,
             type = type,
             amount = roundedAmount,
@@ -1366,8 +1414,12 @@ class MasroufiViewModel(
             toAccountId = if (type == "transfer") toAccountId else "",
             desc = desc.ifBlank { category.ifBlank { "Opération" } },
             isoDate = validatedDate,
+            hourOfDay = resolvedHour,
             createdAt = existing?.createdAt
         )
+        if (_verifiedActiveDates.value != null) {
+            recordActiveOrConfirmedDate(validatedDate)
+        }
         if (isLocalOnlyUser) {
             val curList = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == newTx.id }
             _localTransactions.value = listOf(newTx) + curList
@@ -1383,8 +1435,12 @@ class MasroufiViewModel(
         val envKey = preset.subtitle.ifBlank { "cafe" }
         val rawCat = if (env != null && !env.isDefaultUnrenamed()) env.nameFr else envKey
         val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(rawCat, envKey)
+        val nowHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val txId = "tx_${System.currentTimeMillis()}"
+        recentLocalTxHours[txId] = nowHour
+        val today = PayCycleEngine.todayIso()
         val tx = TransactionItem(
-            id = "tx_${System.currentTimeMillis()}",
+            id = txId,
             userId = currentUserId,
             type = "expense",
             amount = PayCycleEngine.roundMoney(preset.amount).coerceAtLeast(1.0),
@@ -1393,8 +1449,12 @@ class MasroufiViewModel(
             accountId = preset.dateOrCycle.ifBlank { "acc_cash" },
             toAccountId = "",
             desc = preset.name,
-            isoDate = PayCycleEngine.todayIso()
+            isoDate = today,
+            hourOfDay = nowHour
         )
+        if (_verifiedActiveDates.value != null) {
+            recordActiveOrConfirmedDate(today)
+        }
         _lastDeletedTx.value = tx
         onAdded(tx)
         if (isLocalOnlyUser) {
@@ -1408,9 +1468,13 @@ class MasroufiViewModel(
     }
 
     fun duplicateTransaction(tx: TransactionItem, onDuplicated: (TransactionItem) -> Unit = {}) {
+        val nowHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val dupId = "tx_dup_${System.currentTimeMillis()}"
+        recentLocalTxHours[dupId] = nowHour
         val duplicated = tx.copy(
-            id = "tx_dup_${System.currentTimeMillis()}",
+            id = dupId,
             isoDate = PayCycleEngine.todayIso(),
+            hourOfDay = nowHour,
             createdAt = null,
             updatedAt = null
         )
@@ -1534,8 +1598,11 @@ class MasroufiViewModel(
                 parsed.categoryName,
                 resolvedEnvKey
             )
+            val nowHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            val voiceTxId = "tx_voice_${baseTime}_$idx"
+            recentLocalTxHours[voiceTxId] = nowHour
             TransactionItem(
-                id = "tx_voice_${baseTime}_$idx",
+                id = voiceTxId,
                 userId = currentUserId,
                 type = parsed.txType.ifBlank { "expense" },
                 amount = roundedAmt,
@@ -1544,7 +1611,8 @@ class MasroufiViewModel(
                 accountId = resolvedAccountId,
                 toAccountId = "",
                 desc = parsed.description.ifBlank { parsed.categoryName },
-                isoDate = today
+                isoDate = today,
+                hourOfDay = nowHour
             )
         }
 

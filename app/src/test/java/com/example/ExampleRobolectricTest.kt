@@ -1915,7 +1915,558 @@ class ExampleRobolectricTest {
         assertEquals(0, updatedNotifJson.getJSONArray("upcomingBills").length())
         assertEquals(2, updatedNotifJson.getJSONArray("activeDarets").getJSONObject(0).getInt("paidRounds"))
     }
+
+    @Test
+    fun `Feature 1 Can I afford this live purchase impact preview handles zero days, zero safePool, little history vs weekend-weekday weights, runOutIso, envelope usage, and masking`() {
+        // 1. Comma and dot amount parsing
+        assertEquals(85.50, PayCycleEngine.parseFlexibleAmount("85,50"), 0.001)
+        assertEquals(85.50, PayCycleEngine.parseFlexibleAmount("85.50"), 0.001)
+        assertEquals(1234.50, PayCycleEngine.parseFlexibleAmount("1 234,50"), 0.001)
+        assertEquals(0.0, PayCycleEngine.parseFlexibleAmount(""), 0.001)
+
+        // 2. Little history (< 14 days): flat weights -> 850 safePool / 10 days = 85 DH/day
+        val currentWindow = PayCycleEngine.computeWindow("2026-05", 1, "2026-05-15")
+        val cafeEnv = PayCycleEngine.computeEnvelopes(
+            envelopes = listOf(EnvelopeConfig(id = "e_cafe", key = "cafe", nameFr = "Café", percentage = 20.0, hasCap = true)),
+            baseBudget = 5000.0,
+            rolloverEnabled = false,
+            currentWindow = currentWindow,
+            previousWindow = PayCycleEngine.computeWindow("2026-04", 1, "2026-05-15"),
+            allTransactions = listOf(
+                TransactionItem(id = "tx_c1", type = "expense", amount = 400.0, envelopeKey = "cafe", isoDate = "2026-05-10")
+            )
+        ).first()
+        val greenImpact = PayCycleEngine.computePurchaseImpact(
+            rawAmountText = "50,00",
+            safePool = 850.0,
+            daysRemaining = 10,
+            envelope = cafeEnv
+        )
+        assertNotNull(greenImpact)
+        assertEquals(com.example.domain.PurchaseVerdict.FITS_TODAY, greenImpact!!.verdict)
+        assertEquals(com.example.domain.PurchaseVerdict.GREEN, greenImpact.verdict)
+        assertEquals(85.0, greenImpact.currentDailyAllowance, 0.01)
+        assertEquals(80.0, greenImpact.newSafeToday, 0.01)
+        assertEquals(-5.0, greenImpact.delta, 0.01)
+        assertEquals(45, greenImpact.envelopeUsageAfter)
+        assertEquals(550.0, greenImpact.envelopeRemainingAfter ?: 0.0, 0.01)
+
+        // 3. Amber (LOWERS_ALLOWANCE) verdict with runOutIso from computeOverspendProjection
+        val cycleTxs = (1..15).map { d ->
+            TransactionItem(
+                id = "c_$d",
+                type = "expense",
+                amount = 150.0,
+                isoDate = String.format(java.util.Locale.US, "2026-05-%02d", d)
+            )
+        }
+        val amberImpact = PayCycleEngine.computePurchaseImpact(
+            amount = 150.0,
+            safePool = 850.0,
+            daysRemaining = 10,
+            expenseHistory = cycleTxs,
+            window = currentWindow,
+            envelope = cafeEnv,
+            todayIso = "2026-05-15"
+        )
+        assertEquals(com.example.domain.PurchaseVerdict.LOWERS_ALLOWANCE, amberImpact.verdict)
+        assertEquals(com.example.domain.PurchaseVerdict.AMBER, amberImpact.verdict)
+        assertEquals(85.0, amberImpact.currentDailyAllowance, 0.01)
+        assertEquals(70.0, amberImpact.newSafeToday, 0.01)
+        assertEquals(-15.0, amberImpact.delta, 0.01)
+        assertEquals(55, amberImpact.envelopeUsageAfter)
+        assertNotNull("Expected runOutIso when pace + purchase overspends cycle", amberImpact.runOutIso)
+
+        // 4. Red (OVER_POOL) verdict: exceeds safePool (amount = 1000 > safePool = 850 -> over by 150 DH)
+        val redImpact = PayCycleEngine.computePurchaseImpact(
+            amount = 1000.0,
+            safePool = 850.0,
+            daysRemaining = 10,
+            envelope = cafeEnv
+        )
+        assertEquals(com.example.domain.PurchaseVerdict.OVER_POOL, redImpact.verdict)
+        assertEquals(com.example.domain.PurchaseVerdict.RED, redImpact.verdict)
+        assertEquals(150.0, redImpact.overSafePoolAmount, 0.01)
+        assertEquals(0.0, redImpact.newSafeToday, 0.01)
+
+        // 5. Weekend vs Weekday day-of-week weighting (>= 14 days of history over last 8 weeks; excludes income & transfers)
+        val eightWeekHistory = mutableListOf<TransactionItem>()
+        val startEpoch = PayCycleEngine.parseEpochDays("2026-04-01")
+        for (offset in 0 until 28) {
+            val dateStr = PayCycleEngine.epochDaysToIso(startEpoch + offset)
+            val isWe = com.example.ui.isWeekendForIsoDate(dateStr)
+            eightWeekHistory += TransactionItem(
+                id = "hist_exp_$offset",
+                type = "expense",
+                amount = if (isWe) 200.0 else 50.0,
+                isoDate = dateStr
+            )
+            // Transfers and incomes must be ignored by day-of-week weighting
+            if (offset % 5 == 0) {
+                eightWeekHistory += TransactionItem(
+                    id = "hist_tr_$offset",
+                    type = "transfer",
+                    amount = 2000.0,
+                    isoDate = dateStr
+                )
+                eightWeekHistory += TransactionItem(
+                    id = "hist_inc_$offset",
+                    type = "income",
+                    amount = 5000.0,
+                    isoDate = dateStr
+                )
+            }
+        }
+        // Compare allowance on Friday 2026-05-15 (weekday) vs Saturday 2026-05-16 (weekend)
+        val weekdayImpact = PayCycleEngine.computePurchaseImpact(
+            amount = 60.0,
+            safePool = 1000.0,
+            daysRemaining = 10,
+            expenseHistory = eightWeekHistory,
+            window = null,
+            envelope = null,
+            todayIso = "2026-05-15" // Friday
+        )
+        val weekendImpact = PayCycleEngine.computePurchaseImpact(
+            amount = 60.0,
+            safePool = 1000.0,
+            daysRemaining = 10,
+            expenseHistory = eightWeekHistory,
+            window = null,
+            envelope = null,
+            todayIso = "2026-05-16" // Saturday
+        )
+        assertTrue(
+            "Expected weekend allowance (${weekendImpact.currentDailyAllowance}) > weekday allowance (${weekdayImpact.currentDailyAllowance})",
+            weekendImpact.currentDailyAllowance > weekdayImpact.currentDailyAllowance
+        )
+
+        // 6. Edge cases: zero days remaining and zero safePool
+        val zeroDaysGreen = PayCycleEngine.computePurchaseImpact(
+            amount = 40.0,
+            safePool = 100.0,
+            daysRemaining = 0,
+            envelope = null
+        )
+        assertEquals(com.example.domain.PurchaseVerdict.FITS_TODAY, zeroDaysGreen.verdict)
+        assertEquals(100.0, zeroDaysGreen.currentDailyAllowance, 0.01)
+        assertEquals(60.0, zeroDaysGreen.newSafeToday, 0.01)
+
+        val zeroSafePoolRed = PayCycleEngine.computePurchaseImpact(
+            amount = 25.5,
+            safePool = 0.0,
+            daysRemaining = 0,
+            envelope = null
+        )
+        assertEquals(com.example.domain.PurchaseVerdict.OVER_POOL, zeroSafePoolRed.verdict)
+        assertEquals(25.5, zeroSafePoolRed.overSafePoolAmount, 0.01)
+
+        // 7. Localized formatting & privacy masking (formatAmountOrMask) across all 4 languages
+        listOf("fr", "en", "ar", "darija").forEach { lang ->
+            val unmaskedAmber = PayCycleEngine.formatPurchaseImpactLine(
+                impact = amberImpact,
+                currencySymbol = "DH",
+                hideAmounts = false,
+                strings = Translations.forLang(lang),
+                envelopeName = "Café"
+            )
+            assertTrue("Expected 85 and 70 in $lang amber line: $unmaskedAmber", unmaskedAmber.contains("85") && unmaskedAmber.contains("70"))
+            assertTrue("Expected 55% envelope suffix in $lang: $unmaskedAmber", unmaskedAmber.contains("55%"))
+
+            val maskedRed = PayCycleEngine.formatPurchaseImpactLine(
+                impact = redImpact,
+                currencySymbol = "DH",
+                hideAmounts = true,
+                strings = Translations.forLang(lang),
+                envelopeName = "Café"
+            )
+            assertTrue("Expected masked dots in $lang red line: $maskedRed", maskedRed.contains("••••"))
+            assertFalse("Unmasked 150 leaked in $lang: $maskedRed", maskedRed.contains("150"))
+        }
+    }
+
+    @Test
+    fun `Feature 3 Evening reminder time picker, adaptive smart timing (18h-22h30 clamp), 3-ignored throttling, pending bank count, and honest streak work accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val notifPrefs = context.getSharedPreferences("masroufi_notifications_prefs", Context.MODE_PRIVATE)
+        notifPrefs.edit().clear().commit()
+        com.example.notifications.BankDetectionStore.deleteAllDetectedData(context)
+        org.robolectric.Shadows.shadowOf(context as android.app.Application)
+            .grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        // 1. Default time is 20:30, Smart suggestions default is true, and custom time persists cleanly
+        assertTrue(com.example.notifications.MasroufiNotificationManager.isSmartSuggestionsEnabled(context))
+        assertEquals(20 to 30, com.example.notifications.MasroufiNotificationManager.getEveningReminderTime(context))
+        assertEquals("20:30", com.example.notifications.MasroufiNotificationManager.getEveningReminderTimeFormatted(context))
+        com.example.notifications.MasroufiNotificationManager.setEveningReminderTime(context, 21, 15)
+        assertEquals(21 to 15, com.example.notifications.MasroufiNotificationManager.getEveningReminderTime(context))
+
+        // 2. Adaptive evening reminder timing (Prompt 5):
+        // - Too little data (< 5 active days) falls back to user's chosen time (21:15)
+        val sparseTxs = listOf(
+            TransactionItem(id = "s1", type = "expense", amount = 20.0, isoDate = "2026-05-14", hourOfDay = 19)
+        )
+        assertEquals(
+            21 to 15,
+            com.example.notifications.MasroufiNotificationManager.computeAdaptiveEveningReminderTime(
+                context = context,
+                allTransactions = sparseTxs,
+                nowIso = "2026-05-15"
+            )
+        )
+
+        // - 7 days where last expense of the day is at 19:00 -> median = 19 -> reminder 1h later = 20:00
+        val normalTxs = (1..7).map { d ->
+            TransactionItem(
+                id = "n_$d",
+                type = "expense",
+                amount = 30.0,
+                isoDate = String.format(java.util.Locale.US, "2026-05-%02d", d + 5),
+                hourOfDay = 19
+            )
+        }
+        assertEquals(
+            20 to 0,
+            com.example.notifications.MasroufiNotificationManager.computeAdaptiveEveningReminderTime(
+                context = context,
+                allTransactions = normalTxs,
+                nowIso = "2026-05-15"
+            )
+        )
+
+        // - Early spender (median last expense at 14:00 -> +1h = 15:00) clamps to 18:00
+        val earlyTxs = (1..6).map { d ->
+            TransactionItem(
+                id = "early_$d",
+                type = "expense",
+                amount = 25.0,
+                isoDate = String.format(java.util.Locale.US, "2026-05-%02d", d + 5),
+                hourOfDay = 14
+            )
+        }
+        assertEquals(
+            18 to 0,
+            com.example.notifications.MasroufiNotificationManager.computeAdaptiveEveningReminderTime(
+                context = context,
+                allTransactions = earlyTxs,
+                nowIso = "2026-05-15"
+            )
+        )
+
+        // - Late spender (median last expense at 23:00 -> +1h = 24:00) clamps to 22:30
+        val lateTxs = (1..6).map { d ->
+            TransactionItem(
+                id = "late_$d",
+                type = "expense",
+                amount = 45.0,
+                isoDate = String.format(java.util.Locale.US, "2026-05-%02d", d + 5),
+                hourOfDay = 23
+            )
+        }
+        assertEquals(
+            22 to 30,
+            com.example.notifications.MasroufiNotificationManager.computeAdaptiveEveningReminderTime(
+                context = context,
+                allTransactions = lateTxs,
+                nowIso = "2026-05-15"
+            )
+        )
+
+        // - When "Smart suggestions" toggle is OFF, always use user's fixed time (21:15)
+        com.example.notifications.MasroufiNotificationManager.setSmartSuggestionsEnabled(context, false)
+        assertEquals(
+            21 to 15,
+            com.example.notifications.MasroufiNotificationManager.computeAdaptiveEveningReminderTime(
+                context = context,
+                allTransactions = normalTxs,
+                nowIso = "2026-05-15"
+            )
+        )
+        com.example.notifications.MasroufiNotificationManager.setSmartSuggestionsEnabled(context, true)
+
+        // 3. Evening notification posts at most once per day with safeToday formatted body
+        val todayIso = PayCycleEngine.todayIso()
+        val snapJson = org.json.JSONObject().apply {
+            put("lang", "en")
+            put("currency", "DH")
+            put("hideAmounts", false)
+            put("cycleKey", todayIso.take(7))
+            put("todayTxCount", 0)
+            put("safeToday", 62.0)
+            put("upcomingBills", org.json.JSONArray())
+            put("activeDarets", org.json.JSONArray())
+            put("envelopes", org.json.JSONArray())
+        }.toString()
+        notifPrefs.edit().putString("notif_snapshot_json", snapJson).commit()
+
+        com.example.notifications.MasroufiNotificationManager.evaluateAndPostNotifications(
+            context = context,
+            fromScheduledEveningWorker = true
+        )
+        assertEquals(todayIso, com.example.notifications.MasroufiNotificationManager.getLastEveningShownIso(context))
+
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val shadowNm = org.robolectric.Shadows.shadowOf(nm)
+        val postedEvening = shadowNm.getNotification(4004)
+        assertNotNull("Expected evening notification 4004 to be posted", postedEvening)
+        assertNotNull("Expected deleteIntent on evening notification 4004", postedEvening.deleteIntent)
+        val eveningText = postedEvening.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString().orEmpty()
+        assertTrue("Expected '62 DH left today' in '$eveningText'", eveningText.contains("62") && eveningText.contains("DH"))
+        assertEquals(2, postedEvening.actions?.size ?: 0)
+
+        // Running evaluateAndPostNotifications a second time on the same day does NOT re-post (once-per-day guard)
+        nm.cancelAll()
+        com.example.notifications.MasroufiNotificationManager.evaluateAndPostNotifications(
+            context = context,
+            fromScheduledEveningWorker = true
+        )
+        assertNull("Expected once-per-day guard to skip duplicate evening notification", shadowNm.getNotification(4004))
+
+        // 4. Dismissal tracking & every-other-day throttling after 3 ignored reminders in a row
+        val dismissIntent = android.content.Intent(context, com.example.notifications.NotificationActionReceiver::class.java).apply {
+            action = com.example.notifications.NotificationActionReceiver.ACTION_DISMISS_EVENING_REMINDER
+        }
+        repeat(3) {
+            com.example.notifications.NotificationActionReceiver().onReceive(context, dismissIntent)
+        }
+        assertEquals(3, com.example.notifications.MasroufiNotificationManager.getEveningIgnoredStreak(context))
+        val tomorrowIso = PayCycleEngine.epochDaysToIso(PayCycleEngine.parseEpochDays(todayIso) + 1L)
+        val dayAfterTomorrowIso = PayCycleEngine.epochDaysToIso(PayCycleEngine.parseEpochDays(todayIso) + 2L)
+        assertTrue(
+            "Expected consecutive day after 3 ignored reminders to be throttled",
+            com.example.notifications.MasroufiNotificationManager.shouldThrottleEveningForIgnoredStreak(context, tomorrowIso)
+        )
+        assertFalse(
+            "Expected every-other-day reminder (2 days later) to be allowed",
+            com.example.notifications.MasroufiNotificationManager.shouldThrottleEveningForIgnoredStreak(context, dayAfterTomorrowIso)
+        )
+
+        // 5. Tapping "Nothing today" resets ignored streak to 0, stores noSpendConfirmedIso, and records verifiedActiveDate
+        val nothingIntent = android.content.Intent(context, com.example.notifications.NotificationActionReceiver::class.java).apply {
+            action = com.example.notifications.NotificationActionReceiver.ACTION_CONFIRM_NO_SPEND_TODAY
+            putExtra(com.example.notifications.NotificationActionReceiver.EXTRA_NOTIF_ID, 4004)
+        }
+        com.example.notifications.NotificationActionReceiver().onReceive(context, nothingIntent)
+        assertEquals(0, com.example.notifications.MasroufiNotificationManager.getEveningIgnoredStreak(context))
+        assertEquals(todayIso, com.example.notifications.MasroufiNotificationManager.getNoSpendConfirmedIso(context))
+        assertTrue(com.example.notifications.MasroufiNotificationManager.getVerifiedActiveDates(context).contains(todayIso))
+
+        // 6. Honest streak calculation: unverified silent days stop the streak, while verified active / confirmed / income-transfer days count
+        val streakTxs = listOf(
+            TransactionItem(id = "e1", type = "expense", amount = 40.0, isoDate = "2026-05-05"),
+            TransactionItem(id = "i1", type = "income", amount = 500.0, isoDate = "2026-05-07")
+        )
+        val honestStreakPartial = PayCycleEngine.computeNoSpendStreakDays(
+            allTransactions = streakTxs,
+            nowIso = "2026-05-08",
+            verifiedActiveDates = setOf("2026-05-08")
+        )
+        assertEquals(2, honestStreakPartial)
+
+        val honestStreakFull = PayCycleEngine.computeNoSpendStreakDays(
+            allTransactions = streakTxs,
+            nowIso = "2026-05-08",
+            verifiedActiveDates = setOf("2026-05-08", "2026-05-06")
+        )
+        assertEquals(3, honestStreakFull)
+    }
+
+    @Test
+    fun `Feature 2 Time-aware one-tap shortcuts handle cold start under 15 txs, min 4 matches, weekday vs weekend split, mode amount, recency tie-breaker, and 3-edit learning`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        com.example.notifications.MasroufiNotificationManager.resetAllSmartLearning(context)
+
+        val envelopes = listOf(
+            EnvelopeConfig(id = "e_cafe", key = "cafe", nameFr = "Café", percentage = 20.0),
+            EnvelopeConfig(id = "e_trans", key = "transport", nameFr = "Transport", percentage = 20.0),
+            EnvelopeConfig(id = "e_marche", key = "marche", nameFr = "Marché", percentage = 30.0)
+        )
+        val window = PayCycleEngine.computeWindow("2026-05", 1, "2026-05-15")
+        val envStatuses = PayCycleEngine.computeEnvelopes(
+            envelopes = envelopes,
+            baseBudget = 5000.0,
+            rolloverEnabled = false,
+            currentWindow = window,
+            previousWindow = PayCycleEngine.computeWindow("2026-04", 1, "2026-05-15"),
+            allTransactions = emptyList()
+        )
+
+        // 1. Cold start (< 15 eligible transactions with hourOfDay) returns emptyList()
+        val coldStartTxs = (1..10).map { i ->
+            TransactionItem(
+                id = "cold_$i",
+                type = "expense",
+                amount = 12.0,
+                desc = "Qahwa",
+                category = "Café",
+                envelopeKey = "cafe",
+                isoDate = "2026-05-${i.toString().padStart(2, '0')}",
+                hourOfDay = 8
+            )
+        }
+        val coldShortcuts = com.example.ui.computeTimeAwareShortcuts(
+            state = DashboardState(envelopes = envStatuses, allTransactions = coldStartTxs),
+            nowHour = 8,
+            isWeekend = false,
+            nowIso = "2026-05-15"
+        )
+        assertTrue("Expected empty shortcuts when < 15 eligible transactions exist", coldShortcuts.isEmpty())
+
+        // 2. Build history with >= 15 transactions across weekday mornings and weekend mornings (with >= 4 matches per chip)
+        val richHistory = mutableListOf<TransactionItem>()
+        val weekdayDates = listOf("2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-11")
+        weekdayDates.forEachIndexed { idx, d ->
+            // Morning Qahwa (6 matches, mode amount = 12 DH, one outlier = 15 DH)
+            richHistory += TransactionItem(
+                id = "wd_m_q_$idx",
+                type = "expense",
+                amount = if (idx == 0) 15.0 else 12.0,
+                desc = "Qahwa",
+                category = "Café",
+                envelopeKey = "cafe",
+                isoDate = d,
+                hourOfDay = 8
+            )
+            // Morning Taxi (6 matches, mode amount = 20 DH)
+            richHistory += TransactionItem(
+                id = "wd_m_t_$idx",
+                type = "expense",
+                amount = 20.0,
+                desc = "Taxi",
+                category = "Transport",
+                envelopeKey = "transport",
+                isoDate = d,
+                hourOfDay = 9
+            )
+        }
+        // Only 2 matches on weekday morning -> should NOT become a chip (since minMatchesForChip = 4)
+        richHistory += TransactionItem(
+            id = "wd_rare_1",
+            type = "expense",
+            amount = 40.0,
+            desc = "Rare Snack",
+            category = "Café",
+            envelopeKey = "cafe",
+            isoDate = "2026-05-07",
+            hourOfDay = 8
+        )
+        richHistory += TransactionItem(
+            id = "wd_rare_2",
+            type = "expense",
+            amount = 40.0,
+            desc = "Rare Snack",
+            category = "Café",
+            envelopeKey = "cafe",
+            isoDate = "2026-05-08",
+            hourOfDay = 8
+        )
+
+        // Weekend mornings: 4 weekend dates
+        val weekendDates = listOf("2026-04-25", "2026-04-26", "2026-05-02", "2026-05-03")
+        weekendDates.forEachIndexed { idx, d ->
+            richHistory += TransactionItem(
+                id = "we_m_b_$idx",
+                type = "expense",
+                amount = 35.0,
+                desc = "Ftôr Beldi",
+                category = "Café",
+                envelopeKey = "cafe",
+                isoDate = d,
+                hourOfDay = 9
+            )
+            richHistory += TransactionItem(
+                id = "we_tie_old_$idx",
+                type = "expense",
+                amount = 80.0,
+                desc = "Marjane Weekend",
+                category = "Marché",
+                envelopeKey = "marche",
+                isoDate = d,
+                hourOfDay = 10
+            )
+        }
+        // Newer weekend morning item with 4 matches in the same time block -> wins tie-breaker against "Marjane Weekend"
+        val newerWeekendDates = listOf("2026-04-26", "2026-05-02", "2026-05-09", "2026-05-10")
+        newerWeekendDates.forEachIndexed { idx, d ->
+            richHistory += TransactionItem(
+                id = "we_tie_new_$idx",
+                type = "expense",
+                amount = 50.0,
+                desc = "Croissant",
+                category = "Café",
+                envelopeKey = "cafe",
+                isoDate = d,
+                hourOfDay = 10
+            )
+        }
+
+        assertTrue(richHistory.size >= 15)
+        val richState = DashboardState(envelopes = envStatuses, allTransactions = richHistory)
+
+        // Query on Friday 2026-05-15 at 8:00 AM (weekday morning)
+        val weekdayMorningShortcuts = com.example.ui.computeTimeAwareShortcuts(
+            state = richState,
+            nowHour = 8,
+            isWeekend = false,
+            nowIso = "2026-05-15"
+        )
+        assertEquals(2, weekdayMorningShortcuts.size) // "Rare Snack" (2 matches < 4) excluded
+        assertEquals("Qahwa", weekdayMorningShortcuts[0].desc)
+        assertEquals(12.0, weekdayMorningShortcuts[0].amount, 0.01) // Mode amount (12 DH x5 vs 15 DH x1)
+        assertEquals("Taxi", weekdayMorningShortcuts[1].desc)
+        assertEquals(20.0, weekdayMorningShortcuts[1].amount, 0.01)
+
+        // Query on Saturday 2026-05-16 at 9:00 AM (weekend morning)
+        val weekendMorningShortcuts = com.example.ui.computeTimeAwareShortcuts(
+            state = richState,
+            nowHour = 9,
+            isWeekend = true,
+            nowIso = "2026-05-16"
+        )
+        assertEquals(3, weekendMorningShortcuts.size)
+        // "Croissant" has more recent dates (up to 2026-05-10) so higher recency boost than "Ftôr Beldi" / "Marjane Weekend" (up to 2026-05-03)
+        assertEquals("Croissant", weekendMorningShortcuts[0].desc)
+        assertEquals(50.0, weekendMorningShortcuts[0].amount, 0.01)
+
+        // 3. Prompt 7: Editing a pre-filled shortcut amount 3 times updates the suggested amount locally
+        assertNull(
+            com.example.notifications.MasroufiNotificationManager.recordShortcutAmountEdit(
+                context = context,
+                desc = "Qahwa",
+                suggestedAmount = 12.0,
+                savedAmount = 14.0
+            )
+        )
+        assertNull(
+            com.example.notifications.MasroufiNotificationManager.recordShortcutAmountEdit(
+                context = context,
+                desc = "Qahwa",
+                suggestedAmount = 12.0,
+                savedAmount = 14.0
+            )
+        )
+        val thirdEditLearned = com.example.notifications.MasroufiNotificationManager.recordShortcutAmountEdit(
+            context = context,
+            desc = "Qahwa",
+            suggestedAmount = 12.0,
+            savedAmount = 14.0
+        )
+        assertEquals(14.0, thirdEditLearned ?: 0.0, 0.01)
+
+        val overrides = com.example.notifications.MasroufiNotificationManager.getShortcutAmountOverrides(context)
+        val updatedShortcuts = com.example.ui.computeTimeAwareShortcuts(
+            state = richState,
+            nowHour = 8,
+            isWeekend = false,
+            nowIso = "2026-05-15",
+            editedAmountOverrides = overrides
+        )
+        assertEquals(14.0, updatedShortcuts.first { it.desc == "Qahwa" }.amount, 0.01)
+
+        // 4. Reset learning clears learned categories and shortcut amount overrides
+        PayCycleEngine.learnCategoryForDescription("Qahwa", "cafe")
+        com.example.notifications.MasroufiNotificationManager.resetAllSmartLearning(context)
+        assertTrue(com.example.notifications.MasroufiNotificationManager.getShortcutAmountOverrides(context).isEmpty())
+        assertNull(PayCycleEngine.getLearnedCategoryForDescription("Qahwa"))
+    }
 }
-
-
-

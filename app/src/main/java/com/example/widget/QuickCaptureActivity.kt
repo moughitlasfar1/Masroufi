@@ -11,8 +11,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -644,14 +646,19 @@ private fun QuickCaptureVoiceSection(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QuickCaptureKeypadSection(
     snapshot: WidgetSnapshot,
     onCommitExpense: (Double, String, String, String) -> Unit
 ) {
+    val context = LocalContext.current
     val strings = Translations.forLang(snapshot.language)
     val cur = snapshot.currencySymbol.ifBlank { "DH" }
     var rawDigits by remember { mutableStateOf("") }
+    var customDescription by remember { mutableStateOf("") }
+    var prefilledShortcut by remember { mutableStateOf<WidgetUsualShortcutItem?>(null) }
+    var whyThisShortcut by remember { mutableStateOf<WidgetUsualShortcutItem?>(null) }
 
     val categories = remember(snapshot.envelopes, snapshot.language) {
         if (snapshot.envelopes.isNotEmpty()) {
@@ -669,60 +676,203 @@ private fun QuickCaptureKeypadSection(
     }
     var selectedCategory by remember { mutableStateOf(categories.first()) }
 
-    val parsedAmount = rawDigits.toDoubleOrNull() ?: 0.0
+    val parsedAmount = PayCycleEngine.parseFlexibleAmount(rawDigits)
+    val selectedWidgetEnv = snapshot.envelopes.find { it.key == selectedCategory.first }
+    val selectedEnvelopeStatus = remember(selectedWidgetEnv) {
+        selectedWidgetEnv?.let { wEnv ->
+            com.example.domain.EnvelopeStatus(
+                config = com.example.data.EnvelopeConfig(
+                    key = wEnv.key,
+                    nameFr = wEnv.name,
+                    nameAr = wEnv.name,
+                    nameDarija = wEnv.name,
+                    nameEn = wEnv.name,
+                    hasCap = wEnv.hasCap
+                ),
+                baseAllocated = wEnv.totalAvailable,
+                rolloverAmount = 0.0,
+                totalAvailable = wEnv.totalAvailable,
+                spent = wEnv.spent,
+                remaining = wEnv.totalAvailable - wEnv.spent,
+                usagePercent = wEnv.usagePercent,
+                isOver90Percent = wEnv.isOver90Percent
+            )
+        }
+    }
+
+    val showTimeAwareRow = snapshot.smartSuggestionsEnabled && rawDigits.isEmpty() && snapshot.usualShortcuts.isNotEmpty()
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Amount display
+        // Amount display + Live "Can I afford this?" line
         Surface(
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(
-                    text = if (rawDigits.isEmpty()) "0 $cur" else "$rawDigits $cur",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = if (parsedAmount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.testTag("qc_keypad_amount_display")
-                )
-                IconButton(
-                    onClick = {
-                        if (rawDigits.isNotEmpty()) {
-                            rawDigits = rawDigits.dropLast(1)
-                        }
-                    },
-                    modifier = Modifier.testTag("qc_keypad_backspace_btn")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Backspace,
-                        contentDescription = "Backspace"
+                    Text(
+                        text = if (rawDigits.isEmpty()) "0 $cur" else "$rawDigits $cur",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = if (parsedAmount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("qc_keypad_amount_display")
+                    )
+                    IconButton(
+                        onClick = {
+                            if (rawDigits.isNotEmpty()) {
+                                rawDigits = rawDigits.dropLast(1)
+                            }
+                        },
+                        modifier = Modifier.testTag("qc_keypad_backspace_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Backspace,
+                            contentDescription = "Backspace"
+                        )
+                    }
+                }
+                if (snapshot.smartSuggestionsEnabled && parsedAmount > 0.0) {
+                    val impact = PayCycleEngine.computePurchaseImpact(
+                        amount = parsedAmount,
+                        safePool = snapshot.effectiveSafePool(),
+                        daysRemaining = snapshot.daysRemainingInCycle,
+                        envelope = selectedEnvelopeStatus
+                    )
+                    val verdictColor = when (impact.verdict) {
+                        com.example.domain.PurchaseVerdict.FITS_TODAY -> AccentEmerald
+                        com.example.domain.PurchaseVerdict.LOWERS_ALLOWANCE -> AccentAmber
+                        com.example.domain.PurchaseVerdict.OVER_POOL -> AccentCoral
+                    }
+                    val impactLine = PayCycleEngine.formatPurchaseImpactLine(
+                        impact = impact,
+                        currencySymbol = cur,
+                        hideAmounts = snapshot.hideAmounts,
+                        strings = strings,
+                        envelopeName = selectedCategory.second
+                    )
+                    Text(
+                        text = impactLine,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = verdictColor,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("qc_keypad_purchase_impact_line")
                     )
                 }
             }
         }
 
-        // Category chips
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            categories.forEach { pair ->
-                val isSelected = selectedCategory.first == pair.first
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { selectedCategory = pair },
-                    label = { Text(pair.second, fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium) },
-                    modifier = Modifier.testTag("qc_cat_chip_${pair.first}")
-                )
+        // Time-aware usual spend chips when digits are empty, switching to Category chips once typing starts
+        if (showTimeAwareRow) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("qc_time_aware_shortcuts_row"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    snapshot.usualShortcuts.take(3).forEachIndexed { idx, shortcut ->
+                        val amtLabel = PayCycleEngine.formatAmountOrMask(shortcut.amount, snapshot.hideAmounts)
+                        val chipText = "${shortcut.desc.take(12)} · $amtLabel $cur"
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            border = BorderStroke(1.dp, AccentEmerald.copy(alpha = 0.55f)),
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .combinedClickable(
+                                    onClick = {
+                                        whyThisShortcut = null
+                                        prefilledShortcut = shortcut
+                                        rawDigits = if (shortcut.amount % 1.0 == 0.0) {
+                                            shortcut.amount.toInt().toString()
+                                        } else {
+                                            shortcut.amount.toString()
+                                        }
+                                        customDescription = shortcut.desc
+                                        val matchedCat = categories.find { it.first == shortcut.envelopeKey }
+                                        if (matchedCat != null) {
+                                            selectedCategory = matchedCat
+                                        } else if (shortcut.envelopeKey.isNotBlank()) {
+                                            selectedCategory = shortcut.envelopeKey to shortcut.categoryName.ifBlank { shortcut.desc }
+                                        }
+                                    },
+                                    onLongClick = {
+                                        whyThisShortcut = if (whyThisShortcut == shortcut) null else shortcut
+                                    }
+                                )
+                                .testTag("qc_time_aware_shortcut_$idx")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AutoAwesome,
+                                    contentDescription = null,
+                                    tint = AccentEmerald,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = chipText,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+                whyThisShortcut?.let { explained ->
+                    val whyText = "${explained.desc} : " +
+                        strings.shortcutWhyThisFmt.replace("{count}", explained.occurrences.toString())
+                    Text(
+                        text = whyText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AccentEmerald,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { whyThisShortcut = null }
+                            .testTag("qc_time_aware_why_this_banner")
+                    )
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                categories.forEach { pair ->
+                    val isSelected = selectedCategory.first == pair.first
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { selectedCategory = pair },
+                        label = { Text(pair.second, fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium) },
+                        modifier = Modifier.testTag("qc_cat_chip_${pair.first}")
+                    )
+                }
             }
         }
 
@@ -775,11 +925,19 @@ private fun QuickCaptureKeypadSection(
         Button(
             onClick = {
                 if (parsedAmount > 0.0) {
+                    prefilledShortcut?.let { prefilled ->
+                        com.example.notifications.MasroufiNotificationManager.recordShortcutAmountEdit(
+                            context = context,
+                            desc = prefilled.desc,
+                            suggestedAmount = prefilled.amount,
+                            savedAmount = parsedAmount
+                        )
+                    }
                     onCommitExpense(
                         parsedAmount,
                         selectedCategory.first,
                         selectedCategory.second,
-                        selectedCategory.second
+                        customDescription.ifBlank { selectedCategory.second }
                     )
                 }
             },

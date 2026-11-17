@@ -126,6 +126,7 @@ fun SettingsBottomSheet(
     var notifyDaret by remember { mutableStateOf(MasroufiNotificationManager.isNotifyDaretEnabled(context)) }
     var notifyBudget80 by remember { mutableStateOf(MasroufiNotificationManager.isNotifyBudget80Enabled(context)) }
     var notifyEvening by remember { mutableStateOf(MasroufiNotificationManager.isNotifyEveningEnabled(context)) }
+    var smartSuggestionsEnabled by remember { mutableStateOf(MasroufiNotificationManager.isSmartSuggestionsEnabled(context)) }
     var notifFeedback by remember { mutableStateOf<String?>(null) }
 
     var backupPassword by remember { mutableStateOf("") }
@@ -1172,6 +1173,52 @@ fun SettingsBottomSheet(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = strings.smartSuggestionsTitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = strings.smartSuggestionsSub,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    MasroufiNotificationManager.resetAllSmartLearning(context)
+                                    notifFeedback = strings.resetLearningToast
+                                },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.testTag("settings_reset_learning_btn")
+                            ) {
+                                Text(
+                                    text = strings.resetLearningBtn,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Switch(
+                                checked = smartSuggestionsEnabled,
+                                onCheckedChange = { enabled ->
+                                    smartSuggestionsEnabled = enabled
+                                    MasroufiNotificationManager.setSmartSuggestionsEnabled(context, enabled)
+                                },
+                                modifier = Modifier.testTag("settings_smart_suggestions_switch")
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
                             text = strings.billsTitle,
                             style = MaterialTheme.typography.bodySmall,
@@ -1209,22 +1256,33 @@ fun SettingsBottomSheet(
                         )
                     }
 
+                    var eveningReminderTime by remember {
+                        mutableStateOf(MasroufiNotificationManager.getEveningReminderTime(context))
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = when (lang) {
-                                "ar" -> "تذكير مسائي / أسبوعي"
-                                "darija" -> "تذكير العشية / السيمانة"
-                                "en" -> "Evening & Weekly Digest"
-                                else -> "Rappel du soir & hebdo"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "تذكير مسائي / أسبوعي"
+                                    "darija" -> "تذكير العشية / السيمانة"
+                                    "en" -> "Evening & Weekly Digest"
+                                    else -> "Rappel du soir & hebdo"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${strings.eveningReminderTimeLabel} : ${String.format(java.util.Locale.US, "%02d:%02d", eveningReminderTime.first, eveningReminderTime.second)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("settings_evening_time_display")
+                            )
+                        }
                         Switch(
                             checked = notifyEvening,
                             onCheckedChange = { enabled ->
@@ -1233,6 +1291,72 @@ fun SettingsBottomSheet(
                             },
                             modifier = Modifier.testTag("settings_notify_evening_switch")
                         )
+                    }
+
+                    if (notifyEvening) {
+                        val timePresets = listOf(
+                            19 to 30,
+                            20 to 0,
+                            20 to 30,
+                            21 to 0,
+                            21 to 30,
+                            22 to 0
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                                .testTag("settings_evening_time_chips_row"),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            timePresets.forEach { (h, m) ->
+                                val label = String.format(java.util.Locale.US, "%02d:%02d", h, m)
+                                val isSel = eveningReminderTime.first == h && eveningReminderTime.second == m
+                                FilterChip(
+                                    selected = isSel,
+                                    onClick = {
+                                        eveningReminderTime = h to m
+                                        MasroufiNotificationManager.setEveningReminderTime(context, h, m)
+                                    },
+                                    label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    modifier = Modifier.testTag("settings_evening_time_chip_${h}_${m}")
+                                )
+                            }
+                            FilledTonalButton(
+                                onClick = {
+                                    runCatching {
+                                        android.app.TimePickerDialog(
+                                            context,
+                                            { _, pickedHour, pickedMinute ->
+                                                eveningReminderTime = pickedHour to pickedMinute
+                                                MasroufiNotificationManager.setEveningReminderTime(
+                                                    context,
+                                                    pickedHour,
+                                                    pickedMinute
+                                                )
+                                            },
+                                            eveningReminderTime.first,
+                                            eveningReminderTime.second,
+                                            true
+                                        ).show()
+                                    }
+                                },
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("settings_evening_time_picker_btn")
+                            ) {
+                                Text(
+                                    text = String.format(
+                                        java.util.Locale.US,
+                                        "🕒 %02d:%02d",
+                                        eveningReminderTime.first,
+                                        eveningReminderTime.second
+                                    ),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
 
                     if (!notifFeedback.isNullOrBlank()) {

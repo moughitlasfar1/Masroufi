@@ -5,9 +5,11 @@ import android.content.Intent
 import android.speech.RecognizerIntent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,7 +67,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.domain.EnvelopeStatus
 import com.example.domain.PayCycleEngine
+import com.example.domain.PurchaseVerdict
+import com.example.domain.Translations
 import com.example.domain.VoiceDarijaParser
 import com.example.domain.VoiceParsedTransaction
 import com.example.ui.theme.AccentAmber
@@ -74,11 +79,178 @@ import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
+import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
+import kotlin.math.abs
 
 data class RecentCategoryShortcut(
     val envelopeKey: String,
     val categoryName: String
+)
+
+data class UsualSpendShortcut(
+    val desc: String,
+    val amount: Double,
+    val envelopeKey: String,
+    val accountId: String = "acc_cash",
+    val categoryName: String = "",
+    val score: Double = 0.0,
+    val occurrences: Int = 1,
+    val latestIsoDate: String = ""
+) {
+    val description: String get() = desc
+    val typicalAmount: Double get() = amount
+    val matchCount: Int get() = occurrences
+}
+
+typealias TimeAwareShortcut = UsualSpendShortcut
+
+fun timeBlockForHour(hour: Int): Int = when (hour) {
+    in 5..10 -> 0   // Morning
+    in 11..14 -> 1  // Noon
+    in 15..17 -> 2  // Afternoon
+    else -> 3       // Evening / Night (18..23, 0..4)
+}
+
+fun isWeekendForIsoDate(isoDate: String): Boolean {
+    val parts = isoDate.trim().split("-").mapNotNull { it.toIntOrNull() }
+    if (parts.size < 3) return false
+    val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
+    }
+    val dow = cal.get(Calendar.DAY_OF_WEEK)
+    return dow == Calendar.SATURDAY || dow == Calendar.SUNDAY
+}
+
+fun computeTimeAwareShortcuts(
+    state: DashboardState,
+    nowHour: Int,
+    isWeekend: Boolean,
+    nowIso: String = PayCycleEngine.todayIso(),
+    editedAmountOverrides: Map<String, Double> = emptyMap(),
+    minMatchesForChip: Int = 4,
+    minTransactionsForWarmStart: Int = 15
+): List<UsualSpendShortcut> {
+    val lang = state.profile.language
+    val envConfigs = state.envelopes.map { it.config }
+    val accountItems = state.accounts.map { it.account }
+    val nowEpoch = PayCycleEngine.parseEpochDays(nowIso)
+
+    data class TxWithContext(
+        val tx: com.example.data.TransactionItem,
+        val hour: Int,
+        val ageDays: Int,
+        val isWeekend: Boolean
+    )
+
+    val eligible = state.allTransactions.mapNotNull { tx ->
+        if (tx.type != "expense" || tx.amount <= 0.0 || tx.isoDate.isBlank()) return@mapNotNull null
+        val txEpoch = PayCycleEngine.parseEpochDays(tx.isoDate)
+        val ageDays = (nowEpoch - txEpoch).toInt()
+        if (ageDays !in 0..90) return@mapNotNull null
+        val resolvedHour = tx.resolvedHourOfDay()
+        if (resolvedHour !in 0..23) return@mapNotNull null
+        TxWithContext(
+            tx = tx,
+            hour = resolvedHour,
+            ageDays = ageDays,
+            isWeekend = isWeekendForIsoDate(tx.isoDate)
+        )
+    }
+
+    // Cold start guard: fewer than 15 transactions with a known hour -> return empty list
+    if (eligible.size < minTransactionsForWarmStart) {
+        return emptyList()
+    }
+
+    val targetTimeBlock = timeBlockForHour(nowHour.coerceIn(0, 23))
+
+    // Group by weekday vs weekend and description
+    val sameDayTypeBucket = eligible.filter { it.isWeekend == isWeekend }.ifEmpty { eligible }
+    val grouped = sameDayTypeBucket.groupBy { item ->
+        val rawLabel = item.tx.desc.trim().ifBlank {
+            item.tx.localizedCategory(lang, envConfigs)
+        }
+        rawLabel.lowercase(Locale.ROOT)
+    }
+
+    val candidates = grouped.mapNotNull { (descKey, items) ->
+        if (items.size < minMatchesForChip) return@mapNotNull null
+        val sortedByRecent = items.sortedWith(
+            compareBy<TxWithContext> { it.ageDays }
+                .thenByDescending { it.tx.id }
+        )
+        val latestTx = sortedByRecent.first().tx
+        val displayDesc = latestTx.desc.trim().ifBlank {
+            latestTx.localizedCategory(lang, envConfigs)
+        }
+
+        // Typical amount: learned 3-edit override if present, otherwise mode of rounded amounts tie-broken by recency
+        val amountGroups = sortedByRecent.groupBy { PayCycleEngine.roundMoney(it.tx.amount) }
+        val modeAmt = amountGroups.entries.sortedWith(
+            compareByDescending<Map.Entry<Double, List<TxWithContext>>> { it.value.size }
+                .thenBy { it.value.minOf { ctx -> ctx.ageDays } }
+                .thenByDescending { it.value.first().tx.id }
+        ).first().key
+        val typicalAmt = editedAmountOverrides[descKey]?.takeIf { it > 0.0 } ?: modeAmt
+
+        var totalScore = 0.0
+        for (ctx in items) {
+            val blockWeight = if (timeBlockForHour(ctx.hour) == targetTimeBlock) 2.5 else 1.0
+            val recencyBoost = 0.35 / (1.0 + (ctx.ageDays / 30.0))
+            totalScore += blockWeight + recencyBoost
+        }
+
+        val smartGuess = PayCycleEngine.inferSmartDefaults(
+            description = displayDesc,
+            allTransactions = state.allTransactions,
+            envelopes = envConfigs,
+            accounts = accountItems,
+            lang = lang
+        )
+        val resolvedEnvKey = smartGuess.envelopeKey.ifBlank { latestTx.envelopeKey }
+        val resolvedEnvConfig = envConfigs.find { it.key == resolvedEnvKey }
+        val resolvedCatName = resolvedEnvConfig?.localizedName(lang)
+            ?: smartGuess.categoryName.ifBlank { latestTx.localizedCategory(lang, envConfigs) }
+        val resolvedAccId = smartGuess.accountId.ifBlank { latestTx.accountId.ifBlank { "acc_cash" } }
+
+        UsualSpendShortcut(
+            desc = displayDesc,
+            amount = typicalAmt,
+            envelopeKey = resolvedEnvKey,
+            accountId = resolvedAccId,
+            categoryName = resolvedCatName,
+            score = totalScore,
+            occurrences = items.size,
+            latestIsoDate = latestTx.isoDate
+        )
+    }
+
+    return candidates.sortedWith(
+        compareByDescending<UsualSpendShortcut> { (it.score * 1000.0).toLong() }
+            .thenByDescending { it.latestIsoDate }
+            .thenByDescending { it.occurrences }
+            .thenBy { it.desc.lowercase(Locale.ROOT) }
+    ).take(3)
+}
+
+fun computeTimeAwareShortcuts(
+    state: DashboardState,
+    nowIso: String = PayCycleEngine.todayIso(),
+    currentHour: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+    minTransactionsForWarmStart: Int = 15,
+    minMatchesForChip: Int = 4,
+    editedAmountOverrides: Map<String, Double> = emptyMap()
+): List<UsualSpendShortcut> = computeTimeAwareShortcuts(
+    state = state,
+    nowHour = currentHour,
+    isWeekend = isWeekendForIsoDate(nowIso),
+    nowIso = nowIso,
+    editedAmountOverrides = editedAmountOverrides,
+    minMatchesForChip = minMatchesForChip,
+    minTransactionsForWarmStart = minTransactionsForWarmStart
 )
 
 fun computeTopThreeRecentCategories(state: DashboardState): List<RecentCategoryShortcut> {
@@ -350,6 +522,7 @@ fun VoiceDarijaEntrySection(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LargeNumericKeypadSection(
     amountText: String,
@@ -361,9 +534,26 @@ fun LargeNumericKeypadSection(
     selectedEnvelopeKey: String,
     onAmountChange: (String) -> Unit,
     onSelectCategoryShortcut: (RecentCategoryShortcut, Boolean) -> Unit,
-    onVoiceMicClick: (() -> Unit)? = null
+    onVoiceMicClick: (() -> Unit)? = null,
+    txType: String = "expense",
+    effectiveExpenseAmount: Double? = null,
+    baseCurrencySymbol: String = currencySymbol,
+    safePool: Double = 0.0,
+    daysRemaining: Int = 30,
+    selectedEnvelopeStatus: EnvelopeStatus? = null,
+    hideAmounts: Boolean = false,
+    timeAwareShortcuts: List<TimeAwareShortcut> = emptyList(),
+    onSelectTimeAwareShortcut: ((TimeAwareShortcut, Boolean) -> Unit)? = null,
+    smartSuggestionsEnabled: Boolean = true,
+    expenseHistory: List<com.example.data.TransactionItem> = emptyList(),
+    activeWindow: com.example.domain.PayCycleWindow? = null
 ) {
     val haptics = LocalHapticFeedback.current
+    val strings = remember(language) { Translations.forLang(language) }
+    val parsedExpenseAmount = effectiveExpenseAmount ?: PayCycleEngine.parseFlexibleAmount(amountText)
+    val isAmountEmpty = amountText.trim().let { it.isEmpty() || it == "0" }
+    val showTimeAwareRow = smartSuggestionsEnabled && txType == "expense" && isAmountEmpty && timeAwareShortcuts.isNotEmpty() && onSelectTimeAwareShortcut != null
+    var whyThisShortcut by remember { mutableStateOf<TimeAwareShortcut?>(null) }
 
     fun appendDigitOrDot(key: String) {
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -387,7 +577,7 @@ fun LargeNumericKeypadSection(
 
     fun addQuickIncrement(delta: Int) {
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        val currentVal = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
+        val currentVal = PayCycleEngine.parseFlexibleAmount(amountText)
         val nextVal = currentVal + delta
         val formatted = if (nextVal % 1.0 == 0.0) {
             nextVal.toInt().toString()
@@ -416,11 +606,15 @@ fun LargeNumericKeypadSection(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = when (language) {
-                            "darija" -> "1. كتب المبلغ · 2. ورك على الفئة = تسجلات!"
-                            "ar" -> "1. أدخل المبلغ · 2. اضغط الفئة = تم الحفظ!"
-                            "en" -> "1. Type amount · 2. Tap category = Done!"
-                            else -> "1. Tapez le montant · 2. Touchez une catégorie = Fait !"
+                        text = if (showTimeAwareRow) {
+                            strings.timeAwareShortcutsHint
+                        } else {
+                            when (language) {
+                                "darija" -> "1. كتب المبلغ · 2. ورك على الفئة = تسجلات!"
+                                "ar" -> "1. أدخل المبلغ · 2. اضغط الفئة = تم الحفظ!"
+                                "en" -> "1. Type amount · 2. Tap category = Done!"
+                                else -> "1. Tapez le montant · 2. Touchez une catégorie = Fait !"
+                            }
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
@@ -478,6 +672,42 @@ fun LargeNumericKeypadSection(
                             }
                         }
                     }
+
+                    // Feature 1: Live "Can I afford this?" colour-coded line under the amount (expenses only)
+                    if (smartSuggestionsEnabled && txType == "expense" && parsedExpenseAmount > 0.0) {
+                        val impact = PayCycleEngine.computePurchaseImpact(
+                            amount = parsedExpenseAmount,
+                            safePool = safePool,
+                            daysRemaining = daysRemaining,
+                            expenseHistory = expenseHistory,
+                            window = activeWindow,
+                            envelope = selectedEnvelopeStatus
+                        )
+                        val verdictColor = when (impact.verdict) {
+                            PurchaseVerdict.FITS_TODAY -> AccentEmerald
+                            PurchaseVerdict.LOWERS_ALLOWANCE -> AccentAmber
+                            PurchaseVerdict.OVER_POOL -> AccentCoral
+                        }
+                        val envName = selectedEnvelopeStatus?.config?.localizedName(language)
+                        val impactText = PayCycleEngine.formatPurchaseImpactLine(
+                            impact = impact,
+                            currencySymbol = baseCurrencySymbol,
+                            hideAmounts = hideAmounts,
+                            strings = strings,
+                            envelopeName = envName
+                        )
+                        Text(
+                            text = impactText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = verdictColor,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .padding(top = 2.dp)
+                                .testTag("keypad_purchase_impact_line")
+                        )
+                    }
                 }
 
                 Row(
@@ -498,8 +728,84 @@ fun LargeNumericKeypadSection(
                 }
             }
 
-            // 3 Most Recent Categories as Prominent 1-Tap Shortcuts
-            if (recentCategories.isNotEmpty()) {
+            // Feature 2: Time-Aware 1-Tap Chips when amount is empty, switching to 3 Category Chips once typing starts
+            if (showTimeAwareRow) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("time_aware_shortcuts_row"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        timeAwareShortcuts.take(3).forEachIndexed { idx, shortcut ->
+                            val amtLabel = PayCycleEngine.formatAmountOrMask(shortcut.typicalAmount, hideAmounts)
+                            val chipText = "${shortcut.description.take(12)} · $amtLabel $baseCurrencySymbol"
+                            ExpressiveGlassSurface(
+                                shape = RoundedCornerShape(16.dp),
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                accentBorderColor = AccentEmerald,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .combinedClickable(
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            whyThisShortcut = null
+                                            onSelectTimeAwareShortcut?.invoke(shortcut, twoTapInstantSave)
+                                        },
+                                        onLongClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            whyThisShortcut = if (whyThisShortcut == shortcut) null else shortcut
+                                        }
+                                    )
+                                    .testTag("time_aware_shortcut_$idx")
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = AccentEmerald,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Text(
+                                            text = chipText,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    whyThisShortcut?.let { explained ->
+                        val whyText = "${explained.description} : " +
+                            strings.shortcutWhyThisFmt.replace("{count}", explained.occurrences.toString())
+                        Text(
+                            text = whyText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AccentEmerald,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { whyThisShortcut = null }
+                                .testTag("time_aware_why_this_banner")
+                        )
+                    }
+                }
+            } else if (recentCategories.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)

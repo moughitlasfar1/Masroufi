@@ -52,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -64,6 +65,7 @@ import com.example.data.EnvelopeConfig
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.PayCycleEngine
+import com.example.notifications.MasroufiNotificationManager
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
@@ -86,9 +88,13 @@ fun TransactionEditorSheet(
     onSave: (String, String, Double, String, String, String, String, String, String) -> Unit,
     onDelete: ((TransactionItem) -> Unit)? = null
 ) {
+    val context = LocalContext.current
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val lang = state.profile.language
     val haptics = LocalHapticFeedback.current
+    val smartSuggestionsEnabled = remember(context) {
+        MasroufiNotificationManager.isSmartSuggestionsEnabled(context)
+    }
 
     val initialSmartDefault = remember(existingTx) {
         if (existingTx == null) {
@@ -157,6 +163,7 @@ fun TransactionEditorSheet(
     var dateError by remember { mutableStateOf<String?>(null) }
     var smartDefaultHint by remember { mutableStateOf<String?>(null) }
     var duplicateWarningTx by remember { mutableStateOf<TransactionItem?>(null) }
+    var prefilledShortcut by remember { mutableStateOf<TimeAwareShortcut?>(null) }
 
     val baseCurrencyCode = PayCycleEngine.normalizeCurrencyCode(cur)
     var entryCurrency by remember { mutableStateOf(baseCurrencyCode) }
@@ -170,9 +177,19 @@ fun TransactionEditorSheet(
     val recentCategories = remember(state.allTransactions, state.envelopes, lang) {
         computeTopThreeRecentCategories(state)
     }
+    val editedOverrides = remember(context, prefilledShortcut) {
+        MasroufiNotificationManager.getShortcutAmountOverrides(context)
+    }
+    val timeAwareShortcuts = remember(state.allTransactions, state.envelopes, state.accounts, lang, todayIso, editedOverrides) {
+        computeTimeAwareShortcuts(
+            state = state,
+            nowIso = todayIso,
+            editedAmountOverrides = editedOverrides
+        )
+    }
 
-    fun computeConvertedAmount(): Double {
-        val rawAmt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
+    fun computeConvertedAmount(rawTextOverride: String = amountText): Double {
+        val rawAmt = PayCycleEngine.parseFlexibleAmount(rawTextOverride)
         val eurRate = eurRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_EUR_TO_MAD
         val usdRate = usdRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_USD_TO_MAD
         return PayCycleEngine.convertCurrencyAmount(
@@ -187,17 +204,23 @@ fun TransactionEditorSheet(
     fun tryCommitTransaction(
         overrideCategory: String = customCategory,
         overrideEnvKey: String = selectedEnvelopeKey,
+        overrideAmountText: String? = null,
+        overrideDesc: String? = null,
+        overrideAccountId: String? = null,
         ignoreDuplicateCheck: Boolean = false
     ): Boolean {
-        val rawAmt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
-        val convertedAmt = computeConvertedAmount()
+        val effectiveAmtText = overrideAmountText ?: amountText
+        val rawAmt = PayCycleEngine.parseFlexibleAmount(effectiveAmtText)
+        val convertedAmt = computeConvertedAmount(effectiveAmtText)
+        val effectiveAccountId = overrideAccountId ?: selectedAccountId
+        val effectiveDesc = overrideDesc ?: desc
         val normalizedDate = isoDate.trim().ifEmpty { todayIso }
         if (!PayCycleEngine.isValidIsoDate(normalizedDate)) {
             dateError = "Date invalide ('$normalizedDate')."
             showAdvancedFields = true
             return false
         }
-        if (txType == "transfer" && (toAccountId.isBlank() || toAccountId == selectedAccountId)) {
+        if (txType == "transfer" && (toAccountId.isBlank() || toAccountId == effectiveAccountId)) {
             dateError = "Veuillez sélectionner un compte destinataire différent du compte source."
             return false
         }
@@ -222,7 +245,17 @@ fun TransactionEditorSheet(
 
         dateError = null
         duplicateWarningTx = null
-        val baseDesc = desc.ifBlank { if (txType == "transfer") "Transfert entre comptes" else overrideCategory }
+        prefilledShortcut?.let { prefilled ->
+            if (txType == "expense") {
+                MasroufiNotificationManager.recordShortcutAmountEdit(
+                    context = context,
+                    desc = prefilled.desc,
+                    suggestedAmount = prefilled.amount,
+                    savedAmount = convertedAmt
+                )
+            }
+        }
+        val baseDesc = effectiveDesc.ifBlank { if (txType == "transfer") "Transfert entre comptes" else overrideCategory }
         val finalDesc = if (entryCurrency != baseCurrencyCode && rawAmt > 0.0) {
             "$baseDesc (${PayCycleEngine.formatDh(rawAmt)} $entryCurrency)"
         } else {
@@ -235,7 +268,7 @@ fun TransactionEditorSheet(
             convertedAmt,
             if (txType == "transfer") "Transfert" else overrideCategory,
             if (txType == "transfer") "autre" else overrideEnvKey,
-            selectedAccountId,
+            effectiveAccountId,
             if (txType == "transfer") toAccountId else "",
             finalDesc,
             normalizedDate
@@ -387,7 +420,51 @@ fun TransactionEditorSheet(
                 },
                 onVoiceMicClick = {
                     showVoiceSection = !showVoiceSection
-                }
+                },
+                txType = txType,
+                effectiveExpenseAmount = computeConvertedAmount(),
+                baseCurrencySymbol = cur,
+                safePool = state.safePool,
+                daysRemaining = state.daysRemaining,
+                selectedEnvelopeStatus = state.envelopes.find { it.config.key == selectedEnvelopeKey },
+                hideAmounts = state.hideAmounts,
+                timeAwareShortcuts = timeAwareShortcuts,
+                onSelectTimeAwareShortcut = { shortcut, commitImmediately ->
+                    val smartGuess = PayCycleEngine.inferSmartDefaults(
+                        description = shortcut.description,
+                        allTransactions = state.allTransactions,
+                        envelopes = state.envelopes.map { it.config },
+                        accounts = state.accounts.map { it.account },
+                        lang = lang
+                    )
+                    val resolvedEnvKey = shortcut.envelopeKey.ifBlank { smartGuess.envelopeKey }
+                    val resolvedCat = shortcut.categoryName.ifBlank { smartGuess.categoryName }
+                    val resolvedAcc = smartGuess.accountId.ifBlank { shortcut.accountId }
+                    val amtStr = if (shortcut.typicalAmount % 1.0 == 0.0) {
+                        shortcut.typicalAmount.toInt().toString()
+                    } else {
+                        shortcut.typicalAmount.toString()
+                    }
+                    prefilledShortcut = shortcut
+                    amountText = amtStr
+                    desc = shortcut.description
+                    selectedEnvelopeKey = resolvedEnvKey
+                    customCategory = resolvedCat
+                    selectedAccountId = resolvedAcc
+                    duplicateWarningTx = null
+                    if (commitImmediately && txType == "expense") {
+                        tryCommitTransaction(
+                            overrideCategory = resolvedCat,
+                            overrideEnvKey = resolvedEnvKey,
+                            overrideAmountText = amtStr,
+                            overrideDesc = shortcut.description,
+                            overrideAccountId = resolvedAcc
+                        )
+                    }
+                },
+                smartSuggestionsEnabled = smartSuggestionsEnabled,
+                expenseHistory = state.allTransactions,
+                activeWindow = state.activeWindow
             )
 
             AnimatedVisibility(visible = showVoiceSection) {

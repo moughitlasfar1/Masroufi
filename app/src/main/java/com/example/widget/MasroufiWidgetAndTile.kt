@@ -68,10 +68,14 @@ object MasroufiWidgetStore {
         state: DashboardState
     ): WidgetSnapshot {
         val appLock = AppSecurityManager.isAppLockEnabled(context)
+        val smartEnabled = com.example.notifications.MasroufiNotificationManager.isSmartSuggestionsEnabled(context)
+        val overrides = com.example.notifications.MasroufiNotificationManager.getShortcutAmountOverrides(context)
         val snapshot = WidgetSnapshot.fromDashboardState(
             state = state,
             nowIso = PayCycleEngine.todayIso(),
-            appLockEnabled = appLock
+            appLockEnabled = appLock,
+            smartSuggestionsEnabled = smartEnabled,
+            editedAmountOverrides = overrides
         )
         saveWidgetSnapshot(context, snapshot)
         return snapshot
@@ -224,6 +228,7 @@ object MasroufiWidgetStore {
             }
             val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(item.categoryName, item.envelopeKey)
             val isTransfer = resolvedType == "transfer"
+            val nowHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
             TransactionItem(
                 id = "tx_qc_${baseMs}_$idx",
                 userId = uid,
@@ -234,7 +239,8 @@ object MasroufiWidgetStore {
                 accountId = if (isTransfer) "acc_bank" else "acc_cash",
                 toAccountId = if (isTransfer) "acc_cash" else "",
                 desc = item.description.ifBlank { item.categoryName },
-                isoDate = todayIso
+                isoDate = todayIso,
+                hourOfDay = nowHour
             )
         }
         if (createdTxs.isEmpty()) return emptyList()
@@ -253,8 +259,9 @@ object MasroufiWidgetStore {
         val newTodaySpend = PayCycleEngine.roundMoney(currentSnapshot.effectiveTodaySpend(todayIso) + addedExpenseTotal)
         val newCycleExpenses = PayCycleEngine.roundMoney(currentSnapshot.cycleExpenses + addedExpenseTotal)
         val newRemainingBudget = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.remainingBudget - addedExpenseTotal))
+        val newSafePool = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.effectiveSafePool() - addedExpenseTotal))
         val daysRem = currentSnapshot.daysRemainingInCycle.coerceAtLeast(1)
-        val newSafeToday = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.safeToSpendToday - (addedExpenseTotal / daysRem)))
+        val newSafeToday = PayCycleEngine.roundMoney(max(0.0, newSafePool / daysRem))
 
         val updatedEnvelopes = currentSnapshot.envelopes.map { env ->
             val deltaForEnv = createdTxs.filter { it.type == "expense" && it.envelopeKey == env.key }.sumOf { it.amount }
@@ -276,6 +283,7 @@ object MasroufiWidgetStore {
             todaySpend = newTodaySpend,
             cycleExpenses = newCycleExpenses,
             remainingBudget = newRemainingBudget,
+            safePool = newSafePool,
             safeToSpendToday = newSafeToday,
             envelopes = updatedEnvelopes,
             updatedAtMillis = System.currentTimeMillis()
@@ -301,6 +309,7 @@ object MasroufiWidgetStore {
                     put("toAccountId", tx.toAccountId)
                     put("desc", tx.desc)
                     put("isoDate", tx.isoDate)
+                    put("hourOfDay", tx.hourOfDay)
                 }
             )
         }
@@ -341,11 +350,13 @@ object MasroufiWidgetStore {
             createdTxs.filter { it.type == "expense" }.sumOf { it.amount }
         )
         val daysRem = currentSnapshot.daysRemainingInCycle.coerceAtLeast(1)
+        val revertedSafePool = PayCycleEngine.roundMoney(currentSnapshot.effectiveSafePool() + revertedExpenseTotal)
         val updatedSnapshot = currentSnapshot.copy(
             todaySpend = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.effectiveTodaySpend(todayIso) - revertedExpenseTotal)),
             cycleExpenses = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.cycleExpenses - revertedExpenseTotal)),
             remainingBudget = PayCycleEngine.roundMoney(currentSnapshot.remainingBudget + revertedExpenseTotal),
-            safeToSpendToday = PayCycleEngine.roundMoney(currentSnapshot.safeToSpendToday + (revertedExpenseTotal / daysRem)),
+            safePool = revertedSafePool,
+            safeToSpendToday = PayCycleEngine.roundMoney(revertedSafePool / daysRem),
             updatedAtMillis = System.currentTimeMillis()
         )
         saveWidgetSnapshot(appCtx, updatedSnapshot)
@@ -404,7 +415,8 @@ object MasroufiWidgetStore {
                     accountId = obj.optString("accountId", "acc_cash"),
                     toAccountId = obj.optString("toAccountId", ""),
                     desc = obj.optString("desc", "Achat"),
-                    isoDate = obj.optString("isoDate", PayCycleEngine.todayIso())
+                    isoDate = obj.optString("isoDate", PayCycleEngine.todayIso()),
+                    hourOfDay = obj.optInt("hourOfDay", -1).let { if (it in 0..23) it else -1 }
                 )
             )
         }

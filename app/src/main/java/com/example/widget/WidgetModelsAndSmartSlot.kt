@@ -62,6 +62,15 @@ data class WidgetPresetItem(
     val envelopeKey: String
 )
 
+data class WidgetUsualShortcutItem(
+    val desc: String,
+    val amount: Double,
+    val envelopeKey: String,
+    val categoryName: String = "",
+    val accountId: String = "acc_cash",
+    val occurrences: Int = 4
+)
+
 data class WidgetStyle(
     val appWidgetId: Int = 0,
     val widgetKind: WidgetKind = WidgetKind.SMART_SLOT,
@@ -137,6 +146,7 @@ data class WidgetStyle(
 data class WidgetSnapshot(
     val snapshotDateIso: String = PayCycleEngine.todayIso(),
     val todaySpend: Double = 0.0,
+    val safePool: Double = 0.0,
     val safeToSpendToday: Double = 0.0,
     val remainingBudget: Double = 0.0,
     val cycleExpenses: Double = 0.0,
@@ -148,6 +158,8 @@ data class WidgetSnapshot(
     val primaryGoal: WidgetGoalItem? = null,
     val weekDaysSpend: List<Double> = List(7) { 0.0 },
     val presets: List<WidgetPresetItem> = emptyList(),
+    val usualShortcuts: List<WidgetUsualShortcutItem> = emptyList(),
+    val smartSuggestionsEnabled: Boolean = true,
     val monthEndForecastMessage: String = "",
     val noSpendStreakDays: Int = 0,
     val hideAmounts: Boolean = false,
@@ -206,9 +218,15 @@ data class WidgetSnapshot(
         )
     }
 
+    fun effectiveSafePool(): Double {
+        if (safePool > 0.0) return safePool
+        return PayCycleEngine.roundMoney(max(0.0, safeToSpendToday * daysRemainingInCycle.coerceAtLeast(1)))
+    }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("snapshotDateIso", snapshotDateIso)
         put("todaySpend", todaySpend)
+        put("safePool", safePool)
         put("safeToSpendToday", safeToSpendToday)
         put("remainingBudget", remainingBudget)
         put("cycleExpenses", cycleExpenses)
@@ -282,6 +300,20 @@ data class WidgetSnapshot(
                 })
             }
         })
+
+        put("smartSuggestionsEnabled", smartSuggestionsEnabled)
+        put("usualShortcuts", JSONArray().apply {
+            usualShortcuts.forEach { s ->
+                put(JSONObject().apply {
+                    put("desc", s.desc)
+                    put("amount", s.amount)
+                    put("envelopeKey", s.envelopeKey)
+                    put("categoryName", s.categoryName)
+                    put("accountId", s.accountId)
+                    put("occurrences", s.occurrences)
+                })
+            }
+        })
     }
 
     companion object {
@@ -291,7 +323,9 @@ data class WidgetSnapshot(
         fun fromDashboardState(
             state: DashboardState,
             nowIso: String = PayCycleEngine.todayIso(),
-            appLockEnabled: Boolean = false
+            appLockEnabled: Boolean = false,
+            smartSuggestionsEnabled: Boolean = true,
+            editedAmountOverrides: Map<String, Double> = emptyMap()
         ): WidgetSnapshot {
             val lang = state.profile.language.ifBlank { "fr" }
             val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
@@ -365,6 +399,25 @@ data class WidgetSnapshot(
                 )
             }
 
+            val usualItems = if (smartSuggestionsEnabled) {
+                com.example.ui.computeTimeAwareShortcuts(
+                    state = state,
+                    nowIso = nowIso,
+                    editedAmountOverrides = editedAmountOverrides
+                ).map { s ->
+                    WidgetUsualShortcutItem(
+                        desc = s.desc,
+                        amount = s.amount,
+                        envelopeKey = s.envelopeKey,
+                        categoryName = s.categoryName,
+                        accountId = s.accountId,
+                        occurrences = s.occurrences
+                    )
+                }
+            } else {
+                emptyList()
+            }
+
             val alertStr = when (state.spendProjection.alertLevel) {
                 ProjectionAlertLevel.RED -> "RED"
                 ProjectionAlertLevel.AMBER -> "AMBER"
@@ -374,11 +427,12 @@ data class WidgetSnapshot(
             return WidgetSnapshot(
                 snapshotDateIso = nowIso,
                 todaySpend = PayCycleEngine.roundMoney(todaySpend),
+                safePool = PayCycleEngine.roundMoney(state.safePool),
                 safeToSpendToday = PayCycleEngine.roundMoney(state.safeToSpendToday),
                 remainingBudget = PayCycleEngine.roundMoney(state.remainingBudget),
                 cycleExpenses = PayCycleEngine.roundMoney(state.cycleExpenses),
                 totalAvailableBudget = PayCycleEngine.roundMoney(state.totalAvailableBudget),
-                daysRemainingInCycle = state.activeWindow.daysRemaining.coerceAtLeast(1),
+                daysRemainingInCycle = state.daysRemaining.coerceAtLeast(1),
                 alertLevel = alertStr,
                 envelopes = envItems,
                 reminders = remItems,
@@ -387,6 +441,8 @@ data class WidgetSnapshot(
                     if (list.size == 7) list else List(7) { idx -> list.getOrElse(idx) { 0.0 } }
                 },
                 presets = presetItems,
+                usualShortcuts = usualItems,
+                smartSuggestionsEnabled = smartSuggestionsEnabled,
                 monthEndForecastMessage = state.monthEndForecastMessage,
                 noSpendStreakDays = state.noSpendStreakDays,
                 hideAmounts = state.hideAmounts,
@@ -474,20 +530,45 @@ data class WidgetSnapshot(
                 }
             }
 
+            val usualArr = obj.optJSONArray("usualShortcuts")
+            val usuals = mutableListOf<WidgetUsualShortcutItem>()
+            if (usualArr != null) {
+                for (i in 0 until usualArr.length()) {
+                    val item = usualArr.optJSONObject(i) ?: continue
+                    usuals.add(
+                        WidgetUsualShortcutItem(
+                            desc = item.optString("desc", ""),
+                            amount = item.optDouble("amount", 0.0),
+                            envelopeKey = item.optString("envelopeKey", "cafe"),
+                            categoryName = item.optString("categoryName", ""),
+                            accountId = item.optString("accountId", "acc_cash"),
+                            occurrences = item.optInt("occurrences", 4)
+                        )
+                    )
+                }
+            }
+
+            val parsedSafeToday = obj.optDouble("safeToSpendToday", 0.0)
+            val parsedDaysRem = obj.optInt("daysRemainingInCycle", 15).coerceAtLeast(1)
+            val parsedSafePool = obj.optDouble("safePool", parsedSafeToday * parsedDaysRem)
+
             return WidgetSnapshot(
                 snapshotDateIso = obj.optString("snapshotDateIso", PayCycleEngine.todayIso()),
                 todaySpend = obj.optDouble("todaySpend", 0.0),
-                safeToSpendToday = obj.optDouble("safeToSpendToday", 0.0),
+                safePool = parsedSafePool,
+                safeToSpendToday = parsedSafeToday,
                 remainingBudget = obj.optDouble("remainingBudget", 0.0),
                 cycleExpenses = obj.optDouble("cycleExpenses", 0.0),
                 totalAvailableBudget = obj.optDouble("totalAvailableBudget", 6400.0),
-                daysRemainingInCycle = obj.optInt("daysRemainingInCycle", 15).coerceAtLeast(1),
+                daysRemainingInCycle = parsedDaysRem,
                 alertLevel = obj.optString("alertLevel", "NONE"),
                 envelopes = envs,
                 reminders = rems,
                 primaryGoal = goal,
                 weekDaysSpend = week,
                 presets = presets,
+                usualShortcuts = usuals,
+                smartSuggestionsEnabled = obj.optBoolean("smartSuggestionsEnabled", true),
                 monthEndForecastMessage = obj.optString("monthEndForecastMessage", ""),
                 noSpendStreakDays = obj.optInt("noSpendStreakDays", 0),
                 hideAmounts = obj.optBoolean("hideAmounts", false),

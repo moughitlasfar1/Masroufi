@@ -426,6 +426,7 @@ fun MainFeatureScreen(
                     initialRollbackSnapshot = AppSecurityManager.loadEncryptedRollbackSnapshot(app),
                     initialDismissedSubscriptions = AppSecurityManager.getDismissedRecurringBills(app),
                     initialLearnedCategoriesJson = AppSecurityManager.loadLearnedCategoriesJson(app),
+                    initialVerifiedActiveDates = com.example.notifications.MasroufiNotificationManager.recordVerifiedActiveDate(app),
                     onRollbackSnapshotChanged = { snapshot ->
                         if (snapshot.isNullOrBlank()) {
                             AppSecurityManager.clearEncryptedRollbackSnapshot(app)
@@ -466,6 +467,7 @@ fun MainFeatureScreen(
     // Restore persistent privacy mask & load pending bank detections
     LaunchedEffect(Unit) {
         viewModel.setHideAmounts(AppSecurityManager.isHideAmountsEnabled(context))
+        viewModel.setVerifiedActiveDates(com.example.notifications.MasroufiNotificationManager.recordVerifiedActiveDate(context))
         com.example.notifications.BankDetectionStore.loadPendingItems(context)
         PayCycleEngine.importLearnedCategoriesJson(
             AppSecurityManager.loadLearnedCategoriesJson(context),
