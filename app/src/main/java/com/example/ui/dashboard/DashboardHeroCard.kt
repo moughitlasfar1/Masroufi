@@ -50,8 +50,8 @@ import com.example.ui.safeRoundToInt
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.ExpressiveAnimatedProgressBar
-import com.example.ui.theme.VyxelPeriwinkle
 import com.example.ui.theme.heroGradientColors
+import com.example.ui.theme.paletteForKey
 
 @Composable
 fun DashboardHeroCard(
@@ -72,6 +72,7 @@ fun DashboardHeroCard(
     fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
 
     val heroColors = heroGradientColors(state.customPrefs.accentPalette, isOverBudget)
+    val heroAccent = paletteForKey(state.customPrefs.accentPalette).primaryDark
     val heroShape = RoundedCornerShape(28.dp)
 
     Box(
@@ -99,7 +100,10 @@ fun DashboardHeroCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 8.dp)
                 ) {
                     if (isOverBudget) {
                         Icon(
@@ -111,9 +115,9 @@ fun DashboardHeroCard(
                     }
                     Text(
                         text = strings.safeToSpendTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White.copy(alpha = 0.92f)
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White.copy(alpha = 0.94f)
                     )
                 }
                 Row(
@@ -129,13 +133,13 @@ fun DashboardHeroCard(
                     Text(
                         text = tapHeroHint,
                         style = MaterialTheme.typography.labelSmall,
-                        color = VyxelPeriwinkle,
+                        color = Color.White.copy(alpha = 0.85f),
                         fontWeight = FontWeight.SemiBold
                     )
                     Icon(
                         imageVector = if (heroExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                         contentDescription = tapHeroHint,
-                        tint = VyxelPeriwinkle,
+                        tint = Color.White.copy(alpha = 0.85f),
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -194,7 +198,7 @@ fun DashboardHeroCard(
                         Surface(
                             shape = CircleShape,
                             color = Color.Black.copy(alpha = 0.28f),
-                            border = BorderStroke(1.dp, VyxelPeriwinkle.copy(alpha = 0.35f)),
+                            border = BorderStroke(1.dp, heroAccent.copy(alpha = 0.45f)),
                             modifier = Modifier.testTag("hero_no_spend_streak_badge")
                         ) {
                             Text(
@@ -206,7 +210,7 @@ fun DashboardHeroCard(
                                 },
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = VyxelPeriwinkle,
+                                color = heroAccent,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -264,7 +268,7 @@ fun DashboardHeroCard(
 
                     ExpressiveAnimatedProgressBar(
                         progress = (pct / 100f).safeFraction(),
-                        color = if (isOverBudget) AccentCoral else VyxelPeriwinkle,
+                        color = if (isOverBudget) AccentCoral else heroAccent,
                         trackColor = Color.Black.copy(alpha = 0.28f),
                         height = 8.dp
                     )

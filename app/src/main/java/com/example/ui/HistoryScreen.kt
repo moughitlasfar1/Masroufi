@@ -672,14 +672,14 @@ internal fun SwipeableTransactionRow(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(catAccent.copy(alpha = 0.16f)),
+                            .background(amountColor.copy(alpha = 0.16f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = resolvedCategoryDisplay.take(2).uppercase(),
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.ExtraBold,
-                            color = catAccent
+                            color = amountColor
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {

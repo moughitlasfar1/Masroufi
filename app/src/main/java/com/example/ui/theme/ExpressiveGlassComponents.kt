@@ -681,8 +681,8 @@ fun ExpressiveGlassBottomDock(
     val dockFill = if (isDark) Color(0xFF13161D).copy(alpha = 0.94f) else MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.96f)
     val rimTop = if (isDark) Color.White.copy(alpha = 0.24f) else Color.White.copy(alpha = 0.90f)
     val rimBottom = if (isDark) Color(0xFF252A36) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-    val activeBubbleColor = if (isDark) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
-    val activeBubbleContentColor = if (isDark) VyxelOnPeriwinkle else Color.White
+    val activeBubbleColor = MaterialTheme.colorScheme.primary
+    val activeBubbleContentColor = MaterialTheme.colorScheme.onPrimary
     val haptics = LocalHapticFeedback.current
 
     Box(
@@ -706,7 +706,6 @@ fun ExpressiveGlassBottomDock(
             modifier = Modifier
                 .fillMaxWidth()
                 .widthIn(max = 560.dp)
-                .padding(top = 10.dp)
                 .glass3d(
                     cornerRadius = 36.dp,
                     isDark = isDark,
@@ -722,14 +721,14 @@ fun ExpressiveGlassBottomDock(
             ) {
                 tabs.forEachIndexed { pageIdx, (key, label, icon) ->
                     val isSelected = activeTabKey == key
-                    val bubbleLift by animateDpAsState(
-                        targetValue = if (isSelected) (-8).dp else 0.dp,
+                    val pillWidth by animateDpAsState(
+                        targetValue = if (isSelected) 54.dp else 40.dp,
                         animationSpec = ExpressiveMotion.bouncySpring(),
-                        label = "dock_lift_$key"
+                        label = "dock_pill_w_$key"
                     )
                     val labelColor by animateColorAsState(
                         targetValue = if (isSelected) {
-                            if (isDark) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
+                            MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
@@ -749,19 +748,18 @@ fun ExpressiveGlassBottomDock(
                             )
                             .testTag("nav_tab_$key"),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .offset(y = bubbleLift)
-                                .size(if (isSelected) 46.dp else 32.dp)
+                                .width(pillWidth)
+                                .height(36.dp)
                                 .then(
                                     if (isSelected) {
                                         Modifier
-                                            .shadow(10.dp, CircleShape)
+                                            .shadow(6.dp, CircleShape)
                                             .clip(CircleShape)
                                             .background(activeBubbleColor)
-                                            .border(2.dp, if (isDark) Color(0xFF0A0D13) else Color.White, CircleShape)
                                     } else {
                                         Modifier.clip(CircleShape)
                                     }
@@ -780,7 +778,7 @@ fun ExpressiveGlassBottomDock(
                                 imageVector = icon,
                                 contentDescription = label,
                                 tint = if (isSelected) activeBubbleContentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(if (isSelected) 23.dp else 21.dp)
+                                modifier = Modifier.size(21.dp)
                             )
                         }
                         Text(

@@ -142,17 +142,17 @@ fun DashboardRecentTransactions(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .clip(RoundedCornerShape(11.dp))
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                                    .background(amtColor.copy(alpha = 0.14f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = when {
                                         isIncome -> Icons.Default.ArrowDownward
                                         isTransfer -> Icons.Default.SwapHoriz
-                                    else -> Icons.Default.ArrowUpward
+                                        else -> Icons.Default.ArrowUpward
                                     },
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
+                                    tint = amtColor,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }

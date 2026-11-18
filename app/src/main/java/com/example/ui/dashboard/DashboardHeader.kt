@@ -69,8 +69,8 @@ fun DashboardHeader(
     val topBarBg = MaterialTheme.colorScheme.surface
     val circleBtnBg = MaterialTheme.colorScheme.surfaceContainerHigh
     val circleBtnBorder = MaterialTheme.colorScheme.outlineVariant
-    val activeSegmentBg = if (isDarkTheme) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
-    val activeSegmentFg = if (isDarkTheme) VyxelOnPeriwinkle else Color.White
+    val activeSegmentBg = MaterialTheme.colorScheme.primary
+    val activeSegmentFg = MaterialTheme.colorScheme.onPrimary
     val friendlyCycleRange = remember(startIso, endIso, language) {
         PayCycleEngine.formatCycleRangeFriendly(startIso, endIso, language)
     }
@@ -108,7 +108,7 @@ fun DashboardHeader(
                         Icon(
                             imageVector = Icons.Default.AccountBalanceWallet,
                             contentDescription = null,
-                            tint = if (isDarkTheme) VyxelPeriwinkle else pal.primaryLight,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )
                     }

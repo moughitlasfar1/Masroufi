@@ -132,8 +132,8 @@ fun MoonshineWalkieTalkieFab(
             // Right orb: Dedicated 1-tap / hold Moonshine Walkie-Talkie trigger
             Surface(
                 shape = CircleShape,
-                color = if (isListening) AccentEmerald else Color.White.copy(alpha = 0.20f),
-                contentColor = Color.White,
+                color = if (isListening) AccentEmerald else MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f),
+                contentColor = if (isListening) Color.White else MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier
                     .size(44.dp)
                     .clip(CircleShape)

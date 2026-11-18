@@ -330,9 +330,8 @@ fun InsightsScreen(
     onDismissDetectedSubscription: (DetectedSubscription) -> Unit = {},
     onShareText: (String) -> Unit = {}
 ) {
-    val isDark = state.profile.isDarkTheme
-    val activeBg = if (isDark) VyxelPeriwinkle else MaterialTheme.colorScheme.primary
-    val activeFg = if (isDark) VyxelOnPeriwinkle else Color.White
+    val activeBg = MaterialTheme.colorScheme.primary
+    val activeFg = MaterialTheme.colorScheme.onPrimary
 
     Column(
         modifier = Modifier

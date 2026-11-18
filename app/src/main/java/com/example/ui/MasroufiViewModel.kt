@@ -1290,6 +1290,13 @@ class MasroufiViewModel(
     fun saveCustomizationPrefs(prefs: CustomizationPrefs) {
         _optimisticCustomPrefs.value = prefs
         val item = buildCustomPrefsFinancialItem(prefs, _customPrefsItemCreatedAt.value)
+        if (isLocalOnlyUser) {
+            val currentItems = (_localItems.value ?: emptyList()).filterNot {
+                it.id == "custom_prefs" || (it.itemType == "custom_prefs" && it.id != "learned_categories")
+            }
+            _localItems.value = currentItems + item
+            return
+        }
         safeLaunch("saveCustomizationPrefs") {
             repository.upsertFinancialItem(item)
         }
