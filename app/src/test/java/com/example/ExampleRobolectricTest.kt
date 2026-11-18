@@ -2469,4 +2469,67 @@ class ExampleRobolectricTest {
         assertTrue(com.example.notifications.MasroufiNotificationManager.getShortcutAmountOverrides(context).isEmpty())
         assertNull(PayCycleEngine.getLearnedCategoryForDescription("Qahwa"))
     }
+
+    @Test
+    fun `BackgroundWallpaperManager persists Moroccan presets, custom gallery photos, dim levels, and 4-language strings accurately`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val mgr = com.example.ui.theme.BackgroundWallpaperManager
+        mgr.clearCustomPhoto(context)
+        mgr.setWallpaperMode(context, "none")
+
+        assertFalse(mgr.stateFlow.value.isActive)
+        assertEquals("none", mgr.stateFlow.value.mode)
+
+        // 1. Built-in Moroccan wallpaper presets
+        mgr.setWallpaperMode(context, "zellige")
+        assertTrue(mgr.stateFlow.value.isActive)
+        assertEquals("zellige", mgr.stateFlow.value.mode)
+
+        mgr.setWallpaperMode(context, "atlas")
+        assertTrue(mgr.stateFlow.value.isActive)
+        assertEquals("atlas", mgr.stateFlow.value.mode)
+
+        mgr.setWallpaperMode(context, "sahara")
+        assertTrue(mgr.stateFlow.value.isActive)
+        assertEquals("sahara", mgr.stateFlow.value.mode)
+
+        // 2. Dimming level persistence
+        mgr.setDimLevel(context, "light")
+        assertEquals("light", mgr.stateFlow.value.dimLevel)
+        assertTrue(mgr.stateFlow.value.resolveDimAlpha(isDarkTheme = true) < mgr.stateFlow.value.copy(dimLevel = "strong").resolveDimAlpha(isDarkTheme = true))
+
+        // 3. Custom photo bitmap persistence & reload from disk
+        val sampleBmp = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888)
+        sampleBmp.eraseColor(android.graphics.Color.rgb(16, 185, 129))
+        assertTrue(mgr.saveCustomPhotoBitmap(context, sampleBmp))
+        assertEquals("custom", mgr.stateFlow.value.mode)
+        assertTrue(mgr.stateFlow.value.hasSavedCustomPhoto)
+        assertNotNull(mgr.stateFlow.value.customBitmap)
+        assertTrue(mgr.customPhotoFile(context).exists())
+
+        mgr.reloadFromDisk(context)
+        assertEquals("custom", mgr.stateFlow.value.mode)
+        assertTrue(mgr.stateFlow.value.hasSavedCustomPhoto)
+        assertNotNull(mgr.stateFlow.value.customBitmap)
+
+        // 4. Clearing custom photo deletes local file and reverts mode to "none"
+        mgr.clearCustomPhoto(context)
+        assertFalse(mgr.stateFlow.value.hasSavedCustomPhoto)
+        assertNull(mgr.stateFlow.value.customBitmap)
+        assertEquals("none", mgr.stateFlow.value.mode)
+        assertFalse(mgr.customPhotoFile(context).exists())
+
+        // 5. 4-language parity for background image strings
+        listOf("fr", "en", "ar", "darija").forEach { lang ->
+            val s = com.example.domain.Translations.forLang(lang)
+            assertTrue(s.bgImageSectionLabel.isNotBlank())
+            assertTrue(s.bgPickPhotoBtn.isNotBlank())
+            assertTrue(s.bgRemovePhotoBtn.isNotBlank())
+            assertTrue(s.bgPresetNone.isNotBlank())
+            assertTrue(s.bgPresetZellige.isNotBlank())
+            assertTrue(s.bgPresetAtlas.isNotBlank())
+            assertTrue(s.bgPresetSahara.isNotBlank())
+        }
+    }
 }
+

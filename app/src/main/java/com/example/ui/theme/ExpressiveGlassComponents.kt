@@ -42,6 +42,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -60,6 +63,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.takeOrElse
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -133,39 +137,63 @@ fun ExpressiveAmbientBackground(
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val context = LocalContext.current
+    LaunchedEffect(context) {
+        BackgroundWallpaperManager.ensureLoaded(context)
+    }
+    val wallpaperState by BackgroundWallpaperManager.stateFlow.collectAsState()
     val pal = paletteForKey(accentPalette)
     val bgColor = MaterialTheme.colorScheme.background
-    val primaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.015f) else pal.primaryLight.copy(alpha = 0.015f)
-    val secondaryGlow = if (isDarkTheme) pal.primaryDark.copy(alpha = 0.01f) else pal.primaryLight.copy(alpha = 0.01f)
+    val accentColor = if (isDarkTheme) pal.primaryDark else pal.primaryLight
+    val primaryGlow = accentColor.copy(alpha = 0.015f)
+    val secondaryGlow = accentColor.copy(alpha = 0.01f)
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(bgColor)
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(primaryGlow, Color.Transparent),
-                    center = Offset(w * 0.85f, h * 0.05f),
-                    radius = w * 0.55f
-                ),
-                radius = w * 0.55f,
-                center = Offset(w * 0.85f, h * 0.05f)
+        if (wallpaperState.isActive) {
+            BackgroundWallpaperLayer(
+                wallpaperState = wallpaperState,
+                accentColor = accentColor,
+                isDarkTheme = isDarkTheme,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("active_background_wallpaper_layer")
             )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(secondaryGlow, Color.Transparent),
-                    center = Offset(w * 0.18f, h * 0.92f),
-                    radius = w * 0.50f
-                ),
-                radius = w * 0.50f,
-                center = Offset(w * 0.18f, h * 0.92f)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(bgColor.copy(alpha = wallpaperState.resolveDimAlpha(isDarkTheme)))
             )
+        } else {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(primaryGlow, Color.Transparent),
+                        center = Offset(w * 0.85f, h * 0.05f),
+                        radius = w * 0.55f
+                    ),
+                    radius = w * 0.55f,
+                    center = Offset(w * 0.85f, h * 0.05f)
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(secondaryGlow, Color.Transparent),
+                        center = Offset(w * 0.18f, h * 0.92f),
+                        radius = w * 0.50f
+                    ),
+                    radius = w * 0.50f,
+                    center = Offset(w * 0.18f, h * 0.92f)
+                )
+            }
         }
-        content()
+        CompositionLocalProvider(LocalHasBackgroundWallpaper provides wallpaperState.isActive) {
+            content()
+        }
     }
 }
 
@@ -383,11 +411,17 @@ fun ExpressiveGlassCard(
     val borderColor = accentRimColor?.copy(alpha = if (isDark) 0.28f else 0.22f)
         ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.65f else 0.75f)
 
+    val hasWallpaper = LocalHasBackgroundWallpaper.current
+    val resolvedContainerColor = if (hasWallpaper && containerColor.alpha == 1f) {
+        containerColor.copy(alpha = if (isDark) 0.84f else 0.88f)
+    } else {
+        containerColor
+    }
     val shape = RoundedCornerShape(animatedRadius)
 
     Surface(
         shape = shape,
-        color = containerColor,
+        color = resolvedContainerColor,
         contentColor = contentColor,
         tonalElevation = 0.dp,
         shadowElevation = if (isDark) 2.dp else 1.dp,

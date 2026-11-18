@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -47,6 +48,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +73,8 @@ import com.example.notifications.MasroufiNotificationManager
 import com.example.security.AppSecurityManager
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
+import com.example.ui.theme.BackgroundWallpaperLayer
+import com.example.ui.theme.BackgroundWallpaperManager
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.MasroufiPalettes
 
@@ -419,6 +424,13 @@ fun SettingsBottomSheet(
                             )
                         }
                     }
+
+                    // Background Image & Moroccan Wallpapers Selector
+                    BackgroundWallpaperPickerSection(
+                        strings = strings,
+                        isDarkTheme = state.profile.isDarkTheme,
+                        tagPrefix = "settings"
+                    )
 
                     // Language Selector (FR / دارجة / عربي / EN)
                     Row(
@@ -1600,6 +1612,13 @@ fun CustomizationStudioSheet(
                 }
             }
 
+            // Background Image & Moroccan Wallpapers Selector in Studio
+            BackgroundWallpaperPickerSection(
+                strings = strings,
+                isDarkTheme = state.profile.isDarkTheme,
+                tagPrefix = "studio"
+            )
+
             // Editable EUR & USD Exchange Rates (persisted in CustomizationPrefs)
             Text(
                 text = strings.fxRatesSectionTitle,
@@ -1665,3 +1684,174 @@ fun CustomizationStudioSheet(
         }
     }
 }
+
+@Composable
+fun BackgroundWallpaperPickerSection(
+    strings: AppStrings,
+    isDarkTheme: Boolean,
+    tagPrefix: String = "settings"
+) {
+    val context = LocalContext.current
+    LaunchedEffect(context) {
+        BackgroundWallpaperManager.ensureLoaded(context)
+    }
+    val wallpaperState by BackgroundWallpaperManager.stateFlow.collectAsState()
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            BackgroundWallpaperManager.saveCustomPhotoFromUri(context, uri)
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("${tagPrefix}_bg_wallpaper_section"),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = strings.bgImageSectionLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (wallpaperState.isActive) {
+                Box(
+                    modifier = Modifier
+                        .width(56.dp)
+                        .height(26.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                        .testTag("${tagPrefix}_bg_live_preview_box")
+                ) {
+                    BackgroundWallpaperLayer(
+                        wallpaperState = wallpaperState,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        isDarkTheme = isDarkTheme
+                    )
+                }
+            }
+        }
+
+        // Preset & Custom Photo Chips
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            val presets = buildList {
+                add("none" to strings.bgPresetNone)
+                add("zellige" to "✨ ${strings.bgPresetZellige}")
+                add("atlas" to "⛰️ ${strings.bgPresetAtlas}")
+                add("sahara" to "🏜️ ${strings.bgPresetSahara}")
+                if (wallpaperState.hasSavedCustomPhoto) {
+                    add("custom" to "🖼️ ${strings.bgPresetCustomPhoto}")
+                }
+            }
+            presets.forEach { (modeKey, label) ->
+                val isSelected = wallpaperState.mode == modeKey
+                FilterChip(
+                    selected = isSelected,
+                    onClick = {
+                        BackgroundWallpaperManager.setWallpaperMode(context, modeKey)
+                    },
+                    label = {
+                        Text(
+                            text = label,
+                            fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold
+                        )
+                    },
+                    modifier = Modifier.testTag("${tagPrefix}_bg_preset_$modeKey")
+                )
+            }
+        }
+
+        // Action row: Pick photo from gallery + Remove custom photo
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilledTonalButton(
+                onClick = {
+                    photoPickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                modifier = Modifier.testTag("${tagPrefix}_pick_bg_image_btn")
+            ) {
+                Text(
+                    text = strings.bgPickPhotoBtn,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            if (wallpaperState.hasSavedCustomPhoto) {
+                TextButton(
+                    onClick = {
+                        BackgroundWallpaperManager.clearCustomPhoto(context)
+                    },
+                    modifier = Modifier.testTag("${tagPrefix}_clear_bg_image_btn")
+                ) {
+                    Text(
+                        text = strings.bgRemovePhotoBtn,
+                        fontSize = 12.sp,
+                        color = AccentCoral,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Readability Dimmer level when any background wallpaper/photo is active
+        if (wallpaperState.isActive) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${strings.bgDimLevelLabel} :",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+                listOf(
+                    "light" to strings.bgDimLight,
+                    "medium" to strings.bgDimMedium,
+                    "strong" to strings.bgDimStrong
+                ).forEach { (dimKey, dimLabel) ->
+                    val isSelected = wallpaperState.dimLevel == dimKey
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            BackgroundWallpaperManager.setDimLevel(context, dimKey)
+                        },
+                        label = {
+                            Text(
+                                text = dimLabel,
+                                fontSize = 11.5.sp,
+                                fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
+                            )
+                        },
+                        modifier = Modifier.testTag("${tagPrefix}_bg_dim_$dimKey")
+                    )
+                }
+            }
+        }
+    }
+}
+

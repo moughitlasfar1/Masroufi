@@ -263,6 +263,18 @@ class AppStrings(
     var impactRunOutSuffixFmt: String = " · Épuisé le {day}"
     var shortcutWhyThisFmt: String = "Pourquoi ? {count} fois vers cette heure"
     var eveningNotifPendingBankSuffixFmt: String = " · {count} opération(s) bancaire(s) à vérifier"
+    var bgImageSectionLabel: String = "Image de fond"
+    var bgPickPhotoBtn: String = "📷 Choisir une photo"
+    var bgRemovePhotoBtn: String = "✕ Supprimer la photo"
+    var bgPresetNone: String = "Aucun"
+    var bgPresetZellige: String = "Zellige"
+    var bgPresetAtlas: String = "Atlas"
+    var bgPresetSahara: String = "Sahara"
+    var bgPresetCustomPhoto: String = "Ma photo"
+    var bgDimLevelLabel: String = "Voile de lisibilité"
+    var bgDimLight: String = "Léger"
+    var bgDimMedium: String = "Moyen"
+    var bgDimStrong: String = "Fort"
 }
 
 object Translations {
@@ -528,6 +540,18 @@ object Translations {
         impactRunOutSuffixFmt = " · Épuisé le {day}"
         shortcutWhyThisFmt = "Pourquoi ? {count} fois vers cette heure"
         eveningNotifPendingBankSuffixFmt = " · {count} opération(s) bancaire(s) à vérifier"
+        bgImageSectionLabel = "Image de fond"
+        bgPickPhotoBtn = "📷 Choisir une photo"
+        bgRemovePhotoBtn = "✕ Supprimer la photo"
+        bgPresetNone = "Aucun"
+        bgPresetZellige = "Zellige"
+        bgPresetAtlas = "Atlas"
+        bgPresetSahara = "Sahara"
+        bgPresetCustomPhoto = "Ma photo"
+        bgDimLevelLabel = "Voile de lisibilité"
+        bgDimLight = "Léger"
+        bgDimMedium = "Moyen"
+        bgDimStrong = "Fort"
     }
 
     val EN = AppStrings(
@@ -792,6 +816,18 @@ object Translations {
         impactRunOutSuffixFmt = " · You'd run out on the {day}"
         shortcutWhyThisFmt = "Why this? {count} times around this hour"
         eveningNotifPendingBankSuffixFmt = " · {count} bank transaction(s) waiting for review"
+        bgImageSectionLabel = "Background image"
+        bgPickPhotoBtn = "📷 Choose photo"
+        bgRemovePhotoBtn = "✕ Remove photo"
+        bgPresetNone = "None"
+        bgPresetZellige = "Zellige"
+        bgPresetAtlas = "Atlas"
+        bgPresetSahara = "Sahara"
+        bgPresetCustomPhoto = "My photo"
+        bgDimLevelLabel = "Readability dimmer"
+        bgDimLight = "Light"
+        bgDimMedium = "Medium"
+        bgDimStrong = "Strong"
     }
 
     val AR = AppStrings(
@@ -1056,6 +1092,18 @@ object Translations {
         impactRunOutSuffixFmt = " · ينفد يوم {day}"
         shortcutWhyThisFmt = "لماذا؟ {count} مرات في مثل هذا الوقت"
         eveningNotifPendingBankSuffixFmt = " · {count} عمليات بنكية بانتظار المراجعة"
+        bgImageSectionLabel = "صورة الخلفية"
+        bgPickPhotoBtn = "📷 اختيار صورة"
+        bgRemovePhotoBtn = "✕ حذف الصورة"
+        bgPresetNone = "بدون"
+        bgPresetZellige = "زليج"
+        bgPresetAtlas = "الأطلس"
+        bgPresetSahara = "الصحراء"
+        bgPresetCustomPhoto = "صورتي"
+        bgDimLevelLabel = "تعتيم الخلفية للقراءة"
+        bgDimLight = "خفيف"
+        bgDimMedium = "متوسط"
+        bgDimStrong = "قوي"
     }
 
     val DARIJA = AppStrings(
@@ -1320,6 +1368,18 @@ object Translations {
         impactRunOutSuffixFmt = " · غادي يتقادى نهار {day}"
         shortcutWhyThisFmt = "علاش هادا؟ {count} مرات فهاد الوقيتة"
         eveningNotifPendingBankSuffixFmt = " · {count} عمليات د البنكة كيتسناو التأكيد"
+        bgImageSectionLabel = "تصويرة الخلفية"
+        bgPickPhotoBtn = "📷 ختار تصويرة"
+        bgRemovePhotoBtn = "✕ حيد التصويرة"
+        bgPresetNone = "بلا خلفية"
+        bgPresetZellige = "زليج"
+        bgPresetAtlas = "الأطلس"
+        bgPresetSahara = "الصحرا"
+        bgPresetCustomPhoto = "تصويرتي"
+        bgDimLevelLabel = "تضليلة باش يبان الكتبة"
+        bgDimLight = "خفيف"
+        bgDimMedium = "موسط"
+        bgDimStrong = "قاصح"
     }
 
     fun forLang(lang: String): AppStrings = when (lang) {

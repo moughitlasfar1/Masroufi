@@ -46,6 +46,7 @@ import com.example.domain.PayCycleEngine
 import com.example.domain.Translations
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentEmerald
+import com.example.ui.theme.LocalHasBackgroundWallpaper
 import com.example.ui.theme.VyxelOnPeriwinkle
 import com.example.ui.theme.VyxelPeriwinkle
 import com.example.ui.theme.paletteForKey
@@ -66,7 +67,12 @@ fun DashboardHeader(
 ) {
     val pal = paletteForKey(accentPalette)
     val strings = Translations.forLang(language)
-    val topBarBg = MaterialTheme.colorScheme.surface
+    val hasWallpaper = LocalHasBackgroundWallpaper.current
+    val topBarBg = if (hasWallpaper) {
+        MaterialTheme.colorScheme.surface.copy(alpha = if (isDarkTheme) 0.78f else 0.84f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
     val circleBtnBg = MaterialTheme.colorScheme.surfaceContainerHigh
     val circleBtnBorder = MaterialTheme.colorScheme.outlineVariant
     val activeSegmentBg = MaterialTheme.colorScheme.primary
