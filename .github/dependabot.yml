@@ -9,25 +9,16 @@ updates:
       github-actions:
         patterns:
           - "*"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
 
+  # Keep Gradle registered for GitHub Dependabot security advisories/updates,
+  # while disabling routine version-bump PRs (open-pull-requests-limit: 0) that
+  # break the pinned AGP 9.1.1 + Kotlin 2.2.10 + Compose compatibility matrix.
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 1
-    groups:
-      gradle-minor-and-patch:
-        patterns:
-          - "*"
-        update-types:
-          - "minor"
-          - "patch"
-    ignore:
-      # Avoid unsolicited breaking major bumps (e.g., Retrofit 3.x)
-      - dependency-name: "*"
-        update-types:
-          - "version-update:semver-major"
-      # Keep AGP / Kotlin / KSP aligned manually to preserve build compatibility
-      - dependency-name: "com.android.tools.build:*"
-      - dependency-name: "org.jetbrains.kotlin*"
-      - dependency-name: "com.google.devtools.ksp*"
+    open-pull-requests-limit: 0

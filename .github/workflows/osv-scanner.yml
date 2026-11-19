@@ -1,6 +1,9 @@
 name: Dependency Vulnerability Scan (OSV-Scanner)
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
@@ -8,13 +11,85 @@ on:
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
+# Least-privilege read-only permissions (works on private repos and Dependabot PRs)
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   osv-scan:
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@446d9e59472c871e307d7373282092a898114081 # v2.0.2
+    runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Generate temporary lockfile from active Gradle dependencies
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, tomllib
+
+          toml_path = pathlib.Path("gradle/libs.versions.toml")
+          gradle_path = pathlib.Path("app/build.gradle.kts")
+
+          catalog = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+          versions = catalog.get("versions", {})
+          libraries = catalog.get("libraries", {})
+
+          # Only scan active (uncommented) dependencies declared in app/build.gradle.kts
+          active_text = "\n".join(
+              re.sub(r"//.*$", "", line)
+              for line in gradle_path.read_text(encoding="utf-8").splitlines()
+          )
+          used_aliases = {
+              m.group(1).replace(".", "-")
+              for m in re.finditer(r"\blibs\.([a-zA-Z0-9_.]+)", active_text)
+          }
+
+          entries = []
+          for alias, spec in sorted(libraries.items()):
+              if alias not in used_aliases or not isinstance(spec, dict):
+                  continue
+              group = spec.get("group")
+              name = spec.get("name")
+              if not (group and name) and isinstance(spec.get("module"), str) and ":" in spec["module"]:
+                  group, name = spec["module"].split(":", 1)
+              version = spec.get("version")
+              if isinstance(version, dict):
+                  version = versions.get(version.get("ref", ""))
+              if group and name and isinstance(version, str) and version:
+                  entries.append(f"{group}:{name}:{version}=compileClasspath")
+
+          lines = [
+              "# Temporary lockfile generated in CI from active app/build.gradle.kts dependencies",
+              *entries,
+              "empty=",
+          ]
+          pathlib.Path("gradle.lockfile").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(f"Generated temporary gradle.lockfile with {len(entries)} active dependencies.")
+          PY
+
+      - name: Install OSV-Scanner v2.0.2
+        run: |
+          curl -fsSL "https://github.com/google/osv-scanner/releases/download/v2.0.2/osv-scanner_linux_amd64" -o ./osv-scanner
+          chmod +x ./osv-scanner
+          ./osv-scanner --version
+
+      - name: Run OSV-Scanner against active dependencies
+        run: |
+          set +e
+          ./osv-scanner scan source --lockfile=gradle.lockfile --format=table 2>&1 | tee osv-report.txt
+          STATUS=${PIPESTATUS[0]}
+          set -e
+          {
+            echo "## OSV-Scanner Dependency Vulnerability Report"
+            echo '```'
+            cat osv-report.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          rm -f ./gradle.lockfile ./osv-scanner osv-report.txt
+          if [ "$STATUS" -ne 0 ]; then
+            echo "OSV-Scanner exited with status $STATUS"
+            exit "$STATUS"
+          fi
