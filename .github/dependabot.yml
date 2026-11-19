@@ -3,17 +3,31 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
+      interval: "monthly"
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "gradle"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: "monthly"
+    open-pull-requests-limit: 1
     groups:
-      androidx-and-firebase:
+      gradle-minor-and-patch:
         patterns:
-          - "androidx.*"
-          - "com.google.firebase:*"
-          - "com.google.android.*"
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      # Avoid unsolicited breaking major bumps (e.g., Retrofit 3.x)
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+      # Keep AGP / Kotlin / KSP aligned manually to preserve build compatibility
+      - dependency-name: "com.android.tools.build:*"
+      - dependency-name: "org.jetbrains.kotlin*"
+      - dependency-name: "com.google.devtools.ksp*"

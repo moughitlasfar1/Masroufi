@@ -46,21 +46,30 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Prepare debug keystore from GitHub Secrets
+      - name: Prepare debug keystore (GitHub Secret or ephemeral CI key)
         env:
           DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ -n "$DEBUG_KEYSTORE_B64" ]; then
             echo "Restoring debug.keystore from GitHub Secret DEBUG_KEYSTORE_BASE64..."
             printf '%s' "$DEBUG_KEYSTORE_B64" | tr -d '\r\n ' | base64 -d > ./debug.keystore
           else
-            echo "ERROR: GitHub Secret DEBUG_KEYSTORE_BASE64 is required to build debug APKs."
-            echo "Generate a private debug keystore locally, encode it with base64, and store it in GitHub Actions Secrets."
-            exit 1
+            echo "NOTICE: DEBUG_KEYSTORE_BASE64 secret is not available (normal on PRs or before secret setup)."
+            echo "Generating a fresh ephemeral 1-day debug keystore for this CI run only (never committed or reused)."
+            rm -f ./debug.keystore
+            keytool -genkeypair \
+              -keystore ./debug.keystore \
+              -storetype PKCS12 \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 1 \
+              -dname "CN=Masroufi Ephemeral CI Debug,OU=CI,O=Masroufi,L=Unknown,ST=Unknown,C=MA"
           fi
           if [ ! -s "./debug.keystore" ]; then
-            echo "ERROR: ./debug.keystore is missing or empty after decoding secret."
+            echo "ERROR: ./debug.keystore is missing or empty."
             exit 1
           fi
 
