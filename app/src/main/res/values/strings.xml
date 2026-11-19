@@ -9,4 +9,6 @@
     <string name="voice_tile_label">Masroufi Voix</string>
     <string name="safe_today_tile_label">Dispo aujourd\'hui</string>
     <string name="voice_launcher_alias_label">Masroufi Voice</string>
+    <string name="oauth_web_client_prefix" translatable="false">1046667497606-bvh8lkngc0r4s789thbj9g0i1s9l19jj</string>
+    <string name="oauth_web_client_domain" translatable="false">googleusercontent.com</string>
 </resources>
