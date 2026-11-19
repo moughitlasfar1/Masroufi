@@ -250,3 +250,145 @@ test("SEC-08: payCycleDay > 28, future timestamps, mutated createdAt on update, 
     })
   );
 });
+
+test("Prompt 6 negative rules: missing fields, extra fields, wrong types, out-of-range values, and cross-user writes are rejected", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const past = new Date(Date.now() - 10_000);
+
+  // 1. Missing required field (desc omitted)
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_missing").set({
+      userId: ALICE_UID,
+      type: "expense",
+      amount: 50,
+      category: "Café",
+      envelopeKey: "cafe",
+      accountId: "acc_cash",
+      toAccountId: "",
+      isoDate: "2026-10-30",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // 2. Out-of-range transaction amounts (0, negative, > 100,000,000)
+  for (const badAmount of [0, -15, 100_000_001]) {
+    await assertFails(
+      aliceDb.collection("users").doc(ALICE_UID).collection("transactions").doc(`tx_amt_${badAmount}`).set({
+        userId: ALICE_UID,
+        type: "expense",
+        amount: badAmount,
+        category: "Café",
+        envelopeKey: "cafe",
+        accountId: "acc_cash",
+        toAccountId: "",
+        desc: "Test",
+        isoDate: "2026-10-30",
+        createdAt: past,
+        updatedAt: past,
+      })
+    );
+  }
+
+  // 3. Wrong field type (amount as string)
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_wrong_type").set({
+      userId: ALICE_UID,
+      type: "expense",
+      amount: "50",
+      category: "Café",
+      envelopeKey: "cafe",
+      accountId: "acc_cash",
+      toAccountId: "",
+      desc: "Test",
+      isoDate: "2026-10-30",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // 4. Spoofed userId inside own path & cross-user write/delete
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_spoof_uid").set({
+      userId: BOB_UID,
+      type: "expense",
+      amount: 50,
+      category: "Café",
+      envelopeKey: "cafe",
+      accountId: "acc_cash",
+      toAccountId: "",
+      desc: "Test",
+      isoDate: "2026-10-30",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_cross_write").set({
+      userId: BOB_UID,
+      type: "expense",
+      amount: 50,
+      category: "Café",
+      envelopeKey: "cafe",
+      accountId: "acc_cash",
+      toAccountId: "",
+      desc: "Test",
+      isoDate: "2026-10-30",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+  await assertFails(
+    bobDb.collection("users").doc(ALICE_UID).collection("transactions").doc("tx_1").delete()
+  );
+
+  // 5. Invalid financial item (invalid itemType, dayOrTurn > 366, extra field)
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("items").doc("item_bad_type").set({
+      userId: ALICE_UID,
+      itemType: "admin_override",
+      name: "Test",
+      subtitle: "",
+      amount: 100,
+      secondaryAmount: 0,
+      dayOrTurn: 10,
+      extraInt: 0,
+      dateOrCycle: "",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("items").doc("item_bad_day").set({
+      userId: ALICE_UID,
+      itemType: "bill",
+      name: "Facture",
+      subtitle: "",
+      amount: 100,
+      secondaryAmount: 0,
+      dayOrTurn: 400,
+      extraInt: 0,
+      dateOrCycle: "",
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+
+  // 6. Invalid profile language & top-level unmapped collection denied
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      baseBudget: 5000,
+      payCycleDay: 25,
+      rolloverEnabled: true,
+      language: "xx",
+      isDarkTheme: false,
+      seeded: true,
+      createdAt: past,
+      updatedAt: past,
+    })
+  );
+  await assertFails(aliceDb.collection("unmapped_public").doc("doc1").set({ hello: "world" }));
+});
+

@@ -216,7 +216,7 @@ object GoogleAssistantExpenseBridge {
             val cur = snapshot.currencySymbol.ifBlank { "DH" }
 
             // 1. Primary Google Assistant Voice Expense shortcut
-            val voiceIntent = Intent(context, QuickCaptureActivity::class.java).apply {
+            val voiceIntent = Intent(context, AssistantEntryActivity::class.java).apply {
                 action = ACTION_ASSISTANT_ADD_EXPENSE
                 putExtra(EXTRA_FEATURE, "voice_expense")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -237,7 +237,7 @@ object GoogleAssistantExpenseBridge {
             // 2. Top 2 user presets bound for Google Assistant
             snapshot.presets.take(2).forEachIndexed { idx, preset ->
                 val presetPhrase = "${preset.name} ${preset.amount.toInt()}"
-                val presetIntent = Intent(context, QuickCaptureActivity::class.java).apply {
+                val presetIntent = Intent(context, AssistantEntryActivity::class.java).apply {
                     action = ACTION_ASSISTANT_ADD_EXPENSE
                     putExtra(EXTRA_ASSISTANT_QUERY, presetPhrase)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -273,7 +273,7 @@ object GoogleAssistantExpenseBridge {
                 onResult("✓ Raccourci actif dans Google Assistant (« Ok Google, ouvre Masroufi Voix »)")
                 return
             }
-            val voiceIntent = Intent(context, QuickCaptureActivity::class.java).apply {
+            val voiceIntent = Intent(context, AssistantEntryActivity::class.java).apply {
                 action = ACTION_ASSISTANT_ADD_EXPENSE
                 putExtra(EXTRA_FEATURE, "voice_expense")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -295,15 +295,18 @@ object GoogleAssistantExpenseBridge {
     }
 
     /**
-     * Fires a real Google Assistant `SEARCH_ACTION` / `ACTION_ASSISTANT_ADD_EXPENSE` intent into
-     * [QuickCaptureActivity] so the user can test hands-free Assistant auto-logging with one tap.
+     * Fires a real Google Assistant `ACTION_ASSISTANT_ADD_EXPENSE` intent into
+     * [QuickCaptureActivity] (with confirmation required) so the user can test hands-free capture safely.
      */
     fun launchSimulatedAssistantExpense(context: Context, sampleQuery: String) {
         runCatching {
+            val cleanQuery = AssistantEntryValidator.sanitizeText(sampleQuery)
             val intent = Intent(context, QuickCaptureActivity::class.java).apply {
                 action = ACTION_ASSISTANT_ADD_EXPENSE
-                putExtra(EXTRA_ASSISTANT_QUERY, sampleQuery)
-                putExtra(SearchManager.QUERY, sampleQuery)
+                putExtra(EXTRA_ASSISTANT_QUERY, cleanQuery)
+                putExtra(SearchManager.QUERY, cleanQuery)
+                putExtra(QuickCaptureActivity.EXTRA_CONFIRM_REQUIRED, true)
+                putExtra(QuickCaptureActivity.EXTRA_FROM_EXTERNAL, true)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
             context.startActivity(intent)

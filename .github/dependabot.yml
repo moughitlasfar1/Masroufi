@@ -1,11 +1,19 @@
 version: 2
 updates:
-  # Keep GitHub Actions workflows up to date automatically.
-  # Note: Gradle library versions in gradle/libs.versions.toml are locked to the
-  # AGP 9.1.1 + Kotlin 2.2.10 compatibility matrix and should not be bumped by Dependabot.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 2
+      interval: "weekly"
+    open-pull-requests-limit: 3
 
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      androidx-and-firebase:
+        patterns:
+          - "androidx.*"
+          - "com.google.firebase:*"
+          - "com.google.android.*"

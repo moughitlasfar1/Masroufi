@@ -45,16 +45,22 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.TextButton
+import com.example.security.AppSecurityManager
 import com.example.domain.PayCycleEngine
 import com.example.domain.Translations
 import com.example.domain.VoiceBatchParseResult
@@ -172,14 +178,19 @@ fun MoonshineWalkieTalkieHud(
     state: DashboardState,
     liveTranscript: String,
     waveformLevels: List<Float>,
+    isUsingOnDeviceRecognizer: Boolean = false,
     onTranscriptChange: (String) -> Unit,
     onCommit: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val context = LocalContext.current
     val lang = state.profile.language
     val strings = Translations.forLang(lang)
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val isDark = state.profile.isDarkTheme
+    var cloudNoticeAck by remember {
+        mutableStateOf(AppSecurityManager.hasAcknowledgedCloudVoiceNotice(context))
+    }
 
     val liveEvaluation = VoiceDarijaParser.evaluateVoiceUtterance(liveTranscript, state)
 
@@ -231,8 +242,18 @@ fun MoonshineWalkieTalkieHud(
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp)
                             )
+                            val badgeText = if (isUsingOnDeviceRecognizer) {
+                                when (lang) {
+                                    "ar" -> "التعرف الصوتي · على الجهاز"
+                                    "darija" -> "الصوت · فالتيليفون"
+                                    "en" -> "Voice · On-Device"
+                                    else -> "Voix · Sur l'appareil"
+                                }
+                            } else {
+                                strings.moonshineBadgeLabel
+                            }
                             Text(
-                                text = strings.moonshineBadgeLabel,
+                                text = badgeText,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.primary
@@ -251,6 +272,47 @@ fun MoonshineWalkieTalkieHud(
                             contentDescription = strings.cancelBtn,
                             tint = AccentCoral
                         )
+                    }
+                }
+
+                // S7: Honest one-time privacy notice when Android cloud SpeechRecognizer fallback is active
+                if (!isUsingOnDeviceRecognizer && !cloudNoticeAck) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = AccentAmber.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, AccentAmber.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("voice_cloud_privacy_notice")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "قد يعالج Android Speech الصوت عبر خدمات Google عند عدم توفر التعرف المحلي."
+                                    "darija" -> "Android Speech يقدر يصيفط الصوت لـ Google إلا ما كانش التعرف المحلي متوفر."
+                                    "en" -> "Android Speech may process audio via Google Speech Services when on-device recognition is unavailable."
+                                    else -> "Android Speech peut traiter l'audio via Google si la reconnaissance hors ligne n'est pas disponible."
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(
+                                onClick = {
+                                    cloudNoticeAck = true
+                                    AppSecurityManager.setCloudVoiceNoticeAcknowledged(context, true)
+                                },
+                                modifier = Modifier.testTag("voice_cloud_notice_ok_btn")
+                            ) {
+                                Text("OK", fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
 

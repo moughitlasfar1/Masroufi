@@ -3,8 +3,12 @@ package com.example.domain
 import com.example.data.DefaultCategoryResolver
 import com.example.data.EnvelopeConfig
 import com.example.data.TransactionItem
+import com.example.notifications.MasroufiDetectionLog
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.abs
 
 data class BankTemplate(
@@ -17,7 +21,7 @@ data class BankTemplate(
 data class ParsedBankNotification(
     val amount: Double,
     val currency: String,
-    val direction: String, // "expense" or "income"
+    val direction: String, // "expense", "income", or "transfer"
     val merchant: String,
     val isoDate: String,
     val sourcePackage: String,
@@ -30,8 +34,21 @@ data class ParsedBankNotification(
     val maskedSamplePreview: String
 )
 
+sealed interface BankParseResult {
+    data class Parsed(val notification: ParsedBankNotification) : BankParseResult
+    data class Rejected(val reasonCode: String) : BankParseResult
+}
+
+internal data class AmountCandidate(
+    val amount: Double,
+    val currency: String,
+    val startIndex: Int,
+    val endIndex: Int
+)
+
 /**
- * Phase 10C: Pure Kotlin on-device parser for bank and SMS transaction notifications.
+ * Phase 10C & Audit Fixes (D2, D3, D4, D7, D11):
+ * Pure Kotlin on-device parser for bank and SMS transaction notifications.
  *
  * Privacy contract:
  * - Discards OTP / verification code messages before any parsing happens.
@@ -49,8 +66,7 @@ object BankMessageParser {
         '۵' to '5', '۶' to '6', '۷' to '7', '۸' to '8', '۹' to '9'
     )
 
-    private val OTP_DISCARD_KEYWORDS = listOf(
-        "otp",
+    private val OTP_DISCARD_PHRASES = listOf(
         "code de vérification",
         "code de verification",
         "code de sécurité",
@@ -59,13 +75,13 @@ object BankMessageParser {
         "code unique",
         "code d'authentification",
         "mot de passe à usage unique",
+        "mot de passe a usage unique",
         "verification code",
         "security code",
         "one-time password",
         "one time password",
         "passcode",
         "validation code",
-        "3d secure",
         "3ds code",
         "رمز التحقق",
         "رمز التأكيد",
@@ -74,6 +90,20 @@ object BankMessageParser {
         "كود التفعيل",
         "رمز الأمان",
         "كلمة السر المؤقتة"
+    )
+
+    private val OTP_WORD_REGEX = Regex("""(?<![\p{L}\d])otp(?![\p{L}\d])""", RegexOption.IGNORE_CASE)
+    private val THREE_DS_REGEX = Regex("""(?<![\p{L}\d])(?:3d\s*secure|3ds)(?![\p{L}\d])""", RegexOption.IGNORE_CASE)
+    private val STANDALONE_OTP_DIGITS_REGEX = Regex("""(?<![\p{L}\d])\d{4,8}(?![\p{L}\d])""")
+    private val CODE_WORD_REGEX = Regex("""(?<![\p{L}\d])(?:code|pin|كود|رمز)(?![\p{L}\d])""", RegexOption.IGNORE_CASE)
+    private val VALIDATION_VERB_REGEX = Regex(
+        """(?<![\p{L}\d])(?:valider|confirmer|confirm|validate|validation|authentifier|تأكيد|لتأكيد|للتحقق)(?![\p{L}\d])""",
+        RegexOption.IGNORE_CASE
+    )
+
+    private val BALANCE_OR_LIMIT_LABEL_REGEX = Regex(
+        """(?<![\p{L}])(?:solde|balance|disponible|plafond|limite|frais|commission|الرصيد|رصيد|متاح|عمولة|مصاريف)(?![\p{L}])""",
+        RegexOption.IGNORE_CASE
     )
 
     private val ATM_WITHDRAWAL_KEYWORDS = listOf(
@@ -92,59 +122,70 @@ object BankMessageParser {
     private val DEBIT_KEYWORDS = listOf(
         // French
         "paiement tpe", "paiement e-commerce", "paiement ecommerce", "achat carte", "achat tpe",
+        "virement émis", "virement emis", "virement effectué", "virement effectue",
+        "opération carte", "operation carte", "règlement", "reglement", "transaction",
         "paiement", "achat", "retrait", "prélèvement", "prelevement",
         "débit", "debit", "payé", "paye", "facture", "tpe", "carte bancaire", "e-commerce",
         // English
         "payment", "purchase", "withdrawal", "debited", "spent", "charged", "pos purchase",
         // Arabic
-        "خصم", "أداء", "شراء", "سحب", "دفعة", "اقتطاع", "عملية أداء", "عملية سحب"
+        "خصم", "أداء", "شراء", "سحب", "دفعة", "اقتطاع", "عملية أداء", "عملية سحب", "تحويل صادر"
     )
 
     private val CREDIT_KEYWORDS = listOf(
         // French
+        "vous avez reçu un virement", "vous avez recu un virement",
         "virement reçu", "virement recu", "virement en votre faveur",
-        "crédit", "credit", "dépôt", "depot", "versement", "remboursement", "crédité", "credite",
+        "remboursement", "crédité", "credite", "crédit", "credit", "dépôt", "depot", "versement",
         // English
         "transfer received", "deposit", "credited", "refund", "incoming transfer", "salary",
         // Arabic
-        "تحويل وارد", "إيداع", "توصلتم", "تحويل لصالحكم", "تم إيداع", "استلام تحويل"
+        "تحويل وارد", "إيداع", "توصلتم", "تحويل لصالحكم", "تم إيداع", "استلام تحويل", "استرجاع"
     )
 
+    private val REFUND_KEYWORDS = listOf("remboursement", "refund", "استرجاع")
+
+    private val INVALID_MERCHANT_EXACT = setOf(
+        "carte", "card", "bancaire", "compte", "account", "paiement", "achat",
+        "retrait", "virement", "transaction", "operation", "opération", "gab", "dab", "tpe"
+    )
+
+    // D11: Full package prefixes & whole-word sender keywords (no bare 2-3 letter substring collisions)
     val BANK_TEMPLATES: List<BankTemplate> = listOf(
         BankTemplate(
             id = "cih",
             bankName = "CIH Bank",
-            packageHints = listOf("cih", "com.cih.cihmobile"),
-            senderKeywords = listOf("cih", "cih bank", "cih mobile")
+            packageHints = listOf("com.cih.cihmobile", "ma.cih"),
+            senderKeywords = listOf("cih bank", "cih mobile", "cih")
         ),
         BankTemplate(
             id = "attijari",
             bankName = "Attijariwafa Bank",
-            packageHints = listOf("attijari", "awb", "wafacash", "lbankalik"),
-            senderKeywords = listOf("attijari", "attijariwafa", "lbankalik", "l'bankalik", "attijari mobile")
+            packageHints = listOf("ma.attijariwafabank", "com.attijari", "ma.wafacash"),
+            senderKeywords = listOf("attijariwafa", "attijari mobile", "attijari", "lbankalik", "l'bankalik", "wafacash")
         ),
         BankTemplate(
             id = "bp",
             bankName = "Banque Populaire",
-            packageHints = listOf("gbp", "pocketbank", "banquepopulaire", "bcp", "chaabi"),
-            senderKeywords = listOf("pocket bank", "banque populaire", "chaabi net", "chaabi", "bcp", "bp")
+            packageHints = listOf("com.bcp.pocketbank", "ma.gbp", "ma.banquepopulaire", "com.gbp"),
+            senderKeywords = listOf("pocket bank", "banque populaire", "chaabi net", "a.b.c.p", "chaabi", "bcp")
         ),
         BankTemplate(
             id = "boa",
             bankName = "Bank of Africa / BMCE",
-            packageHints = listOf("bmce", "bankofafrica", "agencedirecte"),
-            senderKeywords = listOf("bmce", "bmce direct", "bank of africa", "boa")
+            packageHints = listOf("com.bmce.agencedirecte", "ma.bankofafrica", "com.bmce"),
+            senderKeywords = listOf("bank of africa", "bmce direct", "bmce")
         ),
         BankTemplate(
             id = "cfg",
             bankName = "CFG Bank",
-            packageHints = listOf("cfg", "cfgbank"),
-            senderKeywords = listOf("cfg bank", "cfg")
+            packageHints = listOf("com.cfgbank.mobile", "ma.cfgbank"),
+            senderKeywords = listOf("cfg bank")
         ),
         BankTemplate(
             id = "barid",
             bankName = "Al Barid Bank",
-            packageHints = listOf("barid", "baridbank"),
+            packageHints = listOf("ma.baridbank.mobile", "ma.baridbank"),
             senderKeywords = listOf("barid bank", "al barid", "بريد بنك")
         ),
         BankTemplate(
@@ -154,6 +195,16 @@ object BankMessageParser {
             senderKeywords = emptyList()
         )
     )
+
+    private fun wholeWordRegex(keyword: String): Regex {
+        val escaped = Regex.escape(keyword)
+        return Regex("""(?<![\p{L}\d])$escaped(?![\p{L}\d])""", RegexOption.IGNORE_CASE)
+    }
+
+    private val debitKeywordRegexes: List<Pair<String, Regex>> = DEBIT_KEYWORDS.map { it to wholeWordRegex(it) }
+    private val creditKeywordRegexes: List<Pair<String, Regex>> = CREDIT_KEYWORDS.map { it to wholeWordRegex(it) }
+    private val atmKeywordRegexes: List<Pair<String, Regex>> = (ATM_WITHDRAWAL_KEYWORDS + "gab").map { it to wholeWordRegex(it) }
+    private val refundKeywordRegexes: List<Regex> = REFUND_KEYWORDS.map { wholeWordRegex(it) }
 
     /**
      * Step 1: Normalize Arabic-Indic digits, non-breaking spaces, and whitespace.
@@ -171,19 +222,38 @@ object BankMessageParser {
     }
 
     /**
-     * Step 2: Codes first — returns true if the message looks like an OTP, 3DS, or login verification code.
+     * Step 2 (D7): Codes first — returns true if the message looks like an OTP, 3DS verification code,
+     * or login/validation code.
+     * - Matches `otp` on whole words only.
+     * - `3d secure` / `3ds` discards ONLY when a standalone 4-8 digit code is also present.
+     * - A standalone 4-8 digit code paired with validation verbs (`valider`, `confirmer`, `confirm`, `تأكيد`)
+     *   or `code`/`pin`/`رمز` is discarded even when a currency amount is mentioned.
      */
     fun isOtpOrSecurityCodeMessage(raw: String): Boolean {
         val norm = normalizeText(raw).lowercase(Locale.ROOT)
         if (norm.isBlank()) return false
-        if (OTP_DISCARD_KEYWORDS.any { kw -> norm.contains(kw) }) {
+
+        if (OTP_WORD_REGEX.containsMatchIn(norm)) return true
+        if (OTP_DISCARD_PHRASES.any { phrase -> norm.contains(phrase) }) return true
+
+        val hasStandaloneOtpDigits = STANDALONE_OTP_DIGITS_REGEX.containsMatchIn(norm)
+        if (hasStandaloneOtpDigits && THREE_DS_REGEX.containsMatchIn(norm)) {
             return true
         }
-        // Also discard short messages containing a 4-8 digit standalone code with "code" or "رمز"
-        val hasCodeWord = Regex("""\b(code|pin|كود|رمز)\b""", RegexOption.IGNORE_CASE).containsMatchIn(norm)
-        val hasStandaloneOtpDigits = Regex("""\b\d{4,8}\b""").containsMatchIn(norm)
-        val hasCurrency = Regex("""\b(mad|dhs?|dirhams?)\b|درهم|دراهم|د\.م""", RegexOption.IGNORE_CASE).containsMatchIn(norm)
-        return hasCodeWord && hasStandaloneOtpDigits && !hasCurrency
+
+        val hasCodeWord = CODE_WORD_REGEX.containsMatchIn(norm)
+        val hasValidationVerb = VALIDATION_VERB_REGEX.containsMatchIn(norm)
+        if (hasStandaloneOtpDigits && hasValidationVerb) {
+            return true
+        }
+        val hasCurrency = Regex(
+            """(?<![\p{L}\d])(?:mad|dhs?|dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])""",
+            RegexOption.IGNORE_CASE
+        ).containsMatchIn(norm)
+        if (hasCodeWord && hasStandaloneOtpDigits && !hasCurrency) {
+            return true
+        }
+        return false
     }
 
     /**
@@ -210,16 +280,12 @@ object BankMessageParser {
 
         cleaned = when {
             lastComma > lastDot && lastDot != -1 -> {
-                // Format like "1.234,50" -> "." is thousands, "," is decimal
                 cleaned.replace(".", "").replace(",", ".")
             }
             lastDot > lastComma && lastComma != -1 -> {
-                // Format like "1,234.50" -> "," is thousands, "." is decimal
                 cleaned.replace(",", "")
             }
             lastComma != -1 -> {
-                // Only commas present: if 1 or 2 digits after last comma (e.g. "1234,50"), treat as decimal;
-                // if 3 digits after comma (e.g. "1,200"), treat as thousands separator
                 val digitsAfter = cleaned.length - lastComma - 1
                 if (digitsAfter in 1..2) {
                     cleaned.replace(",", ".")
@@ -245,31 +311,107 @@ object BankMessageParser {
     }
 
     /**
-     * Extracts (amount, normalizedCurrency) when a number appears next to MAD, DH, Dhs, Dirhams, or درهم.
+     * D2: Collects all amount+currency candidates (using whole-word currency boundaries),
+     * drops candidates preceded within 25 characters by balance/limit/fee labels (`Solde`, `Disponible`,
+     * `Plafond`, `Frais`, `الرصيد`, etc.), and picks the candidate closest to a transaction keyword.
+     */
+    internal fun extractBestAmountCandidate(
+        normalizedText: String,
+        keywordPositions: List<Int> = emptyList()
+    ): AmountCandidate? {
+        val numPattern = """(\d{1,3}(?:[ .,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)"""
+        val curPattern = """(?<![\p{L}\d])(MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])"""
+
+        val candidates = mutableListOf<AmountCandidate>()
+
+        val afterRegex = Regex("""(?<!\d)$numPattern\s*$curPattern""", RegexOption.IGNORE_CASE)
+        for (match in afterRegex.findAll(normalizedText)) {
+            val amt = parseNormalizedAmountToken(match.groupValues[1]) ?: continue
+            if (amt > 0.0) {
+                candidates.add(
+                    AmountCandidate(
+                        amount = amt,
+                        currency = normalizeCurrencyLabel(match.groupValues[2]),
+                        startIndex = match.range.first,
+                        endIndex = match.range.last + 1
+                    )
+                )
+            }
+        }
+
+        val beforeRegex = Regex("""$curPattern\s*:?\s*$numPattern(?!\d)""", RegexOption.IGNORE_CASE)
+        for (match in beforeRegex.findAll(normalizedText)) {
+            val amt = parseNormalizedAmountToken(match.groupValues[2]) ?: continue
+            if (amt > 0.0) {
+                val alreadyCaptured = candidates.any { abs(it.startIndex - match.range.first) <= 2 }
+                if (!alreadyCaptured) {
+                    candidates.add(
+                        AmountCandidate(
+                            amount = amt,
+                            currency = normalizeCurrencyLabel(match.groupValues[1]),
+                            startIndex = match.range.first,
+                            endIndex = match.range.last + 1
+                        )
+                    )
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) return null
+
+        val nonBalanceCandidates = candidates.filter { cand ->
+            val windowStart = (cand.startIndex - 30).coerceAtLeast(0)
+            val rawPrefix = normalizedText.substring(windowStart, cand.startIndex)
+            // Stop lookbehind at sentence/clause boundaries (newline, semicolon, or period followed by space)
+            val boundaryIdx = Regex("""[\n;]|\.\s+""").findAll(rawPrefix).lastOrNull()?.range?.last
+            val clausePrefix = if (boundaryIdx != null) rawPrefix.substring(boundaryIdx + 1) else rawPrefix
+            val lastBalanceMatch = BALANCE_OR_LIMIT_LABEL_REGEX.findAll(clausePrefix).lastOrNull()
+            if (lastBalanceMatch == null) {
+                true
+            } else {
+                // If a transaction keyword appears AFTER the balance label within the same clause, keep it
+                val afterBalance = clausePrefix.substring(lastBalanceMatch.range.last + 1)
+                debitKeywordRegexes.any { (_, rx) -> rx.containsMatchIn(afterBalance) } ||
+                    creditKeywordRegexes.any { (_, rx) -> rx.containsMatchIn(afterBalance) } ||
+                    atmKeywordRegexes.any { (_, rx) -> rx.containsMatchIn(afterBalance) }
+            }
+        }
+
+        if (nonBalanceCandidates.isEmpty()) {
+            // Every amount in the message is a balance/limit/fee notification, not a transaction
+            return null
+        }
+
+        if (nonBalanceCandidates.size == 1 || keywordPositions.isEmpty()) {
+            return nonBalanceCandidates.minByOrNull { it.startIndex }
+        }
+
+        return nonBalanceCandidates.minByOrNull { cand ->
+            keywordPositions.minOf { kwPos -> abs(cand.startIndex - kwPos) }
+        }
+    }
+
+    /**
+     * Public helper: extracts (amount, normalizedCurrency), excluding balance/limit/fee amounts.
      */
     fun extractAmountAndCurrency(normalizedText: String): Pair<Double, String>? {
-        val numPattern = """(\d{1,3}(?:[ .,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)"""
-        val curPattern = """(MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)"""
+        val kwPositions = collectKeywordPositions(normalizedText)
+        val best = extractBestAmountCandidate(normalizedText, kwPositions) ?: return null
+        return best.amount to best.currency
+    }
 
-        // Pattern A: Number followed by currency (e.g., "1 234,50 MAD", "150 درهم")
-        val afterRegex = Regex("""$numPattern\s*$curPattern""", RegexOption.IGNORE_CASE)
-        for (match in afterRegex.findAll(normalizedText)) {
-            val amt = parseNormalizedAmountToken(match.groupValues[1])
-            if (amt != null && amt > 0.0) {
-                return amt to normalizeCurrencyLabel(match.groupValues[2])
-            }
+    private fun collectKeywordPositions(normalizedText: String): List<Int> {
+        val positions = mutableListOf<Int>()
+        for ((_, regex) in debitKeywordRegexes) {
+            regex.findAll(normalizedText).forEach { positions.add(it.range.first) }
         }
-
-        // Pattern B: Currency followed by number (e.g., "MAD 1,234.50", "DH 85.00")
-        val beforeRegex = Regex("""$curPattern\s*:?\s*$numPattern""", RegexOption.IGNORE_CASE)
-        for (match in beforeRegex.findAll(normalizedText)) {
-            val amt = parseNormalizedAmountToken(match.groupValues[2])
-            if (amt != null && amt > 0.0) {
-                return amt to normalizeCurrencyLabel(match.groupValues[1])
-            }
+        for ((_, regex) in creditKeywordRegexes) {
+            regex.findAll(normalizedText).forEach { positions.add(it.range.first) }
         }
-
-        return null
+        for ((_, regex) in atmKeywordRegexes) {
+            regex.findAll(normalizedText).forEach { positions.add(it.range.first) }
+        }
+        return positions
     }
 
     private fun normalizeCurrencyLabel(rawCur: String): String {
@@ -281,29 +423,42 @@ object BankMessageParser {
     }
 
     /**
-     * Step 5: Extracts the short merchant name after "chez", "auprès de", "à", "at", "لدى", "عند",
-     * trimming at date/time markers or card suffixes.
+     * Step 5 (D3): Extracts short merchant name using word-boundary prefixes (`chez`, `auprès de`,
+     * `at`, `à`, `sur`, `لدى`, `عند`, `من طرف`) or labeled fields (`Commerçant:`, `Marchand:`, `Merchant:`).
+     * Rejects candidates that are digits-only or generic words like `carte` / `card`.
      */
     fun extractMerchant(normalizedText: String): String {
-        val merchantRegex = Regex(
-            """(?:chez|auprès\s+de|aupres\s+de|at|لدى|عند|من\s+طرف)\s+([^\n.,;]+?)(?=\s+(?:le\s+\d|du\s+\d|on\s+\d|في\s+\d|بتاريخ|carte\b|card\b|solde\b|balance\b|\d{2}[/-]\d{2}|\d{2}:\d{2})|$)""",
+        val stopLookahead =
+            """(?=\s+(?:le\s+\d|du\s+\d|on\s+\d|في\s+\d|بتاريخ|carte\b|card\b|solde\b|balance\b|disponible\b|الرصيد|رصيد|\d{2}[/-]\d{2}|\d{2}:\d{2})|$)"""
+
+        // 1. Labeled merchant fields ("Commerçant: MARJANE", "Merchant: CARREFOUR")
+        val labeledRegex = Regex(
+            """(?<![\p{L}])(?:commerçant|commercant|marchand|merchant)\s*[:\-]\s*([^\n.,;]+?)$stopLookahead""",
             RegexOption.IGNORE_CASE
         )
-        val primaryMatch = merchantRegex.find(normalizedText)
-        if (primaryMatch != null) {
-            val candidate = cleanMerchantCandidate(primaryMatch.groupValues[1])
-            if (candidate.isNotBlank()) return candidate
+        labeledRegex.find(normalizedText)?.let { match ->
+            val candidate = cleanMerchantCandidate(match.groupValues[1])
+            if (isValidMerchantCandidate(candidate)) return candidate
         }
 
-        // Secondary French "à <MERCHANT>" when preceded by paiement/achat/retrait
-        val secondaryRegex = Regex(
-            """(?:paiement|achat|retrait)\s+.*?\bà\s+([^\n.,;]+?)(?=\s+(?:le\s+\d|du\s+\d|carte\b|solde\b|\d{2}[/-]\d{2}|\d{2}:\d{2})|$)""",
+        // 2. Primary preposition prefixes with strict word boundaries (prevents "at" matching inside "Achat")
+        val primaryRegex = Regex(
+            """(?<![\p{L}])(?:chez|auprès\s+de|aupres\s+de|at|sur|لدى|عند|من\s+طرف)(?![\p{L}])\s+([^\n.,;]+?)$stopLookahead""",
             RegexOption.IGNORE_CASE
         )
-        val secondaryMatch = secondaryRegex.find(normalizedText)
-        if (secondaryMatch != null) {
-            val candidate = cleanMerchantCandidate(secondaryMatch.groupValues[1])
-            if (candidate.isNotBlank()) return candidate
+        for (match in primaryRegex.findAll(normalizedText)) {
+            val candidate = cleanMerchantCandidate(match.groupValues[1])
+            if (isValidMerchantCandidate(candidate)) return candidate
+        }
+
+        // 3. Secondary French "à <MERCHANT>" when preceded by paiement/achat/retrait
+        val secondaryRegex = Regex(
+            """(?<![\p{L}])(?:paiement|achat|retrait|règlement|reglement)(?![\p{L}])\s+.*?(?<![\p{L}])à(?![\p{L}])\s+([^\n.,;]+?)$stopLookahead""",
+            RegexOption.IGNORE_CASE
+        )
+        secondaryRegex.find(normalizedText)?.let { match ->
+            val candidate = cleanMerchantCandidate(match.groupValues[1])
+            if (isValidMerchantCandidate(candidate)) return candidate
         }
 
         return ""
@@ -311,85 +466,103 @@ object BankMessageParser {
 
     private fun cleanMerchantCandidate(raw: String): String {
         return raw
-            .replace(Regex("""\b(?:MAD|DHS?|Dirhams?|درهم|دراهم)\b""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""(?<![\p{L}\d])(?:MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\*+\d{2,4}"""), "")
+            .replace(Regex("""\b\d+(?:[.,]\d{1,2})?\b"""), "")
             .replace(Regex("""\s+"""), " ")
-            .trim(' ', '-', ':', '*', '"', '\'')
+            .trim(' ', '-', ':', '*', '"', '\'', '.', ',')
             .take(48)
     }
 
+    private fun isValidMerchantCandidate(candidate: String): Boolean {
+        if (candidate.length < 2) return false
+        val lower = candidate.lowercase(Locale.ROOT)
+        if (lower in INVALID_MERCHANT_EXACT) return false
+        // Reject if candidate has no letters (digits/symbols only)
+        if (!candidate.any { it.isLetter() }) return false
+        // Reject if starts with "carte " or "card " (e.g. "carte bancaire")
+        if (lower.startsWith("carte ") || lower.startsWith("card ") || lower.startsWith("votre ")) return false
+        return true
+    }
+
+    internal fun isoDateFromMillis(millis: Long, timeZone: TimeZone = TimeZone.getDefault()): String {
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        sdf.timeZone = timeZone
+        return sdf.format(Date(millis))
+    }
+
     /**
-     * Full parsing pipeline for a notification title + body from [sourcePackage].
-     * Returns `null` if the message is an OTP code or does not contain a recognizable bank transaction.
+     * Full parsing pipeline returning either [BankParseResult.Parsed] or [BankParseResult.Rejected]
+     * with a structured reason code for [MasroufiDetectionLog].
      */
-    fun parse(
+    fun parseDetailed(
         rawTitle: String,
         rawBody: String,
         sourcePackage: String = "generic",
         notificationKey: String = "",
-        isoDate: String = PayCycleEngine.todayIso(),
+        isoDate: String? = null,
+        postTimeMillis: Long? = null,
         envelopes: List<EnvelopeConfig> = emptyList(),
         language: String = "fr"
-    ): ParsedBankNotification? {
+    ): BankParseResult {
         val combinedRaw = "$rawTitle $rawBody".trim()
-        if (combinedRaw.isBlank()) return null
+        if (combinedRaw.isBlank()) {
+            return BankParseResult.Rejected(MasroufiDetectionLog.REASON_EMPTY)
+        }
 
         // 1. Codes first: drop OTP / verification codes immediately
         if (isOtpOrSecurityCodeMessage(combinedRaw)) {
-            return null
+            return BankParseResult.Rejected(MasroufiDetectionLog.REASON_OTP)
         }
 
         val normalized = normalizeText(combinedRaw)
         val lower = normalized.lowercase(Locale.ROOT)
 
-        // 2. Amount + Currency extraction
-        val (amount, currency) = extractAmountAndCurrency(normalized) ?: return null
+        // 2. Collect keyword positions for direction & closest-amount disambiguation (D2 & D4)
+        val debitMatches = debitKeywordRegexes.flatMap { (_, rx) -> rx.findAll(lower).map { it.range.first }.toList() }
+        val creditMatches = creditKeywordRegexes.flatMap { (_, rx) -> rx.findAll(lower).map { it.range.first }.toList() }
+        val atmMatches = atmKeywordRegexes.flatMap { (_, rx) -> rx.findAll(lower).map { it.range.first }.toList() }
+        val allKwPositions = debitMatches + creditMatches + atmMatches
 
-        // 3. Direction detection (ATM withdrawal transfer vs debit/expense vs credit/income)
-        val hasCredit = CREDIT_KEYWORDS.any { lower.contains(it) }
-        val isAtmWithdrawal = !hasCredit && (
-            ATM_WITHDRAWAL_KEYWORDS.any { lower.contains(it) } ||
-                Regex("""\bgab\b""", RegexOption.IGNORE_CASE).containsMatchIn(lower)
-            )
-        val hasDebit = DEBIT_KEYWORDS.any { lower.contains(it) } || isAtmWithdrawal
+        // 3. Amount + Currency extraction (ignoring Solde / Balance / Plafond / Frais)
+        val bestAmount = extractBestAmountCandidate(normalized, allKwPositions)
+            ?: return BankParseResult.Rejected(MasroufiDetectionLog.REASON_NO_AMOUNT)
+        val amount = bestAmount.amount
+        val currency = bestAmount.currency
+
+        val hasCredit = creditMatches.isNotEmpty()
+        val isAtmWithdrawal = atmMatches.isNotEmpty() && !refundKeywordRegexes.any { it.containsMatchIn(lower) }
+        val hasDebit = debitMatches.isNotEmpty() || isAtmWithdrawal
+
         if (!hasCredit && !hasDebit) {
-            // Require at least one financial transaction keyword so random chat messages with "50 DH" aren't treated as bank alerts
-            return null
+            return BankParseResult.Rejected(MasroufiDetectionLog.REASON_NO_KEYWORD)
         }
+
+        // D4: When both credit and debit keywords appear, choose the one nearest to the amount
         val direction = when {
             isAtmWithdrawal -> "transfer"
+            refundKeywordRegexes.any { it.containsMatchIn(lower) } -> "income"
             hasCredit && !hasDebit -> "income"
-            else -> "expense"
+            hasDebit && !hasCredit -> "expense"
+            else -> {
+                val nearestCreditDist = creditMatches.minOf { abs(it - bestAmount.startIndex) }
+                val nearestDebitDist = debitMatches.minOf { abs(it - bestAmount.startIndex) }
+                if (nearestCreditDist <= nearestDebitDist) "income" else "expense"
+            }
         }
 
-        // 4. Match BankTemplate
+        // 4. D11: Match BankTemplate using exact/prefix package or whole-word sender keyword
         val pkgLower = sourcePackage.lowercase(Locale.ROOT)
         val matchedTemplate = BANK_TEMPLATES.firstOrNull { tpl ->
             tpl.id != "generic" && (
-                tpl.packageHints.any { pkgLower.contains(it) } ||
-                    tpl.senderKeywords.any { lower.contains(it) }
+                tpl.packageHints.any { hint -> pkgLower == hint || pkgLower.startsWith("$hint.") } ||
+                    tpl.senderKeywords.any { kw -> wholeWordRegex(kw).containsMatchIn(lower) }
                 )
         } ?: BANK_TEMPLATES.last()
 
-        // 5. Extract Merchant
+        // 5. D3: Extract Merchant (leave empty and set needsReview=true if missing; never substitute bank name)
         val extractedMerchant = if (isAtmWithdrawal) "" else extractMerchant(normalized)
-        val fallbackMerchant = when {
-            isAtmWithdrawal -> "Retrait GAB"
-            direction == "income" -> when (language) {
-                "ar" -> "تحويل بنكي"
-                "darija" -> "تحويل بنكي"
-                "en" -> "Bank Transfer"
-                else -> "Virement bancaire"
-            }
-            matchedTemplate.id != "generic" -> matchedTemplate.bankName
-            else -> when (language) {
-                "ar" -> "عملية بنكية"
-                "darija" -> "خلاص بالبنكة"
-                "en" -> "Card Payment"
-                else -> "Paiement carte"
-            }
-        }
-        val finalMerchant = if (isAtmWithdrawal) "Retrait GAB" else extractedMerchant.ifBlank { fallbackMerchant }
+        val finalMerchant = if (isAtmWithdrawal) "Retrait GAB" else extractedMerchant
 
         // 6. Confidence score calculation
         var confidence = 0.55
@@ -399,18 +572,26 @@ object BankMessageParser {
         val finalConfidence = confidence.coerceIn(0.0, 0.99)
         val needsReview = !isAtmWithdrawal && (finalConfidence < CONFIDENCE_REVIEW_THRESHOLD || extractedMerchant.isBlank())
 
-        // 7. Category resolution (ATM transfers go to "autre", otherwise learned categories + Darija/FR parser)
+        // 7. Category resolution
+        val catLookupText = finalMerchant.ifBlank {
+            when (direction) {
+                "income" -> if (language == "en") "Bank Transfer" else "Virement bancaire"
+                else -> if (language == "en") "Card Payment" else "Paiement carte"
+            }
+        }
         val resolvedEnvKey = if (isAtmWithdrawal) {
             "autre"
         } else {
-            val learnedEnv = PayCycleEngine.getLearnedCategoryForDescription(finalMerchant).orEmpty()
-            val voiceGuess = if (learnedEnv.isBlank()) {
+            val learnedEnv = if (finalMerchant.isNotBlank()) {
+                PayCycleEngine.getLearnedCategoryForDescription(finalMerchant).orEmpty()
+            } else ""
+            val voiceGuess = if (learnedEnv.isBlank() && finalMerchant.isNotBlank()) {
                 VoiceDarijaParser.parse("$finalMerchant ${amount.toInt()}", envelopes, language)?.envelopeKey.orEmpty()
             } else ""
             when {
                 learnedEnv.isNotBlank() -> learnedEnv
                 voiceGuess.isNotBlank() -> voiceGuess
-                else -> PayCycleEngine.resolveEnvelopeKey(finalMerchant, finalMerchant, envelopes)
+                else -> PayCycleEngine.resolveEnvelopeKey(catLookupText, catLookupText, envelopes)
             }.ifBlank { "autre" }
         }
 
@@ -425,25 +606,67 @@ object BankMessageParser {
             )
         }
 
-        // 8. Deterministic dedupe hash (ignores re-posted or edited notifications for the same event)
-        val dedupeSeed = "${sourcePackage.lowercase(Locale.ROOT)}|$direction|$amount|${finalMerchant.lowercase(Locale.ROOT)}|$isoDate|$notificationKey"
+        // Derive isoDate from postTimeMillis in device timezone when provided
+        val effectiveIsoDate = when {
+            postTimeMillis != null && postTimeMillis > 0L -> isoDateFromMillis(postTimeMillis)
+            !isoDate.isNullOrBlank() -> isoDate
+            else -> PayCycleEngine.todayIso()
+        }
+
+        // 8. D1: Deterministic dedupe hash WITHOUT notificationKey (which never changes in SMS threads!)
+        // Uses effectiveIsoDate + full normalized content digest so re-posted identical notifications
+        // are always caught even across minute boundaries while distinct thread messages never collide.
+        val contentDigest = sha256Short(lower)
+        val dedupeSeed = "${pkgLower}|$direction|$amount|${finalMerchant.lowercase(Locale.ROOT)}|$effectiveIsoDate|$contentDigest"
         val dedupeHash = sha256Short(dedupeSeed)
 
-        return ParsedBankNotification(
-            amount = amount,
-            currency = currency,
-            direction = direction,
-            merchant = finalMerchant,
-            isoDate = isoDate,
-            sourcePackage = sourcePackage,
-            bankTemplateId = matchedTemplate.id,
-            confidence = finalConfidence,
-            needsReview = needsReview,
-            suggestedEnvelopeKey = resolvedEnvKey,
-            suggestedCategoryName = resolvedCategoryName,
-            dedupeHash = dedupeHash,
-            maskedSamplePreview = maskSampleText(combinedRaw)
+        return BankParseResult.Parsed(
+            ParsedBankNotification(
+                amount = amount,
+                currency = currency,
+                direction = direction,
+                merchant = finalMerchant,
+                isoDate = effectiveIsoDate,
+                sourcePackage = sourcePackage,
+                bankTemplateId = matchedTemplate.id,
+                confidence = finalConfidence,
+                needsReview = needsReview,
+                suggestedEnvelopeKey = resolvedEnvKey,
+                suggestedCategoryName = resolvedCategoryName,
+                dedupeHash = dedupeHash,
+                maskedSamplePreview = maskSampleText(combinedRaw)
+            )
         )
+    }
+
+    /**
+     * Backwards-compatible parse API returning [ParsedBankNotification] or null.
+     */
+    fun parse(
+        rawTitle: String,
+        rawBody: String,
+        sourcePackage: String = "generic",
+        notificationKey: String = "",
+        isoDate: String = PayCycleEngine.todayIso(),
+        envelopes: List<EnvelopeConfig> = emptyList(),
+        language: String = "fr",
+        postTimeMillis: Long? = null
+    ): ParsedBankNotification? {
+        return when (
+            val res = parseDetailed(
+                rawTitle = rawTitle,
+                rawBody = rawBody,
+                sourcePackage = sourcePackage,
+                notificationKey = notificationKey,
+                isoDate = isoDate,
+                postTimeMillis = postTimeMillis,
+                envelopes = envelopes,
+                language = language
+            )
+        ) {
+            is BankParseResult.Parsed -> res.notification
+            is BankParseResult.Rejected -> null
+        }
     }
 
     /**

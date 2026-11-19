@@ -67,6 +67,8 @@ object MasroufiNotificationManager {
     const val CHANNEL_BILLS_DARET = "masroufi_channel_bills_daret"
     const val CHANNEL_BUDGET_80 = "masroufi_channel_budget_80"
     const val CHANNEL_EVENING = "masroufi_channel_evening"
+    const val CHANNEL_BANK_DETECTED = "masroufi_channel_bank_detected"
+    private const val BANK_DETECTED_GROUP_KEY = "com.aistudio.masroufi.BANK_DETECTED_GROUP"
     private const val PERIODIC_WORK_NAME = "masroufi_smart_alerts_periodic"
     const val EVENING_WORK_NAME = "masroufi_evening_exact_reminder"
 
@@ -488,7 +490,14 @@ object MasroufiNotificationManager {
             ).apply {
                 description = "Rappel quotidien du soir pour noter vos dépenses de la journée"
             }
-            nm.createNotificationChannels(listOf(chBills, chBudget, chEvening))
+            val chBankDetected = NotificationChannel(
+                CHANNEL_BANK_DETECTED,
+                "Paiements bancaires détectés",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Alertes discrètes lorsqu'un paiement bancaire ou SMS est prêt à confirmer"
+            }
+            nm.createNotificationChannels(listOf(chBills, chBudget, chEvening, chBankDetected))
         }
     }
 
@@ -938,6 +947,236 @@ object MasroufiNotificationManager {
         prefs(context).edit().putString(KEY_SNAPSHOT_JSON, obj.toString()).apply()
     }
 
+    /**
+     * S10: Builds a lock-screen-safe public notification containing zero amounts, balances,
+     * or merchant names so sensitive financial data never leaks on locked screens.
+     */
+    internal fun buildPublicLockScreenNotification(
+        context: Context,
+        channelId: String,
+        lang: String = "fr"
+    ): android.app.Notification {
+        val publicTitle = "Masroufi"
+        val publicBody = when (lang) {
+            "ar" -> "لديك تنبيه مالي جديد. افتح التطبيق للاطلاع."
+            "darija" -> "عندك تنبيه جديد فـ مصروفي. حل التطبيق باش تشوف."
+            "en" -> "New Masroufi update. Unlock to view."
+            else -> "Nouvelle notification Masroufi. Déverrouillez pour voir."
+        }
+        return NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher_round)
+            .setContentTitle(publicTitle)
+            .setContentText(publicBody)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .build()
+    }
+
+    /**
+     * D9: Posts a quiet, grouped notification when a new bank transaction is queued in "To confirm",
+     * with Confirm, Edit, and Ignore actions and VISIBILITY_PRIVATE lock-screen redaction.
+     */
+    fun postBankDetectedNotification(
+        context: Context,
+        item: DetectedBankTransaction
+    ) {
+        if (!hasNotificationPermission(context)) return
+        ensureChannels(context)
+        runCatching {
+            val snap = com.example.widget.MasroufiWidgetStore.loadSnapshot(context)
+            val lang = snap.language
+            val strings = Translations.forLang(lang)
+            val hide = snap.hideAmounts || com.example.security.AppSecurityManager.isAppLockEnabled(context)
+            val cur = item.currency.ifBlank { snap.currencySymbol.ifBlank { "DH" } }
+            val amtText = PayCycleEngine.formatAmountOrMask(item.amount, hide)
+            val merchantText = item.merchant.ifBlank { item.suggestedCategoryName }
+
+            val title = when (lang) {
+                "ar" -> "تم رصد عملية بنكية"
+                "darija" -> "تكتاشفات عملية بنكية"
+                "en" -> "Payment detected"
+                else -> "Paiement détecté"
+            }
+            val body = "$merchantText · $amtText $cur (${item.suggestedCategoryName})"
+            val notifId = 4500 + (item.id.hashCode() and 0x1FF)
+
+            val editIntent = Intent(context, MainActivity::class.java).apply {
+                putExtra(MasroufiAppWidget.EXTRA_TARGET_TAB, "bank_detections")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val editPi = PendingIntent.getActivity(
+                context,
+                notifId,
+                editIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val confirmIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_BANK_CONFIRM
+                putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, notifId)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, item.id)
+            }
+            val confirmPi = PendingIntent.getBroadcast(
+                context,
+                notifId + 1000,
+                confirmIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val ignoreIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_BANK_IGNORE
+                putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, notifId)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, item.id)
+            }
+            val ignorePi = PendingIntent.getBroadcast(
+                context,
+                notifId + 2000,
+                ignoreIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notif = NotificationCompat.Builder(context, CHANNEL_BANK_DETECTED)
+                .setSmallIcon(R.mipmap.ic_launcher_round)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setGroup(BANK_DETECTED_GROUP_KEY)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(buildPublicLockScreenNotification(context, CHANNEL_BANK_DETECTED, lang))
+                .setAutoCancel(true)
+                .setContentIntent(editPi)
+                .addAction(0, strings.bankDetectConfirmBtn, confirmPi)
+                .addAction(0, strings.bankDetectEditBtn, editPi)
+                .addAction(0, strings.bankDetectIgnoreBtn, ignorePi)
+                .build()
+
+            NotificationManagerCompat.from(context).notify(notifId, notif)
+        }
+    }
+
+    /**
+     * D8: Posts a 10-minute Undo notification after an auto-confirmed bank transaction.
+     */
+    fun postAutoConfirmedUndoNotification(
+        context: Context,
+        item: DetectedBankTransaction,
+        createdTx: TransactionItem
+    ) {
+        if (!hasNotificationPermission(context)) return
+        ensureChannels(context)
+        runCatching {
+            val snap = com.example.widget.MasroufiWidgetStore.loadSnapshot(context)
+            val lang = snap.language
+            val strings = Translations.forLang(lang)
+            val hide = snap.hideAmounts || com.example.security.AppSecurityManager.isAppLockEnabled(context)
+            val cur = item.currency.ifBlank { snap.currencySymbol.ifBlank { "DH" } }
+            val amtText = PayCycleEngine.formatAmountOrMask(item.amount, hide)
+            val label = item.merchant.ifBlank { item.suggestedCategoryName }
+            val notifId = 4800 + (createdTx.id.hashCode() and 0xFF)
+
+            val undoIntent = Intent(context, NotificationActionReceiver::class.java).apply {
+                action = NotificationActionReceiver.ACTION_BANK_UNDO_AUTO
+                putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, notifId)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, createdTx.id)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, createdTx.amount)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_NAME, createdTx.desc)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_DATE_OR_CYCLE, createdTx.isoDate)
+            }
+            val undoPi = PendingIntent.getBroadcast(
+                context,
+                notifId + 3000,
+                undoIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val openPi = PendingIntent.getActivity(
+                context,
+                notifId,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val title = when (lang) {
+                "ar" -> "تم تسجيل عملية تلقائياً"
+                "darija" -> "تقيدات عملية تلقائياً"
+                "en" -> "Auto-confirmed payment"
+                else -> "Paiement auto-confirmé"
+            }
+            val body = "$label · $amtText $cur"
+
+            val notif = NotificationCompat.Builder(context, CHANNEL_BANK_DETECTED)
+                .setSmallIcon(R.mipmap.ic_launcher_round)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setTimeoutAfter(10L * 60L * 1000L) // 10-minute Undo window
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(buildPublicLockScreenNotification(context, CHANNEL_BANK_DETECTED, lang))
+                .setAutoCancel(true)
+                .setContentIntent(openPi)
+                .addAction(0, strings.undoLabel, undoPi)
+                .build()
+
+            NotificationManagerCompat.from(context).notify(notifId, notif)
+        }
+    }
+
+    internal fun buildAppAlertNotification(
+        context: Context,
+        id: Int,
+        channelId: String,
+        title: String,
+        body: String,
+        openQuickAdd: Boolean,
+        notifAction: NotificationCompat.Action? = null,
+        secondNotifAction: NotificationCompat.Action? = null,
+        deletePendingIntent: PendingIntent? = null,
+        overrideContentIntent: Intent? = null,
+        lang: String = "fr"
+    ): android.app.Notification {
+        val intent = overrideContentIntent ?: if (openQuickAdd) {
+            Intent(context, com.example.widget.QuickCaptureActivity::class.java).apply {
+                action = MasroufiAppWidget.ACTION_QUICK_ADD
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+        } else {
+            Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            id,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher_round)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            // S10: Redact all bill, daret, budget, and evening reminder details on the lock screen
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(buildPublicLockScreenNotification(context, channelId, lang))
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+
+        if (deletePendingIntent != null) {
+            builder.setDeleteIntent(deletePendingIntent)
+        }
+        if (notifAction != null) {
+            builder.addAction(notifAction)
+        }
+        if (secondNotifAction != null) {
+            builder.addAction(secondNotifAction)
+        }
+        return builder.build()
+    }
+
     private fun postNotification(
         context: Context,
         id: Int,
@@ -952,42 +1191,23 @@ object MasroufiNotificationManager {
     ) {
         if (!hasNotificationPermission(context)) return
         runCatching {
-            val intent = overrideContentIntent ?: if (openQuickAdd) {
-                Intent(context, com.example.widget.QuickCaptureActivity::class.java).apply {
-                    action = MasroufiAppWidget.ACTION_QUICK_ADD
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                }
-            } else {
-                Intent(context, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                }
-            }
-            val pendingIntent = PendingIntent.getActivity(
-                context,
-                id,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            val lang = runCatching {
+                com.example.widget.MasroufiWidgetStore.loadSnapshot(context).language
+            }.getOrDefault("fr")
+            val notif = buildAppAlertNotification(
+                context = context,
+                id = id,
+                channelId = channelId,
+                title = title,
+                body = body,
+                openQuickAdd = openQuickAdd,
+                notifAction = notifAction,
+                secondNotifAction = secondNotifAction,
+                deletePendingIntent = deletePendingIntent,
+                overrideContentIntent = overrideContentIntent,
+                lang = lang
             )
-            val builder = NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(R.mipmap.ic_launcher_round)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true)
-                .setContentIntent(pendingIntent)
-
-            if (deletePendingIntent != null) {
-                builder.setDeleteIntent(deletePendingIntent)
-            }
-            if (notifAction != null) {
-                builder.addAction(notifAction)
-            }
-            if (secondNotifAction != null) {
-                builder.addAction(secondNotifAction)
-            }
-
-            NotificationManagerCompat.from(context).notify(id, builder.build())
+            NotificationManagerCompat.from(context).notify(id, notif)
         }
     }
 }
@@ -998,6 +1218,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val ACTION_PAY_DARET_ROUND = "com.aistudio.masroufi.ACTION_PAY_DARET_ROUND"
         const val ACTION_CONFIRM_NO_SPEND_TODAY = "com.aistudio.masroufi.ACTION_CONFIRM_NO_SPEND_TODAY"
         const val ACTION_DISMISS_EVENING_REMINDER = "com.aistudio.masroufi.ACTION_DISMISS_EVENING_REMINDER"
+        const val ACTION_BANK_CONFIRM = "com.aistudio.masroufi.ACTION_BANK_CONFIRM"
+        const val ACTION_BANK_IGNORE = "com.aistudio.masroufi.ACTION_BANK_IGNORE"
+        const val ACTION_BANK_UNDO_AUTO = "com.aistudio.masroufi.ACTION_BANK_UNDO_AUTO"
         const val EXTRA_NOTIF_ID = "extra_notif_id"
         const val EXTRA_ITEM_ID = "extra_item_id"
         const val EXTRA_ITEM_NAME = "extra_item_name"
@@ -1025,6 +1248,53 @@ class NotificationActionReceiver : BroadcastReceiver() {
             runCatching {
                 NotificationManagerCompat.from(appCtx).cancel(notifId)
             }
+            return
+        }
+
+        if (action == ACTION_BANK_CONFIRM) {
+            val itemId = intent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
+            val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 4500)
+            if (itemId.isNotBlank()) {
+                val pendingItem = BankDetectionStore.findPendingItemById(appCtx, itemId)
+                if (pendingItem != null) {
+                    BankDetectionStore.confirmDetectedItem(appCtx, pendingItem, isAutoConfirmed = false)
+                }
+            }
+            runCatching { NotificationManagerCompat.from(appCtx).cancel(notifId) }
+            return
+        }
+
+        if (action == ACTION_BANK_IGNORE) {
+            val itemId = intent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
+            val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 4500)
+            if (itemId.isNotBlank()) {
+                BankDetectionStore.removePendingItem(appCtx, itemId)
+            }
+            runCatching { NotificationManagerCompat.from(appCtx).cancel(notifId) }
+            return
+        }
+
+        if (action == ACTION_BANK_UNDO_AUTO) {
+            val txId = intent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
+            val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 4800)
+            val amount = intent.getDoubleExtra(EXTRA_ITEM_AMOUNT, 0.0)
+            val desc = intent.getStringExtra(EXTRA_ITEM_NAME).orEmpty()
+            val isoDate = intent.getStringExtra(EXTRA_ITEM_DATE_OR_CYCLE).orEmpty().ifBlank { PayCycleEngine.todayIso() }
+            if (txId.isNotBlank()) {
+                com.example.widget.MasroufiWidgetStore.undoQuickCaptureBatch(
+                    context = appCtx,
+                    createdTxs = listOf(
+                        TransactionItem(
+                            id = txId,
+                            type = "expense",
+                            amount = amount,
+                            desc = desc,
+                            isoDate = isoDate
+                        )
+                    )
+                )
+            }
+            runCatching { NotificationManagerCompat.from(appCtx).cancel(notifId) }
             return
         }
 

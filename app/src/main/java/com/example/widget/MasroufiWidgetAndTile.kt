@@ -61,6 +61,10 @@ object MasroufiWidgetStore {
     private const val KEY_PENDING_QUICK_TXS_JSON = "pending_quick_capture_txs_json"
     private const val KEY_STYLE_PREFIX = "widget_style_"
 
+    private const val SECURE_KEY_SNAPSHOT = "widget_full_snapshot_v1"
+    private const val SECURE_KEY_PENDING_TXS = "widget_pending_quick_txs_v1"
+    private val widgetQueueLock = Any()
+
     private val DS_SNAPSHOT_KEY = stringPreferencesKey("full_widget_snapshot_json")
 
     fun saveFullSnapshot(
@@ -89,20 +93,22 @@ object MasroufiWidgetStore {
         val normalized = snapshot.withMidnightRolloverIfNeeded(PayCycleEngine.todayIso())
         val jsonStr = normalized.toJson().toString()
 
+        // S4: Store financial widget snapshot encrypted in SecureStore and remove legacy plaintext copies
+        com.example.security.SecureStore.putString(appCtx, SECURE_KEY_SNAPSHOT, jsonStr)
         val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
-            .putFloat(KEY_TODAY_SPEND, normalized.todaySpend.toFloat())
-            .putFloat(KEY_SAFE_TODAY, normalized.safeToSpendToday.toFloat())
+            .remove(KEY_TODAY_SPEND)
+            .remove(KEY_SAFE_TODAY)
+            .remove(KEY_FULL_SNAPSHOT_JSON)
             .putString(KEY_CURRENCY, normalized.currencySymbol.ifBlank { "DH" })
             .putBoolean(KEY_HIDE_AMOUNTS, normalized.hideAmounts)
             .putString(KEY_LANG, normalized.language.ifBlank { "fr" })
-            .putString(KEY_FULL_SNAPSHOT_JSON, jsonStr)
             .apply()
 
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
                 appCtx.widgetDataStore.edit { ds ->
-                    ds[DS_SNAPSHOT_KEY] = jsonStr
+                    ds.remove(DS_SNAPSHOT_KEY)
                 }
             }
         }
@@ -137,7 +143,13 @@ object MasroufiWidgetStore {
     fun loadSnapshot(context: Context, nowIso: String = PayCycleEngine.todayIso()): WidgetSnapshot {
         val appCtx = context.applicationContext
         val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val rawJson = prefs.getString(KEY_FULL_SNAPSHOT_JSON, null)
+        // S4: One-time migration from legacy plaintext SharedPreferences to SecureStore
+        val rawJson = com.example.security.SecureStore.migrateStringFromLegacyPrefs(
+            context = appCtx,
+            legacyPrefsName = PREFS_NAME,
+            legacyKey = KEY_FULL_SNAPSHOT_JSON,
+            secureKey = SECURE_KEY_SNAPSHOT
+        )
         val baseSnapshot = if (!rawJson.isNullOrBlank()) {
             runCatching { WidgetSnapshot.fromJson(JSONObject(rawJson)) }.getOrNull()
         } else null
@@ -166,12 +178,7 @@ object MasroufiWidgetStore {
             oldestPendingDetectionHours = max(resolved.oldestPendingDetectionHours, oldestHours)
         )
         if (rolledOver.snapshotDateIso != resolved.snapshotDateIso) {
-            // Persist midnight reset immediately so subsequent reads are up to date
-            prefs.edit()
-                .putFloat(KEY_TODAY_SPEND, rolledOver.todaySpend.toFloat())
-                .putFloat(KEY_SAFE_TODAY, rolledOver.safeToSpendToday.toFloat())
-                .putString(KEY_FULL_SNAPSHOT_JSON, rolledOver.toJson().toString())
-                .apply()
+            com.example.security.SecureStore.putString(appCtx, SECURE_KEY_SNAPSHOT, rolledOver.toJson().toString())
         }
         return rolledOver
     }
@@ -208,12 +215,15 @@ object MasroufiWidgetStore {
      */
     fun recordQuickCaptureTransactions(
         context: Context,
-        items: List<VoiceParsedTransaction>
+        items: List<VoiceParsedTransaction>,
+        defaultAccountId: String = "acc_cash",
+        overrideIsoDate: String? = null
     ): List<TransactionItem> {
         if (items.isEmpty()) return emptyList()
         val appCtx = context.applicationContext
         val currentSnapshot = loadSnapshot(appCtx)
         val todayIso = PayCycleEngine.todayIso()
+        val txIsoDate = overrideIsoDate?.takeIf { PayCycleEngine.isValidIsoDate(it) } ?: todayIso
         val baseMs = System.currentTimeMillis()
         val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull().orEmpty().ifBlank { "local_device_user" }
 
@@ -236,10 +246,10 @@ object MasroufiWidgetStore {
                 amount = rounded,
                 category = normalizedCat,
                 envelopeKey = item.envelopeKey.ifBlank { "autre" },
-                accountId = if (isTransfer) "acc_bank" else "acc_cash",
+                accountId = if (isTransfer) "acc_bank" else defaultAccountId.ifBlank { "acc_cash" },
                 toAccountId = if (isTransfer) "acc_cash" else "",
                 desc = item.description.ifBlank { item.categoryName },
-                isoDate = todayIso,
+                isoDate = txIsoDate,
                 hourOfDay = nowHour
             )
         }
@@ -290,30 +300,40 @@ object MasroufiWidgetStore {
         )
         saveWidgetSnapshot(appCtx, updatedSnapshot)
 
-        // Append to pending quick-capture queue so MasroufiViewModel / Firestore picks them up
-        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val existingArr = runCatching {
-            JSONArray(prefs.getString(KEY_PENDING_QUICK_TXS_JSON, "[]") ?: "[]")
-        }.getOrDefault(JSONArray())
-
-        createdTxs.forEach { tx ->
-            existingArr.put(
-                JSONObject().apply {
-                    put("id", tx.id)
-                    put("userId", tx.userId)
-                    put("type", tx.type)
-                    put("amount", tx.amount)
-                    put("category", tx.category)
-                    put("envelopeKey", tx.envelopeKey)
-                    put("accountId", tx.accountId)
-                    put("toAccountId", tx.toAccountId)
-                    put("desc", tx.desc)
-                    put("isoDate", tx.isoDate)
-                    put("hourOfDay", tx.hourOfDay)
-                }
+        // S4: Append to encrypted pending quick-capture queue in SecureStore
+        synchronized(widgetQueueLock) {
+            val rawExisting = com.example.security.SecureStore.migrateStringFromLegacyPrefs(
+                context = appCtx,
+                legacyPrefsName = PREFS_NAME,
+                legacyKey = KEY_PENDING_QUICK_TXS_JSON,
+                secureKey = SECURE_KEY_PENDING_TXS
             )
+            val existingArr = runCatching {
+                JSONArray(rawExisting ?: "[]")
+            }.getOrDefault(JSONArray())
+
+            createdTxs.forEach { tx ->
+                existingArr.put(
+                    JSONObject().apply {
+                        put("id", tx.id)
+                        put("userId", tx.userId)
+                        put("type", tx.type)
+                        put("amount", tx.amount)
+                        put("category", tx.category)
+                        put("envelopeKey", tx.envelopeKey)
+                        put("accountId", tx.accountId)
+                        put("toAccountId", tx.toAccountId)
+                        put("desc", tx.desc)
+                        put("isoDate", tx.isoDate)
+                        put("hourOfDay", tx.hourOfDay)
+                    }
+                )
+            }
+            com.example.security.SecureStore.putString(appCtx, SECURE_KEY_PENDING_TXS, existingArr.toString())
+            appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .remove(KEY_PENDING_QUICK_TXS_JSON)
+                .apply()
         }
-        prefs.edit().putString(KEY_PENDING_QUICK_TXS_JSON, existingArr.toString()).apply()
 
         // Also persist directly to Firestore offline cache if a Firebase user is signed in
         runCatching {
@@ -334,7 +354,7 @@ object MasroufiWidgetStore {
     }
 
     /**
-     * Reverts a batch of quick-captured transactions when the user taps Undo within 5 seconds.
+     * Reverts a batch of quick-captured transactions when the user taps Undo.
      */
     fun undoQuickCaptureBatch(
         context: Context,
@@ -361,19 +381,29 @@ object MasroufiWidgetStore {
         )
         saveWidgetSnapshot(appCtx, updatedSnapshot)
 
-        // Remove from pending queue
-        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val existingArr = runCatching {
-            JSONArray(prefs.getString(KEY_PENDING_QUICK_TXS_JSON, "[]") ?: "[]")
-        }.getOrDefault(JSONArray())
-        val filteredArr = JSONArray()
-        for (i in 0 until existingArr.length()) {
-            val obj = existingArr.optJSONObject(i) ?: continue
-            if (obj.optString("id") !in idsToUndo) {
-                filteredArr.put(obj)
+        // Remove from encrypted pending queue
+        synchronized(widgetQueueLock) {
+            val rawExisting = com.example.security.SecureStore.migrateStringFromLegacyPrefs(
+                context = appCtx,
+                legacyPrefsName = PREFS_NAME,
+                legacyKey = KEY_PENDING_QUICK_TXS_JSON,
+                secureKey = SECURE_KEY_PENDING_TXS
+            )
+            val existingArr = runCatching {
+                JSONArray(rawExisting ?: "[]")
+            }.getOrDefault(JSONArray())
+            val filteredArr = JSONArray()
+            for (i in 0 until existingArr.length()) {
+                val obj = existingArr.optJSONObject(i) ?: continue
+                if (obj.optString("id") !in idsToUndo) {
+                    filteredArr.put(obj)
+                }
             }
+            com.example.security.SecureStore.putString(appCtx, SECURE_KEY_PENDING_TXS, filteredArr.toString())
+            appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .remove(KEY_PENDING_QUICK_TXS_JSON)
+                .apply()
         }
-        prefs.edit().putString(KEY_PENDING_QUICK_TXS_JSON, filteredArr.toString()).apply()
 
         // Also delete from Firestore offline cache if signed in
         runCatching {
@@ -393,13 +423,23 @@ object MasroufiWidgetStore {
     }
 
     /**
-     * Drains any pending quick-capture transactions recorded while [MainActivity] was closed
-     * so local-mode or active ViewModel state stays 100% synchronized.
+     * Drains any pending quick-capture transactions recorded while [MainActivity] was closed.
      */
     fun consumePendingQuickCaptureTransactions(context: Context): List<TransactionItem> {
-        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY_PENDING_QUICK_TXS_JSON, null) ?: return emptyList()
-        prefs.edit().remove(KEY_PENDING_QUICK_TXS_JSON).apply()
+        val appCtx = context.applicationContext
+        val raw = synchronized(widgetQueueLock) {
+            val data = com.example.security.SecureStore.migrateStringFromLegacyPrefs(
+                context = appCtx,
+                legacyPrefsName = PREFS_NAME,
+                legacyKey = KEY_PENDING_QUICK_TXS_JSON,
+                secureKey = SECURE_KEY_PENDING_TXS
+            )
+            com.example.security.SecureStore.remove(appCtx, SECURE_KEY_PENDING_TXS)
+            appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .remove(KEY_PENDING_QUICK_TXS_JSON)
+                .apply()
+            data
+        } ?: return emptyList()
         val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
         val list = mutableListOf<TransactionItem>()
         for (i in 0 until arr.length()) {

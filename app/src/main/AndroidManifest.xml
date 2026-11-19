@@ -8,14 +8,24 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- D6: Least-privilege app query for Bank/SMS notification picker (no QUERY_ALL_PACKAGES) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="false"
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.MyApplication">
         <activity
@@ -32,8 +42,18 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
+        <!-- S2: Internal-only QuickCaptureActivity; external Assistant requests enter via AssistantEntryActivity -->
         <activity
             android:name=".widget.QuickCaptureActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:taskAffinity=""
+            android:theme="@style/Theme.Masroufi.QuickCapture" />
+
+        <!-- S2: Validated, rate-limited entry point for Google Assistant & local deep links (not BROWSABLE) -->
+        <activity
+            android:name=".widget.AssistantEntryActivity"
             android:excludeFromRecents="true"
             android:exported="true"
             android:label="@string/app_name"
@@ -46,13 +66,13 @@
                 <action android:name="com.aistudio.masroufi.ACTION_ASSISTANT_ADD_EXPENSE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-            <!-- Google Assistant Voice Search ("Ok Google, cherche Café 15 DH sur Masroufi") -->
+            <!-- Google Assistant Voice Search -->
             <intent-filter>
                 <action android:name="com.google.android.gms.actions.SEARCH_ACTION" />
                 <action android:name="android.intent.action.SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-            <!-- Google Assistant Note to Self ("Ok Google, note Taxi 25 DH sur Masroufi") -->
+            <!-- Google Assistant Note to Self -->
             <intent-filter>
                 <action android:name="com.google.android.gms.actions.CREATE_NOTE" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -64,12 +84,10 @@
                 <action android:name="android.intent.action.VOICE_COMMAND" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
-            <!-- Deep Link for Google Assistant Routines & App Actions URL templates:
-                 masroufi://assistant/add?query=Cafe+15+DH or masroufi://expense?amount=20&merchant=Taxi -->
+            <!-- Non-browsable deep link for Google Assistant Routines only (BROWSABLE removed for S2) -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="masroufi"
                     android:host="assistant" />
@@ -115,9 +133,10 @@
                 android:resource="@xml/masroufi_app_widget_info" />
         </receiver>
 
+        <!-- S2: System broadcast receiver does not need to be exported to third-party apps -->
         <receiver
             android:name=".notifications.QuickCaptureBootReceiver"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />

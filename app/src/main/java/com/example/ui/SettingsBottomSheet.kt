@@ -741,6 +741,48 @@ fun SettingsBottomSheet(
                             modifier = Modifier.testTag("settings_flag_secure_switch")
                         )
                     }
+
+                    // S4: Optional Cloud-only mode (disables persistent local Firestore SQLite cache)
+                    var cloudOnlyMode by remember {
+                        mutableStateOf(AppSecurityManager.isCloudOnlyModeEnabled(context))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "وضع السحابة فقط (بدون ذاكرة محلية)"
+                                    "darija" -> "سحابة فقط (بلا تخزين محلي)"
+                                    "en" -> "Cloud-only mode (no local cache)"
+                                    else -> "Mode Cloud uniquement (sans cache local)"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "يعطّل التخزين المؤقت المحلي لـ Firestore (يتطلب إعادة التشغيل)"
+                                    "darija" -> "كيحبس التخزين المحلي ديال Firestore (عاود حل التطبيق)"
+                                    "en" -> "Disables persistent Firestore disk cache (takes effect on restart)"
+                                    else -> "Désactive le cache disque Firestore (actif au redémarrage)"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = cloudOnlyMode,
+                            onCheckedChange = { enabled ->
+                                cloudOnlyMode = enabled
+                                AppSecurityManager.setCloudOnlyModeEnabled(context, enabled)
+                            },
+                            modifier = Modifier.testTag("settings_cloud_only_mode_switch")
+                        )
+                    }
                 }
             }
 
@@ -1400,11 +1442,40 @@ fun SettingsBottomSheet(
                         fontWeight = FontWeight.ExtraBold
                     )
 
+                    val backupPwdValid = backupPassword.trim().length >= AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH
                     OutlinedTextField(
                         value = backupPassword,
                         onValueChange = { backupPassword = it },
                         label = {
-                            Text("AES-256-GCM (10+ car.)", fontSize = 12.sp)
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "كلمة مرور النسخة الاحتياطية (10 أحرف على الأقل)"
+                                    "darija" -> "كلمة سر النسخة المشفرة (10 حروف على الأقل)"
+                                    "en" -> "Backup encryption password (min 10 chars)"
+                                    else -> "Mot de passe obligatoire AES-256 (10+ car.)"
+                                },
+                                fontSize = 12.sp
+                            )
+                        },
+                        supportingText = {
+                            Text(
+                                text = if (backupPwdValid) {
+                                    when (lang) {
+                                        "ar" -> "✓ جاهز للتصدير المشفّر AES-256-GCM"
+                                        "darija" -> "✓ واجد للتشفير AES-256-GCM"
+                                        "en" -> "✓ Ready for AES-256-GCM encrypted JSON export"
+                                        else -> "✓ Prêt pour l'export JSON chiffré AES-256-GCM"
+                                    }
+                                } else {
+                                    when (lang) {
+                                        "ar" -> "التصدير بصيغة JSON مشفّر دائماً (أدخل 10 أحرف على الأقل)"
+                                        "darija" -> "ملف JSON كيتصدر مشفر ديما (دخل 10 حروف على الأقل)"
+                                        "en" -> "JSON backups are always encrypted (enter at least 10 characters)"
+                                        else -> "Export JSON toujours chiffré : saisissez au moins 10 caractères"
+                                    }
+                                },
+                                fontSize = 12.sp
+                            )
                         },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
@@ -1420,11 +1491,12 @@ fun SettingsBottomSheet(
                     ) {
                         FilledTonalButton(
                             onClick = { onExportJsonFile(backupPassword.trim()) },
+                            enabled = backupPwdValid,
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("save_json_file_btn")
                         ) {
-                            Text("JSON", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("JSON 🔒", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         FilledTonalButton(
                             onClick = {

@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -51,6 +52,14 @@ class MoonshineVoiceController(
                 Manifest.permission.RECORD_AUDIO
             ) == PackageManager.PERMISSION_GRANTED
         }
+
+        /**
+         * S7: Checks whether Android's true on-device SpeechRecognizer (API 31+) is available.
+         */
+        fun isOnDeviceRecognitionAvailable(context: Context): Boolean {
+            return Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                runCatching { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) }.getOrDefault(false)
+        }
     }
 
     private val _isListening = MutableStateFlow(false)
@@ -64,6 +73,9 @@ class MoonshineVoiceController(
 
     private val _isCancelZoneActive = MutableStateFlow(false)
     val isCancelZoneActive: StateFlow<Boolean> = _isCancelZoneActive.asStateFlow()
+
+    private val _isUsingOnDeviceRecognizer = MutableStateFlow(isOnDeviceRecognitionAvailable(context))
+    val isUsingOnDeviceRecognizer: StateFlow<Boolean> = _isUsingOnDeviceRecognizer.asStateFlow()
 
     private var speechRecognizer: SpeechRecognizer? = null
     private var waveformJob: Job? = null
@@ -84,9 +96,17 @@ class MoonshineVoiceController(
         }
 
         runCatching {
-            if (SpeechRecognizer.isRecognitionAvailable(context)) {
+            val useOnDevice = isOnDeviceRecognitionAvailable(context)
+            val canRecognize = useOnDevice || SpeechRecognizer.isRecognitionAvailable(context)
+            if (canRecognize) {
                 speechRecognizer?.destroy()
-                val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+                val recognizer = if (useOnDevice && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    _isUsingOnDeviceRecognizer.value = true
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                } else {
+                    _isUsingOnDeviceRecognizer.value = false
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                }
                 speechRecognizer = recognizer
                 recognizer.setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {

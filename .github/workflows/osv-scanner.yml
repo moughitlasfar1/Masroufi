@@ -1,0 +1,20 @@
+name: Dependency Vulnerability Scan (OSV-Scanner)
+
+on:
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  osv-scan:
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@446d9e59472c871e307d7373282092a898114081 # v2.0.2
+    permissions:
+      contents: read
+      security-events: write

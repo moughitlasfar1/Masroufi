@@ -86,6 +86,10 @@ class WidgetConfigActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.security.AppSecurityManager.applyWindowFlagSecure(
+            this,
+            com.example.security.AppSecurityManager.isFlagSecureEnabled(this)
+        )
         enableEdgeToEdge()
 
         appWidgetId = intent?.extras?.getInt(
@@ -96,6 +100,11 @@ class WidgetConfigActivity : ComponentActivity() {
         // Default result is CANCELED in case the user backs out
         val cancelResult = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
         setResult(Activity.RESULT_CANCELED, cancelResult)
+
+        if (appWidgetId == AppWidgetManager.INVALID_APPWIDGET_ID) {
+            finish()
+            return
+        }
 
         val snapshot = MasroufiWidgetStore.loadSnapshot(this)
         val initialStyle = MasroufiWidgetStore.loadWidgetStyle(this, appWidgetId)

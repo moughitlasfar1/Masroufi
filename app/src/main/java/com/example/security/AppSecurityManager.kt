@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.PersistableBundle
 import android.os.SystemClock
 import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.view.WindowManager
@@ -106,9 +107,14 @@ object AppSecurityManager {
     private const val KEY_DASHBOARD_ORDER = "ux_dashboard_card_order"
     private const val KEY_FORCE_INTERACTIVE_SIGNIN = "sec_force_interactive_signin"
     private const val KEY_PENDING_PIN_RECOVERY = "sec_pending_pin_recovery"
+    private const val KEY_CLOUD_ONLY_MODE = "sec_cloud_only_mode"
+    private const val KEY_VOICE_CLOUD_NOTICE_ACK = "ux_voice_cloud_notice_ack"
+    private const val SECURE_KEY_LEARNED_CATEGORIES = "ux_learned_categories_v1"
+    private const val LEGACY_KEY_LEARNED_CATEGORIES = "ux_learned_categories_json"
 
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
     private const val PIN_KEYSTORE_ALIAS = "masroufi_pin_keystore_v1"
+    private const val BIOMETRIC_KEYSTORE_ALIAS = "masroufi_biometric_unlock_v1"
     private const val ROLLBACK_FILE_NAME = "masroufi_rollback_snapshot.enc"
 
     // SEC-03 & SEC-06: OWASP recommended 600,000 iterations for PBKDF2-HMAC-SHA256
@@ -173,11 +179,40 @@ object AppSecurityManager {
     }
 
     fun loadLearnedCategoriesJson(context: Context): String {
-        return prefs(context).getString("ux_learned_categories_json", "").orEmpty()
+        return SecureStore.migrateStringFromLegacyPrefs(
+            context = context,
+            legacyPrefsName = PREFS_NAME,
+            legacyKey = LEGACY_KEY_LEARNED_CATEGORIES,
+            secureKey = SECURE_KEY_LEARNED_CATEGORIES
+        ).orEmpty()
     }
 
     fun saveLearnedCategoriesJson(context: Context, json: String) {
-        prefs(context).edit().putString("ux_learned_categories_json", json).apply()
+        SecureStore.putString(context, SECURE_KEY_LEARNED_CATEGORIES, json)
+        prefs(context).edit().remove(LEGACY_KEY_LEARNED_CATEGORIES).apply()
+    }
+
+    /**
+     * S4: Optional Cloud-only mode — disables persistent on-device Firestore SQLite cache
+     * (uses in-memory cache only) for users who prefer zero cached financial data on disk.
+     * Default is false (offline-first). Requires app restart to take effect.
+     */
+    fun isCloudOnlyModeEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_CLOUD_ONLY_MODE, false)
+
+    fun setCloudOnlyModeEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_CLOUD_ONLY_MODE, enabled).apply()
+    }
+
+    /**
+     * S7: Tracks whether the user has acknowledged the one-time notice when Android's
+     * cloud-assisted SpeechRecognizer is used instead of on-device recognition.
+     */
+    fun hasAcknowledgedCloudVoiceNotice(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_VOICE_CLOUD_NOTICE_ACK, false)
+
+    fun setCloudVoiceNoticeAcknowledged(context: Context, acknowledged: Boolean) {
+        prefs(context).edit().putBoolean(KEY_VOICE_CLOUD_NOTICE_ACK, acknowledged).apply()
     }
 
     /**
@@ -399,28 +434,73 @@ object AppSecurityManager {
         prefs(context).getInt(KEY_FAILED_ATTEMPTS, 0)
 
     /**
-     * SEC-06: Monotonic lockout calculation using SystemClock.elapsedRealtime()
-     * so changing the device wall clock cannot bypass or shorten active lockouts.
-     * Also detects device reboots (where elapsedRealtime resets near 0) and re-anchors
-     * the remaining lockout duration safely.
+     * S3: Verifies that `pin_lockout_seal` matches `"$failed:$until:$duration"` in constant time.
+     * Returns true when no lockout/failure state exists or when the Keystore-wrapped seal matches.
+     */
+    internal fun verifyLockoutSeal(context: Context): Boolean {
+        val p = prefs(context)
+        val failed = p.getInt(KEY_FAILED_ATTEMPTS, 0)
+        val until = p.getLong(KEY_LOCKOUT_UNTIL_MS, 0L)
+        val duration = p.getLong(KEY_LOCKOUT_DURATION_MS, 0L)
+        if (failed == 0 && until == 0L && duration == 0L) {
+            return true
+        }
+        val storedSeal = p.getString(KEY_LOCKOUT_SEAL, null) ?: return false
+        if (storedSeal.isBlank()) return false
+        val unwrapped = unwrapFromAndroidKeystore(storedSeal) ?: return false
+        val expected = "$failed:$until:$duration"
+        return MessageDigest.isEqual(
+            unwrapped.toByteArray(Charsets.UTF_8),
+            expected.toByteArray(Charsets.UTF_8)
+        )
+    }
+
+    /**
+     * SEC-06 & S3: Monotonic lockout calculation using SystemClock.elapsedRealtime()
+     * with tamper verification of `pin_lockout_seal`.
+     * - If `pin_lockout_seal` is missing or mismatched while failure/lockout state is non-zero,
+     *   enforces the maximum 1-hour lockout (3,600,000 ms) and writes a fresh seal.
+     * - Re-anchors remaining lockout duration across device reboots and re-seals the updated state.
      */
     fun getRemainingLockoutSeconds(context: Context, nowMs: Long = monotonicNowMs()): Int {
         val p = prefs(context)
-        val failed = p.getInt(KEY_FAILED_ATTEMPTS, 0)
+        var failed = p.getInt(KEY_FAILED_ATTEMPTS, 0)
         var until = p.getLong(KEY_LOCKOUT_UNTIL_MS, 0L)
-        val duration = p.getLong(KEY_LOCKOUT_DURATION_MS, 0L)
+        var duration = p.getLong(KEY_LOCKOUT_DURATION_MS, 0L)
+
+        if ((failed > 0 || until > 0L || duration > 0L) && !verifyLockoutSeal(context)) {
+            // S3: Lockout state or seal was tampered with — enforce max 1-hour lockout
+            failed = maxOf(failed, 8)
+            duration = computeLockoutDurationMs(8) // 3,600,000 ms (1 hour)
+            until = nowMs + duration
+            val freshSeal = wrapWithAndroidKeystore("$failed:$until:$duration").orEmpty()
+            p.edit()
+                .putInt(KEY_FAILED_ATTEMPTS, failed)
+                .putLong(KEY_LOCKOUT_UNTIL_MS, until)
+                .putLong(KEY_LOCKOUT_DURATION_MS, duration)
+                .putString(KEY_LOCKOUT_SEAL, freshSeal)
+                .apply()
+            return ceil(duration / 1000.0).toInt().coerceAtLeast(1)
+        }
+
         if (failed >= 3 && until == 0L && duration == 0L) {
-            // Tamper recovery: if failed attempts >= 3 but lockout timestamp was cleared, re-apply lockout
             val recomputed = computeLockoutDurationMs(failed)
             until = nowMs + recomputed
+            duration = recomputed
+            val freshSeal = wrapWithAndroidKeystore("$failed:$until:$duration").orEmpty()
             p.edit()
                 .putLong(KEY_LOCKOUT_UNTIL_MS, until)
-                .putLong(KEY_LOCKOUT_DURATION_MS, recomputed)
+                .putLong(KEY_LOCKOUT_DURATION_MS, duration)
+                .putString(KEY_LOCKOUT_SEAL, freshSeal)
                 .apply()
         } else if (until > 0L && duration > 0L && nowMs + duration < until) {
             // Device rebooted and monotonic clock reset: re-anchor full lockout duration from current monotonic time
             until = nowMs + duration
-            p.edit().putLong(KEY_LOCKOUT_UNTIL_MS, until).apply()
+            val freshSeal = wrapWithAndroidKeystore("$failed:$until:$duration").orEmpty()
+            p.edit()
+                .putLong(KEY_LOCKOUT_UNTIL_MS, until)
+                .putString(KEY_LOCKOUT_SEAL, freshSeal)
+                .apply()
         }
         if (until <= nowMs) return 0
         return ceil((until - nowMs) / 1000.0).toInt().coerceAtLeast(1)
@@ -720,8 +800,72 @@ object AppSecurityManager {
         return bm.canAuthenticate(authenticators) == BiometricManager.BIOMETRIC_SUCCESS || isDeviceSecure(context)
     }
 
+    private fun getOrCreateBiometricKey(): SecretKey? {
+        return runCatching {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val existing = ks.getEntry(BIOMETRIC_KEYSTORE_ALIAS, null) as? KeyStore.SecretKeyEntry
+            if (existing != null) return existing.secretKey
+
+            val keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+            val specBuilder = KeyGenParameterSpec.Builder(
+                BIOMETRIC_KEYSTORE_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .setUserAuthenticationRequired(true)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                specBuilder.setInvalidatedByBiometricEnrollment(true)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                specBuilder.setUserAuthenticationParameters(
+                    0,
+                    KeyProperties.AUTH_BIOMETRIC_STRONG
+                )
+            }
+            keyGen.init(specBuilder.build())
+            keyGen.generateKey()
+        }.getOrNull()
+    }
+
+    private fun deleteBiometricKey() {
+        runCatching {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            if (ks.containsAlias(BIOMETRIC_KEYSTORE_ALIAS)) {
+                ks.deleteEntry(BIOMETRIC_KEYSTORE_ALIAS)
+            }
+        }
+    }
+
+    private enum class BiometricCryptoStatus {
+        READY,
+        INVALIDATED_NEW_ENROLLMENT,
+        UNAVAILABLE
+    }
+
+    private fun prepareBiometricCryptoObject(): Pair<BiometricCryptoStatus, BiometricPrompt.CryptoObject?> {
+        return try {
+            val key = getOrCreateBiometricKey() ?: return BiometricCryptoStatus.UNAVAILABLE to null
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            BiometricCryptoStatus.READY to BiometricPrompt.CryptoObject(cipher)
+        } catch (_: KeyPermanentlyInvalidatedException) {
+            deleteBiometricKey()
+            BiometricCryptoStatus.INVALIDATED_NEW_ENROLLMENT to null
+        } catch (_: Exception) {
+            BiometricCryptoStatus.UNAVAILABLE to null
+        }
+    }
+
     /**
-     * SEC-06: Launches AndroidX BiometricPrompt (replacing deprecated createConfirmDeviceCredentialIntent).
+     * SEC-06 & S3: Launches AndroidX BiometricPrompt bound to an AndroidKeyStore CryptoObject
+     * (`setUserAuthenticationRequired(true)` + `setInvalidatedByBiometricEnrollment(true)`).
+     * - When BIOMETRIC_STRONG is available, verifies the unlocked Cipher via `doFinal(...)`
+     *   in `onAuthenticationSucceeded` before unlocking the session.
+     * - If biometric enrollment changed (`KeyPermanentlyInvalidatedException`), deletes the key
+     *   and requires PIN / device credential confirmation.
      */
     fun launchBiometricOrDevicePrompt(
         activity: FragmentActivity,
@@ -731,7 +875,59 @@ object AppSecurityManager {
         onError: (String) -> Unit = {}
     ) {
         runCatching {
+            val bm = BiometricManager.from(activity)
+            val canStrongBio = bm.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
+                BiometricManager.BIOMETRIC_SUCCESS
             val executor = ContextCompat.getMainExecutor(activity)
+
+            if (canStrongBio) {
+                val (status, cryptoObj) = prepareBiometricCryptoObject()
+                if (status == BiometricCryptoStatus.INVALIDATED_NEW_ENROLLMENT) {
+                    onError("Nouvelle biométrie détectée. Veuillez entrer votre code PIN pour réactiver.")
+                    return
+                }
+                if (status == BiometricCryptoStatus.READY && cryptoObj != null) {
+                    val cryptoPrompt = BiometricPrompt(
+                        activity,
+                        executor,
+                        object : BiometricPrompt.AuthenticationCallback() {
+                            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                                super.onAuthenticationSucceeded(result)
+                                val verified = runCatching {
+                                    val cipher = result.cryptoObject?.cipher ?: return@runCatching false
+                                    cipher.doFinal("masroufi_unlock_v1".toByteArray(Charsets.UTF_8)).isNotEmpty()
+                                }.getOrDefault(false)
+                                if (verified) {
+                                    resetLockoutState(activity)
+                                    onSuccess()
+                                } else {
+                                    onError("Échec de la vérification cryptographique biométrique.")
+                                }
+                            }
+
+                            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                                super.onAuthenticationError(errorCode, errString)
+                                if (errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+                                    errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+                                    errorCode != BiometricPrompt.ERROR_CANCELED
+                                ) {
+                                    onError(errString.toString())
+                                }
+                            }
+                        }
+                    )
+                    val strongPromptInfo = BiometricPrompt.PromptInfo.Builder()
+                        .setTitle(title)
+                        .setSubtitle(subtitle)
+                        .setNegativeButtonText("Code PIN")
+                        .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                        .build()
+                    cryptoPrompt.authenticate(strongPromptInfo, cryptoObj)
+                    return
+                }
+            }
+
+            // Fallback when BIOMETRIC_STRONG is unavailable: authenticate with device credential
             val prompt = BiometricPrompt(
                 activity,
                 executor,

@@ -2000,17 +2000,17 @@ class MasroufiViewModel(
     val preRestoreRollbackJson: StateFlow<String?> = _preRestoreRollbackJson.asStateFlow()
 
     /**
-     * Complete Version 2 JSON Backup (profile, customPrefs, accounts, envelopes,
-     * financialItems [goals, bills, debts, darets, seasonals, presets], and transactions).
-     * If [password] is provided (non-blank), encrypts the JSON with AES-256-GCM + PBKDF2-HMAC-SHA256.
+     * S9: Complete Version 2 JSON Backup (profile, customPrefs, accounts, envelopes,
+     * financialItems, and transactions). ALWAYS encrypted with AES-256-GCM + PBKDF2-HMAC-SHA256;
+     * rejects blank or short (< 10 character) passwords so plaintext JSON backups are never exported.
      */
-    fun exportBackupJson(password: String = ""): String {
-        val plain = BackupSerializer.encodeV2Backup(uiState.value)
-        return if (password.trim().isNotEmpty()) {
-            AppSecurityManager.encryptBackupJson(plain, password.trim())
-        } else {
-            plain
+    fun exportBackupJson(password: String): String {
+        val cleanPwd = password.trim()
+        require(cleanPwd.length >= AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH) {
+            "Un mot de passe d'au moins ${AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH} caractères est obligatoire pour exporter une sauvegarde JSON chiffrée."
         }
+        val plain = BackupSerializer.encodeV2Backup(uiState.value)
+        return AppSecurityManager.encryptBackupJson(plain, cleanPwd)
     }
 
     /**

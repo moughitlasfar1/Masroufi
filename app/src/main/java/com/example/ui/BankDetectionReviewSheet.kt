@@ -51,6 +51,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.collectAsState
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.BankMessageParser
@@ -59,6 +60,7 @@ import com.example.notifications.AllowlistAppOption
 import com.example.notifications.BankDetectionStore
 import com.example.notifications.DetectedBankTransaction
 import com.example.notifications.ManualSetup
+import com.example.notifications.MasroufiDetectionLog
 import com.example.notifications.ShizukuSetup
 import com.example.security.AppSecurityManager
 import com.example.ui.theme.AccentAmber
@@ -103,13 +105,80 @@ fun BankDetectionReviewSheet(
         mutableStateOf<Set<String>>(BankDetectionStore.getAllowedPackages(context))
     }
     var showAllowlistPicker by remember { mutableStateOf(false) }
+    var showAddInstalledAppDialog by remember { mutableStateOf(false) }
+    var showDiagnosticLog by remember { mutableStateOf(false) }
     var showBatteryTipsDialog by remember { mutableStateOf(false) }
     var sampleMaskPreview by remember { mutableStateOf("") }
+
+    val listenerHealth by MasroufiDetectionLog.healthFlow.collectAsState()
+    val diagnosticEntries by MasroufiDetectionLog.entriesFlow.collectAsState()
 
     val candidateApps: List<AllowlistAppOption> = remember(showAllowlistPicker, allowlistPackages) {
         if (showAllowlistPicker) BankDetectionStore.getCandidateApps(context) else emptyList()
     }
+    val installedLauncherApps: List<AllowlistAppOption> = remember(showAddInstalledAppDialog, allowlistPackages) {
+        if (showAddInstalledAppDialog) BankDetectionStore.getInstalledLauncherApps(context) else emptyList()
+    }
     val shizukuAvailable = remember { ShizukuSetup.isShizukuInstalled(context) }
+
+    if (showAddInstalledAppDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddInstalledAppDialog = false },
+            modifier = Modifier.testTag("bank_detect_installed_apps_dialog"),
+            title = {
+                Text(
+                    text = when (lang) {
+                        "ar" -> "إضافة تطبيق بنكي أو SMS"
+                        "darija" -> "زيد تطبيق بنكي ولا SMS"
+                        "en" -> "Add Bank or SMS App"
+                        else -> "Ajouter une application"
+                    },
+                    fontWeight = FontWeight.ExtraBold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (installedLauncherApps.isEmpty()) {
+                        Text(
+                            text = "Aucune autre application trouvée.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    } else {
+                        installedLauncherApps.forEach { appOpt ->
+                            val isChecked = appOpt.packageName in allowlistPackages
+                            FilterChip(
+                                selected = isChecked,
+                                onClick = {
+                                    BankDetectionStore.setPackageAllowed(context, appOpt.packageName, !isChecked)
+                                    allowlistPackages = BankDetectionStore.getAllowedPackages(context)
+                                },
+                                label = {
+                                    Text(
+                                        text = "${appOpt.label} (${appOpt.packageName})",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("bank_detect_launcher_app_${appOpt.packageName}")
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAddInstalledAppDialog = false }) {
+                    Text(strings.closeDesc, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
 
     if (showBatteryTipsDialog) {
         AlertDialog(
@@ -128,6 +197,11 @@ fun BankDetectionReviewSheet(
                     },
                     style = MaterialTheme.typography.bodySmall
                 )
+            },
+            dismissButton = {
+                TextButton(onClick = { ManualSetup.openBatteryOptimizationSettings(context) }) {
+                    Text("Batterie Android", fontWeight = FontWeight.Bold)
+                }
             },
             confirmButton = {
                 TextButton(onClick = { showBatteryTipsDialog = false }) {
@@ -563,24 +637,105 @@ fun BankDetectionReviewSheet(
                         }
                     }
 
-                    if (showAllowlistPicker) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    // Listener Health & Zero-PII Diagnostic Log (Prompts 3 & 4)
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("bank_detect_health_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            candidateApps.forEach { appOption ->
-                                val selected = appOption.packageName in allowlistPackages
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = {
-                                        BankDetectionStore.setPackageAllowed(context, appOption.packageName, !selected)
-                                        allowlistPackages = BankDetectionStore.getAllowedPackages(context)
-                                    },
-                                    label = { Text(appOption.label, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
-                                    modifier = Modifier.testTag("bank_detect_allowlist_chip_${appOption.packageName}")
-                                )
+                            val permStatus = if (isListenerGranted) "✓" else "✕"
+                            val connStatus = if (listenerHealth.isConnected) "✓ Connecté" else "En veille"
+                            val lastEventLabel = if (listenerHealth.lastEventMillis > 0L) {
+                                java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+                                    .format(java.util.Date(listenerHealth.lastEventMillis))
+                            } else "—"
+                            Text(
+                                text = "Accès: $permStatus · Service: $connStatus · Dernier événement: $lastEventLabel",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = if (isListenerGranted && listenerHealth.isConnected) AccentEmerald else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(
+                                    onClick = { showDiagnosticLog = !showDiagnosticLog },
+                                    modifier = Modifier.testTag("bank_detect_diag_toggle_btn")
+                                ) {
+                                    Text(
+                                        text = "Journal diagnostic (${diagnosticEntries.size}/50)",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { ManualSetup.openBatteryOptimizationSettings(context) },
+                                    modifier = Modifier.testTag("bank_detect_battery_opt_btn")
+                                ) {
+                                    Text("Batterie", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            if (showDiagnosticLog) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("bank_detect_diag_log_list"),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    if (diagnosticEntries.isEmpty()) {
+                                        Text(
+                                            text = "Aucun événement enregistré (aucun montant ni texte n'est journalisé).",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    } else {
+                                        diagnosticEntries.take(20).forEach { entry ->
+                                            Text(
+                                                text = "${entry.formattedTime()} · ${entry.sourcePackage} · [${entry.stage}:${entry.reasonCode}] (${entry.messageLength}c)",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (showAllowlistPicker) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                candidateApps.forEach { appOption ->
+                                    val selected = appOption.packageName in allowlistPackages
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = {
+                                            BankDetectionStore.setPackageAllowed(context, appOption.packageName, !selected)
+                                            allowlistPackages = BankDetectionStore.getAllowedPackages(context)
+                                        },
+                                        label = { Text(appOption.label, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
+                                        modifier = Modifier.testTag("bank_detect_allowlist_chip_${appOption.packageName}")
+                                    )
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = { showAddInstalledAppDialog = true },
+                                modifier = Modifier.testTag("bank_detect_add_app_btn")
+                            ) {
+                                Text("+ Ajouter une app installée", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }

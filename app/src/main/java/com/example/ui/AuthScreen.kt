@@ -67,9 +67,13 @@ import com.google.firebase.Firebase
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import android.util.Base64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import org.json.JSONObject
+import java.security.MessageDigest
+import java.security.SecureRandom
 
 const val LOCAL_DEVICE_USER_ID = "local_device_user"
 private const val UI_PREFS_NAME = "masroufi_ui_prefs"
@@ -105,6 +109,43 @@ fun setMoreFeaturesEnabled(context: Context, enabled: Boolean) {
         .apply()
 }
 
+/**
+ * S8: Generates a 32-byte cryptographically random nonce and its SHA-256 hex digest.
+ * Returns `(rawNonceHex, hashedNonceHex)`. Pass `hashedNonceHex` to `setNonce(...)`
+ * and verify the returned Google ID token JWT contains `nonce == hashedNonceHex`.
+ */
+internal fun generateSignInNonce(): Pair<String, String> {
+    val rawBytes = ByteArray(32)
+    SecureRandom().nextBytes(rawBytes)
+    val rawHex = rawBytes.joinToString("") { "%02x".format(it) }
+    val digestBytes = MessageDigest.getInstance("SHA-256").digest(rawHex.toByteArray(Charsets.UTF_8))
+    val hashedHex = digestBytes.joinToString("") { "%02x".format(it) }
+    return rawHex to hashedHex
+}
+
+/**
+ * S8: Verifies that a Google ID token JWT's payload contains a `nonce` claim matching
+ * [expectedNonce] using constant-time byte comparison.
+ */
+internal fun verifyIdTokenNonce(idToken: String, expectedNonce: String): Boolean {
+    if (idToken.isBlank() || expectedNonce.isBlank()) return false
+    return runCatching {
+        val parts = idToken.split(".")
+        if (parts.size < 2) return@runCatching false
+        val payloadBytes = Base64.decode(
+            parts[1],
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+        val payloadJson = JSONObject(String(payloadBytes, Charsets.UTF_8))
+        val tokenNonce = payloadJson.optString("nonce", "")
+        if (tokenNonce.isBlank()) return@runCatching false
+        MessageDigest.isEqual(
+            tokenNonce.toByteArray(Charsets.UTF_8),
+            expectedNonce.toByteArray(Charsets.UTF_8)
+        )
+    }.getOrDefault(false)
+}
+
 fun attemptAutoSignIn(
     context: Context,
     credentialManager: CredentialManager,
@@ -129,10 +170,12 @@ fun attemptAutoSignIn(
         return
     }
 
+    val (_, hashedNonce) = generateSignInNonce()
     val googleIdOption = GetGoogleIdOption.Builder()
         .setFilterByAuthorizedAccounts(true)
         .setServerClientId(clientId)
         .setAutoSelectEnabled(true)
+        .setNonce(hashedNonce)
         .build()
 
     val request = GetCredentialRequest.Builder().addCredentialOption(googleIdOption).build()
@@ -143,6 +186,10 @@ fun attemptAutoSignIn(
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                if (!verifyIdTokenNonce(googleIdToken, hashedNonce)) {
+                    onUnauthenticated()
+                    return@launch
+                }
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 Firebase.auth.signInWithCredential(authCredential).await()
                 onAuthSuccess()
@@ -197,7 +244,10 @@ fun onGoogleSignInClicked(
         return
     }
 
-    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+    val (_, hashedNonce) = generateSignInNonce()
+    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId)
+        .setNonce(hashedNonce)
+        .build()
     val request = GetCredentialRequest.Builder().addCredentialOption(signInOption).build()
 
     scope.launch {
@@ -206,6 +256,10 @@ fun onGoogleSignInClicked(
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                if (!verifyIdTokenNonce(googleIdToken, hashedNonce)) {
+                    onAuthError("Échec de vérification de sécurité (nonce invalide). Veuillez réessayer.")
+                    return@launch
+                }
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
                 Firebase.auth.signInWithCredential(authCredential).await()
                 // SEC-02: Complete PIN recovery only after interactive Google re-authentication succeeds

@@ -212,9 +212,6 @@ sealed interface ActiveSheet {
     data object SplitBill : ActiveSheet
     data object BankDetections : ActiveSheet
 }
-private const val DEBUG_TOKEN_EXTRA = "FIREBASE_APPCHECK_DEBUG_TOKEN"
-private const val DEBUG_STORE_PREFIX = "com.google.firebase.appcheck.debug.store."
-private const val DEBUG_SECRET_KEY = "com.google.firebase.appcheck.debug.DEBUG_SECRET"
 
 /**
  * Phase 4: Migrates the saved last tab from the legacy 5-tab layout ("mois")
@@ -277,25 +274,15 @@ fun ensureFirebaseInitialized(context: Context) {
 }
 
 /**
- * SEC-04: Installs PlayIntegrityAppCheckProviderFactory in release builds (where firebase-appcheck-debug
- * is excluded via debugImplementation) and DebugAppCheckProviderFactory in debug builds.
+ * SEC-04 & S5: Installs PlayIntegrityAppCheckProviderFactory in release builds (where firebase-appcheck-debug
+ * is excluded via debugImplementation) and DebugAppCheckProviderFactory in debug builds
+ * without reading debug tokens from untrusted launch intents.
  */
-fun configureAppCheck(context: Context, intent: Intent?) {
+fun configureAppCheck(context: Context, intent: Intent? = null) {
     runCatching {
         ensureFirebaseInitialized(context)
         val appCheck = FirebaseAppCheck.getInstance()
         if (BuildConfig.DEBUG) {
-            val debugToken = intent?.getStringExtra(DEBUG_TOKEN_EXTRA)
-            if (!debugToken.isNullOrEmpty()) {
-                val persistenceKey = FirebaseApp.getInstance().persistenceKey
-                val prefs = context.getSharedPreferences(
-                    "$DEBUG_STORE_PREFIX$persistenceKey",
-                    Context.MODE_PRIVATE
-                )
-                prefs.edit()
-                    .putString(DEBUG_SECRET_KEY, debugToken)
-                    .commit()
-            }
             val debugFactory = runCatching {
                 val clazz = Class.forName("com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory")
                 clazz.getMethod("getInstance").invoke(null) as AppCheckProviderFactory
@@ -346,8 +333,13 @@ class MainActivity : FragmentActivity() {
             ensureFirebaseInitialized(this)
             val databaseId = getString(R.string.firestore_database_id)
             val db = FirebaseFirestore.getInstance(databaseId)
+            val cacheSettings = if (AppSecurityManager.isCloudOnlyModeEnabled(this)) {
+                com.google.firebase.firestore.MemoryCacheSettings.newBuilder().build()
+            } else {
+                PersistentCacheSettings.newBuilder().build()
+            }
             val settings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(PersistentCacheSettings.newBuilder().build())
+                .setLocalCacheSettings(cacheSettings)
                 .build()
             db.firestoreSettings = settings
         }
@@ -620,20 +612,17 @@ fun MainFeatureScreen(
             runCatching {
                 viewModel.exportBackupJson(pendingBackupPassword)
             }.onSuccess { payload ->
-                val isEnc = AppSecurityManager.isEncryptedBackup(payload)
                 val ok = AppSecurityManager.writeTextToUri(context, uri, payload)
                 scope.launch {
                     snackbarHostState.showSnackbar(
-                        if (ok) {
-                            if (isEnc) "Sauvegarde JSON chiffrée (AES-256-GCM) enregistrée !"
-                            else "Fichier JSON sauvegardé (non chiffré) !"
-                        } else "Erreur lors de l'enregistrement"
+                        if (ok) "Sauvegarde JSON chiffrée (AES-256-GCM) enregistrée !"
+                        else "Erreur lors de l'enregistrement"
                     )
                 }
             }.onFailure { err ->
                 scope.launch {
                     snackbarHostState.showSnackbar(
-                        "Échec du chiffrement : ${err.localizedMessage ?: "aucun fichier écrit par sécurité."}"
+                        "Échec du chiffrement : ${err.localizedMessage ?: "mot de passe (10+ car.) requis — aucun fichier écrit."}"
                     )
                 }
             }
@@ -705,6 +694,7 @@ fun MainFeatureScreen(
     val isMoonshineListening by moonshineController.isListening.collectAsStateWithLifecycle()
     val moonshineLiveTranscript by moonshineController.liveTranscript.collectAsStateWithLifecycle()
     val moonshineWaveformLevels by moonshineController.waveformLevels.collectAsStateWithLifecycle()
+    val isVoiceOnDevice by moonshineController.isUsingOnDeviceRecognizer.collectAsStateWithLifecycle()
     var activeBudgetQueryAnswer by remember { mutableStateOf<VoiceBatchParseResult.BudgetQuery?>(null) }
 
     DisposableEffect(moonshineController) {
@@ -884,6 +874,7 @@ fun MainFeatureScreen(
                                 state = state,
                                 liveTranscript = moonshineLiveTranscript,
                                 waveformLevels = moonshineWaveformLevels,
+                                isUsingOnDeviceRecognizer = isVoiceOnDevice,
                                 onTranscriptChange = { moonshineController.updateTranscriptManual(it) },
                                 onCommit = { commitMoonshineWalkieTalkie() },
                                 onCancel = { moonshineController.cancelListening() }
@@ -937,6 +928,25 @@ fun MainFeatureScreen(
                         contentAlignment = Alignment.TopCenter
                     ) {
                         Column(modifier = Modifier.widthIn(max = 620.dp)) {
+                            if (BuildConfig.DEBUG) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = AccentAmber.copy(alpha = 0.16f),
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                                        .testTag("debug_build_warning_banner")
+                                ) {
+                                    Text(
+                                        text = "Debug build — not secure",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentAmber,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
                             val currentError = state.errorMessage
                             if (!currentError.isNullOrBlank()) {
                                 Surface(
@@ -1330,8 +1340,16 @@ fun MainFeatureScreen(
                                             activeSheet = ActiveSheet.RestoreBackup
                                         },
                                         onExportJsonFile = { pwd ->
-                                            pendingBackupPassword = pwd
-                                            exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
+                                            if (pwd.trim().length < AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH) {
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        "Mot de passe de 10+ caractères requis pour exporter un JSON chiffré."
+                                                    )
+                                                }
+                                            } else {
+                                                pendingBackupPassword = pwd
+                                                exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
+                                            }
                                         },
                                         onExportCsvFile = {
                                             exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")
@@ -1504,8 +1522,16 @@ fun MainFeatureScreen(
                         }
                     },
                     onExportJsonFile = { pwd ->
-                        pendingBackupPassword = pwd
-                        exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
+                        if (pwd.trim().length < AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    "Mot de passe de 10+ caractères requis pour exporter un JSON chiffré."
+                                )
+                            }
+                        } else {
+                            pendingBackupPassword = pwd
+                            exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
+                        }
                     },
                     onExportCsvFile = {
                         exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")

@@ -96,16 +96,90 @@ import kotlinx.coroutines.delay
  * Captures expenses by Moonshine Voice, Compact Keypad, or 1-Tap Preset without opening `MainActivity`,
  * updates `WidgetSnapshot` + Firestore offline cache immediately, shows a 5-second Undo bar, and finishes.
  */
+/**
+ * S2: 60-second identical-payload replay guard preventing duplicate saves from replayed
+ * external intents or rapid double taps.
+ */
+object QuickCaptureReplayGuard {
+    const val REPLAY_WINDOW_MS: Long = 60_000L
+
+    private val lock = Any()
+    private val recentPayloads = LinkedHashMap<String, Long>()
+
+    fun buildPayloadKey(items: List<VoiceParsedTransaction>): String {
+        return items.joinToString("|") { item ->
+            val amtCents = kotlin.math.round(item.amount * 100.0).toLong()
+            val normDesc = item.description.trim().lowercase(java.util.Locale.ROOT)
+            "${item.txType.lowercase(java.util.Locale.ROOT)}:$amtCents:$normDesc"
+        }
+    }
+
+    /**
+     * Returns true if this batch has NOT been committed within the last [REPLAY_WINDOW_MS],
+     * and records it; returns false if it is an identical replay within 60 seconds.
+     */
+    fun tryConsumeBatch(
+        items: List<VoiceParsedTransaction>,
+        nowElapsedMs: Long = android.os.SystemClock.elapsedRealtime()
+    ): Boolean {
+        if (items.isEmpty()) return false
+        val key = buildPayloadKey(items)
+        synchronized(lock) {
+            val cutoff = nowElapsedMs - REPLAY_WINDOW_MS
+            val iter = recentPayloads.entries.iterator()
+            while (iter.hasNext()) {
+                val entry = iter.next()
+                if (entry.value < cutoff || entry.value > nowElapsedMs) {
+                    iter.remove()
+                }
+            }
+            val existing = recentPayloads[key]
+            if (existing != null && (nowElapsedMs - existing) < REPLAY_WINDOW_MS) {
+                return false
+            }
+            recentPayloads[key] = nowElapsedMs
+            while (recentPayloads.size > 64) {
+                val oldestKey = recentPayloads.keys.firstOrNull() ?: break
+                recentPayloads.remove(oldestKey)
+            }
+            return true
+        }
+    }
+
+    internal fun resetForTest() {
+        synchronized(lock) {
+            recentPayloads.clear()
+        }
+    }
+}
+
 class QuickCaptureActivity : FragmentActivity() {
+
+    companion object {
+        const val EXTRA_CONFIRM_REQUIRED = "extra_confirm_required"
+        const val EXTRA_FROM_EXTERNAL = "extra_from_external"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // S10: Prevent screenshots / Recents thumbnail leakage on QuickCapture overlay
+        AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
 
         val launchedViaVoiceAlias = intent?.component?.className?.endsWith("MasroufiVoiceLauncherAlias") == true
         val rawAction = intent?.action
-        val presetName = intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_NAME).orEmpty()
-        val presetAmount = intent?.getDoubleExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, 0.0) ?: 0.0
-        val presetEnvelope = intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE).orEmpty()
+        val presetName = AssistantEntryValidator.sanitizeText(
+            intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_NAME)
+        )
+        val rawPresetAmount = intent?.getDoubleExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, 0.0) ?: 0.0
+        val presetAmount = if (rawPresetAmount.isFinite() && rawPresetAmount > 0.0 && rawPresetAmount <= AssistantEntryValidator.MAX_AMOUNT) {
+            rawPresetAmount
+        } else {
+            0.0
+        }
+        val presetEnvelope = AssistantEntryValidator.sanitizeText(
+            intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE)
+        )
+        val fromExternal = intent?.getBooleanExtra(EXTRA_FROM_EXTERNAL, false) ?: false
 
         setContent {
             val context = LocalContext.current
@@ -118,33 +192,41 @@ class QuickCaptureActivity : FragmentActivity() {
             }
             val resolvedAction = remember(assistantResolution) {
                 when {
-                    assistantResolution is AssistantExpenseResolution.AutoLoggedBatch -> "assistant_auto"
+                    assistantResolution is AssistantExpenseResolution.AutoLoggedBatch -> "confirm_batch"
                     assistantResolution is AssistantExpenseResolution.OpenVoiceCapture -> MasroufiAppWidget.ACTION_QUICK_VOICE
                     assistantResolution is AssistantExpenseResolution.OpenKeypadCapture -> MasroufiAppWidget.ACTION_QUICK_ADD
                     launchedViaVoiceAlias -> MasroufiAppWidget.ACTION_QUICK_VOICE
                     rawAction == MasroufiAppWidget.ACTION_QUICK_VOICE -> MasroufiAppWidget.ACTION_QUICK_VOICE
-                    rawAction == MasroufiAppWidget.ACTION_QUICK_PRESET -> MasroufiAppWidget.ACTION_QUICK_PRESET
+                    rawAction == MasroufiAppWidget.ACTION_QUICK_PRESET -> "confirm_preset"
                     rawAction == MasroufiAppWidget.ACTION_QUICK_ADD -> MasroufiAppWidget.ACTION_QUICK_ADD
                     else -> MasroufiAppWidget.ACTION_QUICK_ADD
                 }
             }
             val assistantAutoItems = remember(assistantResolution) {
-                (assistantResolution as? AssistantExpenseResolution.AutoLoggedBatch)?.items ?: emptyList()
+                (assistantResolution as? AssistantExpenseResolution.AutoLoggedBatch)?.items
+                    ?.filter { it.amount > 0.0 && it.amount <= AssistantEntryValidator.MAX_AMOUNT }
+                    ?: emptyList()
             }
 
             val systemInDark = androidx.compose.foundation.isSystemInDarkTheme()
             val effectiveIsDark = snapshot.resolveEffectiveIsDark(systemInDark)
-            val effectiveSnapshot = remember(snapshot, effectiveIsDark) {
-                snapshot.copy(isDarkTheme = effectiveIsDark)
+            val appLockActive = remember { AppSecurityManager.isAppLockEnabled(context) }
+            val allowQuickCaptureWhenLocked = remember { AppSecurityManager.isQuickCaptureAllowedWhenLocked(context) }
+            val effectiveSnapshot = remember(snapshot, effectiveIsDark, appLockActive) {
+                snapshot.copy(
+                    isDarkTheme = effectiveIsDark,
+                    // S2: Never leak balances, usual amounts, or history while app lock is on
+                    hideAmounts = snapshot.hideAmounts || appLockActive
+                )
             }
 
             MasroufiTheme(
                 darkTheme = effectiveIsDark,
                 accentPalette = effectiveSnapshot.accentPalette
             ) {
-                val requiresPinUnlock = remember {
-                    AppSecurityManager.isAppLockEnabled(context) &&
-                        !AppSecurityManager.isQuickCaptureAllowedWhenLocked(context)
+                // S2: External Assistant intents always require unlock when app lock is enabled
+                val requiresPinUnlock = remember(appLockActive, allowQuickCaptureWhenLocked, fromExternal) {
+                    appLockActive && (!allowQuickCaptureWhenLocked || fromExternal)
                 }
                 var isUnlocked by remember { mutableStateOf(!requiresPinUnlock) }
 
@@ -163,6 +245,7 @@ class QuickCaptureActivity : FragmentActivity() {
                         presetEnvelope = presetEnvelope,
                         assistantAutoItems = assistantAutoItems,
                         snapshot = effectiveSnapshot,
+                        isLockedPrivacyMode = appLockActive && allowQuickCaptureWhenLocked && !fromExternal,
                         onCloseActivity = { finish() }
                     )
                 }
@@ -179,6 +262,7 @@ fun QuickCaptureOverlayContent(
     presetEnvelope: String,
     assistantAutoItems: List<VoiceParsedTransaction> = emptyList(),
     snapshot: WidgetSnapshot,
+    isLockedPrivacyMode: Boolean = false,
     onCloseActivity: () -> Unit
 ) {
     val context = LocalContext.current
@@ -187,18 +271,50 @@ fun QuickCaptureOverlayContent(
     val cur = snapshot.currencySymbol.ifBlank { "DH" }
     val isDark = snapshot.isDarkTheme
 
+    val presetPendingItems = remember(presetName, presetAmount, presetEnvelope, snapshot) {
+        if (presetAmount > 0.0) {
+            val envObj = snapshot.envelopes.find { it.key == presetEnvelope }
+            val catLabel = envObj?.name ?: DefaultCategoryResolver.resolveTransactionCategoryDisplay(
+                presetEnvelope,
+                presetEnvelope,
+                emptyList(),
+                snapshot.language
+            )
+            listOf(
+                VoiceParsedTransaction(
+                    rawTranscript = "$presetName $presetAmount",
+                    amount = presetAmount,
+                    description = presetName.ifBlank { catLabel },
+                    envelopeKey = presetEnvelope.ifBlank { "cafe" },
+                    categoryName = catLabel,
+                    txType = "expense"
+                )
+            )
+        } else {
+            emptyList()
+        }
+    }
+
+    val confirmCandidateItems = remember(initialAction, assistantAutoItems, presetPendingItems) {
+        when (initialAction) {
+            "confirm_batch", "assistant_auto" -> assistantAutoItems
+            "confirm_preset", MasroufiAppWidget.ACTION_QUICK_PRESET -> presetPendingItems
+            else -> emptyList()
+        }
+    }
+
     var mode by remember {
         mutableStateOf(
-            when (initialAction) {
-                "assistant_auto" -> "assistant_auto"
-                MasroufiAppWidget.ACTION_QUICK_VOICE -> "voice"
-                MasroufiAppWidget.ACTION_QUICK_PRESET -> "preset"
+            when {
+                confirmCandidateItems.isNotEmpty() -> "confirm"
+                initialAction == MasroufiAppWidget.ACTION_QUICK_VOICE -> "voice"
                 else -> "keypad"
             }
         )
     }
 
     var savedBatch by remember { mutableStateOf<List<TransactionItem>>(emptyList()) }
+    var replayNotice by remember { mutableStateOf(false) }
     var undoSecondsRemaining by remember { mutableIntStateOf(0) }
 
     val voiceController = remember(context) {
@@ -227,44 +343,14 @@ fun QuickCaptureOverlayContent(
         }
     }
 
-    // Start Moonshine listening immediately in Voice mode, or auto-log preset / Google Assistant batch
+    // S2: Never auto-save external Assistant or preset intents. Only start listening in voice mode.
     LaunchedEffect(mode) {
-        if (mode == "assistant_auto" && savedBatch.isEmpty() && assistantAutoItems.isNotEmpty()) {
-            val created = MasroufiWidgetStore.recordQuickCaptureTransactions(
-                context = context,
-                items = assistantAutoItems
-            )
-            savedBatch = created
-            undoSecondsRemaining = 5
-        } else if (mode == "voice" && savedBatch.isEmpty()) {
+        if (mode == "voice" && savedBatch.isEmpty()) {
             if (MoonshineVoiceController.hasRecordAudioPermission(context)) {
                 voiceController.startListening(snapshot.language)
             } else {
                 audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
-        } else if (mode == "preset" && savedBatch.isEmpty() && presetAmount > 0.0) {
-            val envObj = snapshot.envelopes.find { it.key == presetEnvelope }
-            val catLabel = envObj?.name ?: DefaultCategoryResolver.resolveTransactionCategoryDisplay(
-                presetEnvelope,
-                presetEnvelope,
-                emptyList(),
-                snapshot.language
-            )
-            val created = MasroufiWidgetStore.recordQuickCaptureTransactions(
-                context = context,
-                items = listOf(
-                    VoiceParsedTransaction(
-                        rawTranscript = "$presetName $presetAmount",
-                        amount = presetAmount,
-                        description = presetName.ifBlank { catLabel },
-                        envelopeKey = presetEnvelope.ifBlank { "cafe" },
-                        categoryName = catLabel,
-                        txType = "expense"
-                    )
-                )
-            )
-            savedBatch = created
-            undoSecondsRemaining = 5
         }
     }
 
@@ -399,42 +485,73 @@ fun QuickCaptureOverlayContent(
                         }
                     }
 
-                    if (mode == "voice") {
+                    if (mode == "confirm" && confirmCandidateItems.isNotEmpty()) {
+                        QuickCaptureConfirmBatchSection(
+                            items = confirmCandidateItems,
+                            currencySymbol = cur,
+                            hideAmounts = snapshot.hideAmounts,
+                            replayBlocked = replayNotice,
+                            strings = strings,
+                            onConfirmSave = {
+                                if (QuickCaptureReplayGuard.tryConsumeBatch(confirmCandidateItems)) {
+                                    replayNotice = false
+                                    val created = MasroufiWidgetStore.recordQuickCaptureTransactions(
+                                        context = context,
+                                        items = confirmCandidateItems
+                                    )
+                                    if (created.isNotEmpty()) {
+                                        savedBatch = created
+                                    }
+                                } else {
+                                    replayNotice = true
+                                }
+                            },
+                            onCancel = onCloseActivity
+                        )
+                    } else if (mode == "voice") {
+                        val isVoiceOnDevice by voiceController.isUsingOnDeviceRecognizer.collectAsState()
                         QuickCaptureVoiceSection(
                             snapshot = snapshot,
                             liveTranscript = liveTranscript,
                             waveformLevels = waveformLevels,
                             isListening = isListening,
+                            isUsingOnDeviceRecognizer = isVoiceOnDevice,
                             hasAudioPerm = hasAudioPerm,
                             onRequestPerm = { audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                             onTranscriptChange = { voiceController.updateTranscriptManual(it) },
                             onCommitItems = { parsedItems ->
                                 voiceController.cancelListening()
-                                val created = MasroufiWidgetStore.recordQuickCaptureTransactions(context, parsedItems)
-                                if (created.isNotEmpty()) {
-                                    savedBatch = created
+                                if (QuickCaptureReplayGuard.tryConsumeBatch(parsedItems)) {
+                                    val created = MasroufiWidgetStore.recordQuickCaptureTransactions(context, parsedItems)
+                                    if (created.isNotEmpty()) {
+                                        savedBatch = created
+                                    }
                                 }
                             }
                         )
                     } else {
                         QuickCaptureKeypadSection(
                             snapshot = snapshot,
+                            isLockedPrivacyMode = isLockedPrivacyMode,
                             onCommitExpense = { amount, envKey, catName, note ->
-                                val created = MasroufiWidgetStore.recordQuickCaptureTransactions(
-                                    context = context,
-                                    items = listOf(
-                                        VoiceParsedTransaction(
-                                            rawTranscript = "$catName $amount",
-                                            amount = amount,
-                                            description = note.ifBlank { catName },
-                                            envelopeKey = envKey,
-                                            categoryName = catName,
-                                            txType = "expense"
-                                        )
+                                val item = listOf(
+                                    VoiceParsedTransaction(
+                                        rawTranscript = "$catName $amount",
+                                        amount = amount,
+                                        description = note.ifBlank { catName },
+                                        envelopeKey = envKey,
+                                        categoryName = catName,
+                                        txType = "expense"
                                     )
                                 )
-                                if (created.isNotEmpty()) {
-                                    savedBatch = created
+                                if (QuickCaptureReplayGuard.tryConsumeBatch(item)) {
+                                    val created = MasroufiWidgetStore.recordQuickCaptureTransactions(
+                                        context = context,
+                                        items = item
+                                    )
+                                    if (created.isNotEmpty()) {
+                                        savedBatch = created
+                                    }
                                 }
                             }
                         )
@@ -446,11 +563,119 @@ fun QuickCaptureOverlayContent(
 }
 
 @Composable
+private fun QuickCaptureConfirmBatchSection(
+    items: List<VoiceParsedTransaction>,
+    currencySymbol: String,
+    hideAmounts: Boolean,
+    replayBlocked: Boolean,
+    strings: com.example.domain.AppStrings,
+    onConfirmSave: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val total = PayCycleEngine.roundMoney(items.sumOf { it.amount })
+    Column(
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("qc_confirm_batch_section")
+    ) {
+        Text(
+            text = strings.addOperationTitle,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.ExtraBold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        items.forEachIndexed { idx, item ->
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("qc_confirm_item_$idx")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.description,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = item.categoryName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = "${PayCycleEngine.formatAmountOrMask(item.amount, hideAmounts)} $currencySymbol",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = AccentCoral
+                    )
+                }
+            }
+        }
+        if (replayBlocked) {
+            Text(
+                text = "Déjà enregistré il y a moins de 60s.",
+                style = MaterialTheme.typography.labelSmall,
+                color = AccentAmber,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.testTag("qc_replay_blocked_notice")
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedButton(
+                onClick = onCancel,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("qc_confirm_cancel_btn")
+            ) {
+                Text(strings.cancelBtn, fontWeight = FontWeight.Bold)
+            }
+            Button(
+                onClick = onConfirmSave,
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = AccentEmerald,
+                    contentColor = Color.White
+                ),
+                modifier = Modifier
+                    .weight(1.4f)
+                    .testTag("qc_confirm_external_save_btn")
+            ) {
+                Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = "${strings.saveBtn} (${PayCycleEngine.formatAmountOrMask(total, hideAmounts)} $currencySymbol)",
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun QuickCaptureVoiceSection(
     snapshot: WidgetSnapshot,
     liveTranscript: String,
     waveformLevels: List<Float>,
     isListening: Boolean,
+    isUsingOnDeviceRecognizer: Boolean = false,
     hasAudioPerm: Boolean,
     onRequestPerm: () -> Unit,
     onTranscriptChange: (String) -> Unit,
@@ -467,7 +692,7 @@ private fun QuickCaptureVoiceSection(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // Moonshine badge
+        // S7: Honest voice engine badge
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -478,8 +703,18 @@ private fun QuickCaptureVoiceSection(
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(15.dp)
             )
+            val voiceBadge = if (isUsingOnDeviceRecognizer) {
+                when (snapshot.language) {
+                    "ar" -> "التعرف الصوتي · على الجهاز"
+                    "darija" -> "الصوت · فالتيليفون"
+                    "en" -> "Voice · On-Device"
+                    else -> "Voix · Sur l'appareil"
+                }
+            } else {
+                strings.moonshineBadgeLabel
+            }
             Text(
-                text = strings.moonshineBadgeLabel,
+                text = voiceBadge,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.ExtraBold
@@ -650,6 +885,7 @@ private fun QuickCaptureVoiceSection(
 @Composable
 private fun QuickCaptureKeypadSection(
     snapshot: WidgetSnapshot,
+    isLockedPrivacyMode: Boolean = false,
     onCommitExpense: (Double, String, String, String) -> Unit
 ) {
     val context = LocalContext.current
@@ -700,7 +936,11 @@ private fun QuickCaptureKeypadSection(
         }
     }
 
-    val showTimeAwareRow = snapshot.smartSuggestionsEnabled && rawDigits.isEmpty() && snapshot.usualShortcuts.isNotEmpty()
+    // S2: When Quick Capture is opened while app lock is on, hide usual spend history & balances
+    val showTimeAwareRow = !isLockedPrivacyMode &&
+        snapshot.smartSuggestionsEnabled &&
+        rawDigits.isEmpty() &&
+        snapshot.usualShortcuts.isNotEmpty()
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         // Amount display + Live "Can I afford this?" line
@@ -741,7 +981,7 @@ private fun QuickCaptureKeypadSection(
                         )
                     }
                 }
-                if (snapshot.smartSuggestionsEnabled && parsedAmount > 0.0) {
+                if (!isLockedPrivacyMode && snapshot.smartSuggestionsEnabled && parsedAmount > 0.0) {
                     val impact = PayCycleEngine.computePurchaseImpact(
                         amount = parsedAmount,
                         safePool = snapshot.effectiveSafePool(),
