@@ -469,7 +469,7 @@ fun VoiceDarijaEntrySection(
                             phraseInput = sample
                             applyPhrase(sample)
                         },
-                        label = { Text("🎤 $sample", fontSize = 11.5.sp) },
+                        label = { Text("🎤 $sample", fontSize = 12.sp) },
                         modifier = Modifier.testTag("voice_sample_chip_$idx")
                     )
                 }
@@ -522,6 +522,23 @@ fun VoiceDarijaEntrySection(
     }
 }
 
+/**
+ * Evaluates simple keypad calculator expressions such as "12+8" or "45.5+14,5" into their sum (60.0),
+ * falling back to [PayCycleEngine.parseFlexibleAmount] for plain numbers.
+ */
+fun evaluateKeypadExpression(raw: String): Double {
+    val cleaned = raw.trim()
+    if (cleaned.isEmpty()) return 0.0
+    if (cleaned.contains("+")) {
+        return cleaned
+            .split("+")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .sumOf { PayCycleEngine.parseFlexibleAmount(it) }
+    }
+    return PayCycleEngine.parseFlexibleAmount(cleaned)
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LargeNumericKeypadSection(
@@ -550,10 +567,18 @@ fun LargeNumericKeypadSection(
 ) {
     val haptics = LocalHapticFeedback.current
     val strings = remember(language) { Translations.forLang(language) }
-    val parsedExpenseAmount = effectiveExpenseAmount ?: PayCycleEngine.parseFlexibleAmount(amountText)
+    val parsedExpenseAmount = effectiveExpenseAmount ?: evaluateKeypadExpression(amountText)
     val isAmountEmpty = amountText.trim().let { it.isEmpty() || it == "0" }
     val showTimeAwareRow = smartSuggestionsEnabled && txType == "expense" && isAmountEmpty && timeAwareShortcuts.isNotEmpty() && onSelectTimeAwareShortcut != null
     var whyThisShortcut by remember { mutableStateOf<TimeAwareShortcut?>(null) }
+
+    fun formatEvaluatedValue(v: Double): String {
+        return if (v % 1.0 == 0.0) {
+            v.toInt().toString()
+        } else {
+            String.format(Locale.US, "%.2f", v)
+        }
+    }
 
     fun appendDigitOrDot(key: String) {
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -561,14 +586,26 @@ fun LargeNumericKeypadSection(
         when (key) {
             "C" -> onAmountChange("")
             "⌫" -> if (current.isNotEmpty()) onAmountChange(current.dropLast(1))
+            "=" -> {
+                val evaluated = evaluateKeypadExpression(current)
+                if (evaluated > 0.0) {
+                    onAmountChange(formatEvaluatedValue(evaluated))
+                }
+            }
+            "+" -> {
+                if (current.isNotEmpty() && !current.endsWith("+") && !current.endsWith(".")) {
+                    onAmountChange("$current+")
+                }
+            }
             "." -> {
-                if (!current.contains(".")) {
-                    onAmountChange(if (current.isEmpty()) "0." else "$current.")
+                val lastSegment = current.substringAfterLast("+")
+                if (!lastSegment.contains(".")) {
+                    onAmountChange(if (lastSegment.isEmpty()) "${current}0." else "$current.")
                 }
             }
             else -> {
                 val next = if (current == "0") key else current + key
-                if (next.length <= 10) {
+                if (next.length <= 16) {
                     onAmountChange(next)
                 }
             }
@@ -577,14 +614,9 @@ fun LargeNumericKeypadSection(
 
     fun addQuickIncrement(delta: Int) {
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-        val currentVal = PayCycleEngine.parseFlexibleAmount(amountText)
+        val currentVal = evaluateKeypadExpression(amountText)
         val nextVal = currentVal + delta
-        val formatted = if (nextVal % 1.0 == 0.0) {
-            nextVal.toInt().toString()
-        } else {
-            String.format(Locale.US, "%.2f", nextVal)
-        }
-        onAmountChange(formatted)
+        onAmountChange(formatEvaluatedValue(nextVal))
     }
 
     ExpressiveGlassCard(
@@ -885,6 +917,31 @@ fun LargeNumericKeypadSection(
                                 textAlign = TextAlign.Center
                             )
                         }
+                    }
+                }
+                val hasPlusExpr = amountText.contains("+") && !amountText.trim().endsWith("+")
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(12.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    accentBorderColor = MaterialTheme.colorScheme.primary,
+                    onClick = { appendDigitOrDot(if (hasPlusExpr) "=" else "+") },
+                    modifier = Modifier
+                        .weight(0.8f)
+                        .testTag("keypad_calc_plus_equals")
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (hasPlusExpr) "=" else "+",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
                 ExpressiveGlassSurface(
@@ -1561,7 +1618,7 @@ fun HouseholdInviteSectionCard(
                                 "en" -> "Partner code (e.g. MSR-AB12CD)"
                                 else -> "Code partenaire (ex: MSR-AB12CD)"
                             },
-                            fontSize = 11.sp
+                            fontSize = 12.sp
                         )
                     },
                     singleLine = true,
@@ -1598,7 +1655,7 @@ fun HouseholdInviteSectionCard(
                                 else -> "Inviter"
                             }
                         },
-                        fontSize = 11.5.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }

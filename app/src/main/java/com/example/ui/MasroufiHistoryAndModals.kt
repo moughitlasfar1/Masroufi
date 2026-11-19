@@ -171,7 +171,7 @@ fun AddFinancialItemSheet(
                                 amountText = tpl.defaultAmount.toInt().toString()
                                 dayOrTurnText = tpl.defaultDueDay.toString()
                             },
-                            label = { Text("${tpl.emoji} ${tpl.name} (J${tpl.defaultDueDay})", fontSize = 11.sp) }
+                            label = { Text("${tpl.emoji} ${tpl.name} (J${tpl.defaultDueDay})", fontSize = 12.sp) }
                         )
                     }
                 }
@@ -196,7 +196,7 @@ fun AddFinancialItemSheet(
                                 amountText = tpl.targetAmount.toInt().toString()
                                 dateOrDirText = tpl.targetIsoDate
                             },
-                            label = { Text("${tpl.emoji} ${tpl.name}", fontSize = 11.sp) }
+                            label = { Text("${tpl.emoji} ${tpl.name}", fontSize = 12.sp) }
                         )
                     }
                 }
@@ -248,7 +248,7 @@ fun AddFinancialItemSheet(
                                     else -> "#38BDF8"
                                 }
                             },
-                            label = { Text(label, fontSize = 11.5.sp) }
+                            label = { Text(label, fontSize = 12.sp) }
                         )
                     }
                 }
@@ -566,7 +566,7 @@ fun RestoreJsonSheet(
                     Text(
                         text = "Une capture Rollback est enregistrée automatiquement avant la restauration",
                         style = MaterialTheme.typography.labelSmall,
-                        fontSize = 10.5.sp,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }

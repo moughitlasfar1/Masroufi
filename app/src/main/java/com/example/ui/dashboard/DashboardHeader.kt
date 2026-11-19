@@ -151,7 +151,7 @@ fun DashboardHeader(
                                 Text(
                                     text = badgeLabel,
                                     style = MaterialTheme.typography.labelSmall,
-                                    fontSize = 10.sp,
+                                    fontSize = 12.sp,
                                     color = badgeColor,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,

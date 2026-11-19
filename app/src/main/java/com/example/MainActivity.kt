@@ -812,7 +812,8 @@ fun MainFeatureScreen(
 
     MasroufiTheme(
         darkTheme = state.profile.isDarkTheme,
-        accentPalette = state.customPrefs.accentPalette
+        accentPalette = state.customPrefs.accentPalette,
+        language = state.profile.language
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
             if (appLockEnabled && !isSessionUnlocked) {

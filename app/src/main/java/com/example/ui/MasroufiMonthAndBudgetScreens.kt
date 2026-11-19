@@ -371,7 +371,7 @@ fun MonthScreen(
                                     Text(
                                         text = "${strings.currentShortLabel}: ${fmt(curSpent)} $cur · ${strings.previousShortLabel}: ${fmt(prevSpent)} $cur",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        fontSize = 11.5.sp,
+                                        fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -492,7 +492,7 @@ fun MonthScreen(
                                             ) {
                                                 Text(
                                                     text = strings.notABillBtn,
-                                                    fontSize = 11.sp,
+                                                    fontSize = 12.sp,
                                                     fontWeight = FontWeight.SemiBold,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
@@ -505,7 +505,7 @@ fun MonthScreen(
                                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                                 modifier = Modifier.testTag("btn_convert_sub_${sub.name.take(10)}")
                                             ) {
-                                                Text(strings.addBillBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                Text(strings.addBillBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
@@ -636,7 +636,7 @@ fun MonthScreen(
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(strings.shareBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.shareBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -899,7 +899,7 @@ fun MonthScreen(
                                             onClick = { onContributeSeasonal(item) },
                                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                                         ) {
-                                            Text("+ 200 $cur", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text("+ 200 $cur", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         }
                                         IconButton(onClick = { onDeleteItem(item.id) }) {
                                             Icon(
@@ -1316,10 +1316,12 @@ fun BudgetAndDaretScreen(
                 val isDark = state.profile.isDarkTheme
                 val expColor = semanticExpenseColor(isDark)
                 state.envelopes.forEach { envStatus ->
-                    val envColor = distinctEnvelopeColor(
-                        envStatus.config.key.ifBlank { envStatus.config.nameFr },
+                    val envLabel = envStatus.config.localizedName(state.profile.language)
+                    val catVisual = com.example.ui.theme.categoryVisualStyle(
+                        "${envStatus.config.key} $envLabel",
                         isDark
                     )
+                    val envColor = catVisual.foreground
                     val activeAccent = if (envStatus.isOver90Percent) expColor else envColor
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(22.dp),
@@ -1337,17 +1339,25 @@ fun BudgetAndDaretScreen(
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Box(
                                         modifier = Modifier
-                                            .size(10.dp)
-                                            .clip(CircleShape)
-                                            .background(envColor)
-                                    )
+                                            .size(30.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(catVisual.container),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = catVisual.icon,
+                                            contentDescription = null,
+                                            tint = envColor,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                     Text(
-                                        text = envStatus.config.localizedName(state.profile.language),
+                                        text = envLabel,
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.onSurface
@@ -1533,13 +1543,13 @@ fun BudgetAndDaretScreen(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilledTonalButton(onClick = { onOpenNewGoal(null) }) {
-                            Text(strings.addGoalBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.addGoalBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         FilledTonalButton(
                             onClick = { onOpenNewBill(null) },
                             modifier = Modifier.testTag("btn_open_new_bill")
                         ) {
-                            Text(strings.addBillBtn, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.addBillBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1614,7 +1624,7 @@ fun BudgetAndDaretScreen(
                                 Text(
                                     text = "-${fmt(bill.amount)} $cur · J${bill.dayOrTurn}",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    fontSize = 11.5.sp,
+                                    fontSize = 12.sp,
                                     color = if (isPaid) incColor else expColor
                                 )
                             }
@@ -1624,7 +1634,7 @@ fun BudgetAndDaretScreen(
                                         onClick = { onPayBill(bill) },
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
                                     ) {
-                                        Text(strings.payBillBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(strings.payBillBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 } else {
                                     Text(
@@ -1682,7 +1692,7 @@ fun BudgetAndDaretScreen(
                                     onClick = { onContributeGoal(goal) },
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
-                                    Text("+ 200 $cur", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    Text("+ 200 $cur", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 IconButton(onClick = { onDeleteItem(goal.id) }) {
                                     Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = "Delete")
@@ -1776,7 +1786,7 @@ fun BudgetAndDaretScreen(
                                         Text(
                                             text = "-${fmt(daret.amount)} $cur/m · ${daret.extraInt}/$totalMembers · $cleanPayoutDate",
                                             style = MaterialTheme.typography.bodyMedium,
-                                            fontSize = 11.5.sp,
+                                            fontSize = 12.sp,
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                         Text(
@@ -1791,7 +1801,7 @@ fun BudgetAndDaretScreen(
                                             onClick = { onPayDaretRound(daret) },
                                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
                                         ) {
-                                            Text(text = strings.daretPayRound, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                            Text(text = strings.daretPayRound, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         }
                                         IconButton(
                                             onClick = {
@@ -1854,13 +1864,13 @@ fun BudgetAndDaretScreen(
                                             FilterChip(
                                                 selected = selectedCollectAcc == "acc_bank",
                                                 onClick = { selectedCollectAcc = "acc_bank" },
-                                                label = { Text(strings.daretCollectAccountBank, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                                label = { Text(strings.daretCollectAccountBank, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                                                 modifier = Modifier.testTag("daret_collect_acc_bank_${daret.id}")
                                             )
                                             FilterChip(
                                                 selected = selectedCollectAcc == "acc_cash",
                                                 onClick = { selectedCollectAcc = "acc_cash" },
-                                                label = { Text(strings.daretCollectAccountCash, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                                label = { Text(strings.daretCollectAccountCash, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                                                 modifier = Modifier.testTag("daret_collect_acc_cash_${daret.id}")
                                             )
                                         }
@@ -1876,7 +1886,7 @@ fun BudgetAndDaretScreen(
                                             ) {
                                                 Text(
                                                     text = strings.daretCollectPotBtn,
-                                                    fontSize = 11.5.sp,
+                                                    fontSize = 12.sp,
                                                     fontWeight = FontWeight.ExtraBold
                                                 )
                                             }
@@ -1891,7 +1901,7 @@ fun BudgetAndDaretScreen(
                                             ) {
                                                 Text(
                                                     text = strings.daretCollectPotBtn,
-                                                    fontSize = 11.5.sp,
+                                                    fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             }
@@ -1933,7 +1943,7 @@ fun BudgetAndDaretScreen(
                                         modifier = Modifier.size(15.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
-                                    Text(strings.splitBillBtnLabel, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    Text(strings.splitBillBtnLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                                 FilledTonalButton(
                                     onClick = { onOpenNewDebt(null) },

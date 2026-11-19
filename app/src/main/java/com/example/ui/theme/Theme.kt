@@ -1,10 +1,14 @@
 package com.example.ui.theme
 
+import android.os.Build
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
 import kotlin.math.min
@@ -43,6 +47,12 @@ data class AccentPaletteSpec(
             "darija" -> "ذهبي"
             "en" -> "Gold"
             else -> "Or"
+        }
+        "dynamic" -> when (lang) {
+            "ar" -> "ديناميكي (Material You)"
+            "darija" -> "ديناميكي (Material You)"
+            "en" -> "Material You"
+            else -> "Material You"
         }
         else -> labelFr
     }
@@ -131,8 +141,8 @@ fun wcagContrastRatio(foreground: Color, background: Color): Double {
 
 val ExpressiveShapes = androidx.compose.material3.Shapes(
     extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
-    small = androidx.compose.foundation.shape.RoundedCornerShape(14.dp),
-    medium = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+    small = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+    medium = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
     large = androidx.compose.foundation.shape.RoundedCornerShape(28.dp),
     extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(36.dp)
 )
@@ -141,11 +151,17 @@ val ExpressiveShapes = androidx.compose.material3.Shapes(
 fun MasroufiTheme(
     darkTheme: Boolean = false,
     accentPalette: String = "majorelle",
+    language: String = "fr",
     content: @Composable () -> Unit
 ) {
+    val context = LocalContext.current
+    val useDynamicColor = accentPalette.trim().equals("dynamic", ignoreCase = true) &&
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val spec = paletteForKey(accentPalette)
-    val colorScheme = if (darkTheme) {
-        darkColorScheme(
+    val colorScheme = when {
+        useDynamicColor && darkTheme -> dynamicDarkColorScheme(context)
+        useDynamicColor && !darkTheme -> dynamicLightColorScheme(context)
+        darkTheme -> darkColorScheme(
             primary = spec.primaryDark,
             onPrimary = spec.onPrimaryDark,
             primaryContainer = spec.primaryContainerDark,
@@ -181,8 +197,7 @@ fun MasroufiTheme(
             onError = Color(0xFF4C0519),
             onErrorContainer = Color(0xFFFFE4E6)
         )
-    } else {
-        lightColorScheme(
+        else -> lightColorScheme(
             primary = spec.primaryLight,
             onPrimary = Color.White,
             primaryContainer = spec.primaryContainerLight,
@@ -222,7 +237,7 @@ fun MasroufiTheme(
 
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = Typography,
+        typography = typographyForLanguage(language),
         shapes = ExpressiveShapes,
         content = content
     )

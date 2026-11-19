@@ -182,7 +182,7 @@ fun BankDetectionReviewSheet(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(strings.bankDetectBatteryTipsBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(strings.bankDetectBatteryTipsBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -253,7 +253,7 @@ fun BankDetectionReviewSheet(
                         ) {
                             Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(strings.bankDetectPostTestBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.bankDetectPostTestBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -394,7 +394,7 @@ fun BankDetectionReviewSheet(
                                         ) {
                                             Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(15.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text(strings.bankDetectConfirmBtn, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                            Text(strings.bankDetectConfirmBtn, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
                                         }
 
                                         FilledTonalButton(
@@ -405,14 +405,14 @@ fun BankDetectionReviewSheet(
                                         ) {
                                             Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text(strings.bankDetectEditBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text(strings.bankDetectEditBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         }
 
                                         OutlinedButton(
                                             onClick = { onIgnoreDetection(item) },
                                             modifier = Modifier.testTag("bank_detect_ignore_${item.id}")
                                         ) {
-                                            Text(strings.bankDetectIgnoreBtn, fontSize = 11.sp)
+                                            Text(strings.bankDetectIgnoreBtn, fontSize = 12.sp)
                                         }
                                     }
 
@@ -429,7 +429,7 @@ fun BankDetectionReviewSheet(
                                             ) {
                                                 Icon(Icons.Default.Block, contentDescription = null, modifier = Modifier.size(14.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
-                                                Text(strings.bankDetectIgnoreMerchantBtn, fontSize = 11.sp)
+                                                Text(strings.bankDetectIgnoreMerchantBtn, fontSize = 12.sp)
                                             }
                                         }
 
@@ -452,7 +452,7 @@ fun BankDetectionReviewSheet(
                                         ) {
                                             Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
                                             Spacer(modifier = Modifier.width(4.dp))
-                                            Text(strings.bankDetectCopyMaskedBtn, fontSize = 11.sp)
+                                            Text(strings.bankDetectCopyMaskedBtn, fontSize = 12.sp)
                                         }
                                     }
                                 }
@@ -501,7 +501,7 @@ fun BankDetectionReviewSheet(
                             },
                             modifier = Modifier.testTag("bank_detect_grant_access_btn")
                         ) {
-                            Text(strings.bankDetectGrantAccessBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(strings.bankDetectGrantAccessBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -515,7 +515,7 @@ fun BankDetectionReviewSheet(
                             onClick = { ManualSetup.openAppDetailsForRestrictedSettings(context) },
                             modifier = Modifier.testTag("bank_detect_open_app_info_btn")
                         ) {
-                            Text("Android 13+ Info", fontSize = 11.sp)
+                            Text("Android 13+ Info", fontSize = 12.sp)
                         }
 
                         if (shizukuAvailable) {
@@ -528,7 +528,7 @@ fun BankDetectionReviewSheet(
                                 },
                                 modifier = Modifier.testTag("bank_detect_shizuku_btn")
                             ) {
-                                Text(strings.bankDetectShizukuBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(strings.bankDetectShizukuBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -559,7 +559,7 @@ fun BankDetectionReviewSheet(
                             onClick = { showAllowlistPicker = !showAllowlistPicker },
                             modifier = Modifier.testTag("bank_detect_toggle_allowlist_btn")
                         ) {
-                            Text("(${allowlistPackages.size})", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("(${allowlistPackages.size})", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -578,7 +578,7 @@ fun BankDetectionReviewSheet(
                                         BankDetectionStore.setPackageAllowed(context, appOption.packageName, !selected)
                                         allowlistPackages = BankDetectionStore.getAllowedPackages(context)
                                     },
-                                    label = { Text(appOption.label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    label = { Text(appOption.label, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                                     modifier = Modifier.testTag("bank_detect_allowlist_chip_${appOption.packageName}")
                                 )
                             }

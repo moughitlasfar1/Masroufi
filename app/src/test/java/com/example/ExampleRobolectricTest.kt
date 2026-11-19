@@ -2531,5 +2531,89 @@ class ExampleRobolectricTest {
             assertTrue(s.bgPresetSahara.isNotBlank())
         }
     }
+
+    @Test
+    fun `UI UX Upgrade Phase 1 and Phase 2 typography, tokens, category visual tints, hero contextual status, and keypad calculator work accurately`() {
+        // 1. Prompt 1: Language-aware typography (PlusJakartaSans for FR/EN, ReadexProArabic for AR/Darija) & >=12sp minimum sizes
+        val typoFr = com.example.ui.theme.typographyForLanguage("fr")
+        val typoEn = com.example.ui.theme.typographyForLanguage("en")
+        val typoAr = com.example.ui.theme.typographyForLanguage("ar")
+        val typoDarija = com.example.ui.theme.typographyForLanguage("darija")
+
+        assertEquals(com.example.ui.theme.PlusJakartaSans, typoFr.bodyLarge.fontFamily)
+        assertEquals(com.example.ui.theme.PlusJakartaSans, typoEn.bodyLarge.fontFamily)
+        assertEquals(com.example.ui.theme.ReadexProArabic, typoAr.bodyLarge.fontFamily)
+        assertEquals(com.example.ui.theme.ReadexProArabic, typoDarija.bodyLarge.fontFamily)
+
+        // Minimum 12sp across all 15 slots, and 13sp for Arabic bodySmall
+        val allFrStyles = listOf(
+            typoFr.displayLarge, typoFr.displayMedium, typoFr.displaySmall,
+            typoFr.headlineLarge, typoFr.headlineMedium, typoFr.headlineSmall,
+            typoFr.titleLarge, typoFr.titleMedium, typoFr.titleSmall,
+            typoFr.bodyLarge, typoFr.bodyMedium, typoFr.bodySmall,
+            typoFr.labelLarge, typoFr.labelMedium, typoFr.labelSmall
+        )
+        allFrStyles.forEach { style ->
+            assertTrue("Font size ${style.fontSize.value}sp must be >= 12sp", style.fontSize.value >= 12f)
+        }
+        assertTrue(typoAr.bodySmall.fontSize.value >= 13f)
+        assertTrue(typoDarija.bodySmall.fontSize.value >= 13f)
+
+        // 2. Prompt 2: Design tokens (4/8/12/16/24/32dp spacing, corner radii, and 3 card tiers)
+        assertEquals(4f, com.example.ui.theme.MasroufiTokens.Spacing.xs.value, 0.01f)
+        assertEquals(8f, com.example.ui.theme.MasroufiTokens.Spacing.sm.value, 0.01f)
+        assertEquals(12f, com.example.ui.theme.MasroufiTokens.Spacing.md.value, 0.01f)
+        assertEquals(16f, com.example.ui.theme.MasroufiTokens.Spacing.lg.value, 0.01f)
+        assertEquals(24f, com.example.ui.theme.MasroufiTokens.Spacing.xl.value, 0.01f)
+        assertEquals(32f, com.example.ui.theme.MasroufiTokens.Spacing.xxl.value, 0.01f)
+        assertEquals(3, com.example.ui.theme.CardTier.values().size)
+
+        // 3. Prompt 3: Distinct category icons & soft tints in Light and Dark modes + neutral default
+        val foodLight = com.example.ui.theme.categoryVisualStyle("Alimentation & Courses", isDark = false)
+        val housingDark = com.example.ui.theme.categoryVisualStyle("Charges & Maison", isDark = true)
+        val transportAr = com.example.ui.theme.categoryVisualStyle("طاكسي وتنقل", isDark = false)
+        val cafeDarija = com.example.ui.theme.categoryVisualStyle("قهوة وخرجات", isDark = true)
+        val unknownCustom = com.example.ui.theme.categoryVisualStyle("My Custom Hobby", isDark = false)
+
+        assertEquals("food", foodLight.categoryKey)
+        assertEquals("housing", housingDark.categoryKey)
+        assertEquals("transport", transportAr.categoryKey)
+        assertEquals("leisure", cafeDarija.categoryKey)
+        assertEquals("default", unknownCustom.categoryKey)
+        assertNotEquals(foodLight.foreground, housingDark.foreground)
+        assertTrue(foodLight.container.alpha in 0.08f..0.25f)
+
+        // 4. Prompt 5: Hero contextual status line adapts across cycle states and respects hideAmounts
+        val emptyState = com.example.ui.DashboardState(
+            profile = UserProfile(language = "fr"),
+            cycleTransactions = emptyList()
+        )
+        assertTrue(com.example.ui.computeHeroContextualStatusLine(emptyState, "DH").contains("+"))
+
+        val txSample = listOf(TransactionItem(id = "t1", type = "expense", amount = 50.0, isoDate = "2026-05-10"))
+        val overBudgetState = com.example.ui.DashboardState(
+            profile = UserProfile(language = "en"),
+            cycleTransactions = txSample,
+            remainingBudget = -120.0
+        )
+        assertTrue(com.example.ui.computeHeroContextualStatusLine(overBudgetState, "DH").contains("attention"))
+
+        val midCycleMasked = com.example.ui.DashboardState(
+            profile = UserProfile(language = "fr"),
+            cycleTransactions = txSample,
+            remainingBudget = 1200.0,
+            daysRemaining = 15,
+            dailyAverageSpend = 95.0,
+            safeToSpendToday = 80.0,
+            hideAmounts = true
+        )
+        assertTrue(com.example.ui.computeHeroContextualStatusLine(midCycleMasked, "DH").contains("••••"))
+
+        // 5. Prompt 7: Calculator input expression evaluation (12+8 -> 20.0, comma/dot decimals)
+        assertEquals(20.0, com.example.ui.evaluateKeypadExpression("12+8"), 0.001)
+        assertEquals(60.0, com.example.ui.evaluateKeypadExpression("45.5+14,5"), 0.001)
+        assertEquals(130.0, com.example.ui.evaluateKeypadExpression("100+25+5"), 0.001)
+        assertEquals(35.0, com.example.ui.evaluateKeypadExpression("35"), 0.001)
+    }
 }
 

@@ -259,27 +259,27 @@ fun HistoryScreen(
                                 FilterChip(
                                     selected = state.filterState.selectedCategoryKey == "all",
                                     onClick = { onUpdateFilter { it.copy(selectedCategoryKey = "all") } },
-                                    label = { Text(strings.filterAll, fontSize = 11.5.sp) }
+                                    label = { Text(strings.filterAll, fontSize = 12.sp) }
                                 )
                                 state.envelopes.forEach { env ->
                                     FilterChip(
                                         selected = state.filterState.selectedCategoryKey == env.config.key,
                                         onClick = { onUpdateFilter { it.copy(selectedCategoryKey = env.config.key) } },
                                         label = {
-                                            Text(env.config.localizedName(state.profile.language), fontSize = 11.5.sp)
+                                            Text(env.config.localizedName(state.profile.language), fontSize = 12.sp)
                                         }
                                     )
                                 }
                                 FilterChip(
                                     selected = state.filterState.selectedAccountId == "all",
                                     onClick = { onUpdateFilter { it.copy(selectedAccountId = "all") } },
-                                    label = { Text(strings.allAccountsLabel, fontSize = 11.5.sp) }
+                                    label = { Text(strings.allAccountsLabel, fontSize = 12.sp) }
                                 )
                                 state.accounts.forEach { acc ->
                                     FilterChip(
                                         selected = state.filterState.selectedAccountId == acc.account.id,
                                         onClick = { onUpdateFilter { it.copy(selectedAccountId = acc.account.id) } },
-                                        label = { Text(acc.account.name.take(14), fontSize = 11.5.sp) }
+                                        label = { Text(acc.account.name.take(14), fontSize = 12.sp) }
                                     )
                                 }
                             }
@@ -668,18 +668,30 @@ internal fun SwipeableTransactionRow(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val catVisual = com.example.ui.theme.categoryVisualStyle(
+                        "${tx.envelopeKey} ${tx.category} $resolvedCategoryDisplay",
+                        isDarkTheme
+                    )
+                    val badgeBg = when (tx.type) {
+                        "income", "transfer" -> amountColor.copy(alpha = 0.14f)
+                        else -> catVisual.container
+                    }
+                    val badgeFg = when (tx.type) {
+                        "income", "transfer" -> amountColor
+                        else -> catVisual.foreground
+                    }
                     Box(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(amountColor.copy(alpha = 0.16f)),
+                            .background(badgeBg),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = resolvedCategoryDisplay.take(2).uppercase(),
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = amountColor
+                        Icon(
+                            imageVector = catVisual.icon,
+                            contentDescription = null,
+                            tint = badgeFg,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {

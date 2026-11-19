@@ -379,16 +379,18 @@ fun Modifier.glass3d(
 }
 
 /**
- * Crisp Material 3 card container for Light and Dark modes (glass effects are reserved for floating elements).
+ * Crisp Material 3 card container for Light and Dark modes.
+ * Defaults to [CardTier.STANDARD] (solid surfaceContainer); [CardTier.GLASS] is reserved for floating accents.
  */
 @Composable
 fun ExpressiveGlassCard(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 24.dp,
+    tier: CardTier = CardTier.STANDARD,
+    cornerRadius: Dp = MasroufiTokens.CornerRadius.card,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
     contentColor: Color = contentColorFor(containerColor).takeOrElse { MaterialTheme.colorScheme.onSurface },
     accentRimColor: Color? = null,
-    contentPadding: PaddingValues = PaddingValues(18.dp),
+    contentPadding: PaddingValues = PaddingValues(MasroufiTokens.Spacing.lg),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -398,7 +400,7 @@ fun ExpressiveGlassCard(
     val haptics = LocalHapticFeedback.current
 
     val animatedRadius by animateDpAsState(
-        targetValue = if (isPressed && onClick != null) (cornerRadius - 4.dp).coerceAtLeast(16.dp) else cornerRadius,
+        targetValue = if (isPressed && onClick != null) (cornerRadius - 4.dp).coerceAtLeast(MasroufiTokens.CornerRadius.chip) else cornerRadius,
         animationSpec = ExpressiveMotion.bouncySpring(),
         label = "glass_card_radius"
     )
@@ -412,10 +414,10 @@ fun ExpressiveGlassCard(
         ?: MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (isDark) 0.65f else 0.75f)
 
     val hasWallpaper = LocalHasBackgroundWallpaper.current
-    val resolvedContainerColor = if (hasWallpaper && containerColor.alpha == 1f) {
-        containerColor.copy(alpha = if (isDark) 0.84f else 0.88f)
-    } else {
-        containerColor
+    val resolvedContainerColor = when {
+        tier == CardTier.GLASS -> containerColor.copy(alpha = if (isDark) 0.88f else 0.92f)
+        hasWallpaper && containerColor.alpha == 1f -> containerColor.copy(alpha = if (isDark) 0.84f else 0.88f)
+        else -> containerColor
     }
     val shape = RoundedCornerShape(animatedRadius)
 
@@ -424,11 +426,25 @@ fun ExpressiveGlassCard(
         color = resolvedContainerColor,
         contentColor = contentColor,
         tonalElevation = 0.dp,
-        shadowElevation = if (isDark) 2.dp else 1.dp,
+        shadowElevation = when (tier) {
+            CardTier.GLASS -> 8.dp
+            CardTier.HERO -> 4.dp
+            CardTier.STANDARD -> if (isDark) 2.dp else 1.dp
+        },
         border = BorderStroke(1.dp, borderColor),
         modifier = modifier
             .scale(animatedScale)
             .clip(shape)
+            .then(
+                if (tier == CardTier.GLASS) {
+                    Modifier.glass3d(
+                        cornerRadius = animatedRadius,
+                        isDark = isDark,
+                        accentRimColor = accentRimColor,
+                        drawOuterShadows = false
+                    )
+                } else Modifier
+            )
             .then(
                 if (onClick != null) {
                     Modifier.clickable(
@@ -455,7 +471,7 @@ fun ExpressiveGlassCard(
 @Composable
 fun ExpressiveGlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(18.dp),
+    shape: Shape = MasroufiTokens.Shapes.innerTile,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     contentColor: Color = contentColorFor(containerColor).takeOrElse { MaterialTheme.colorScheme.onSurface },
     accentBorderColor: Color? = null,
@@ -553,7 +569,6 @@ fun ExpressiveSectionHeader(
                     Text(
                         text = subtitle,
                         style = MaterialTheme.typography.bodySmall,
-                        fontSize = 11.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -562,7 +577,7 @@ fun ExpressiveSectionHeader(
             }
         }
         if (trailing != null) {
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(MasroufiTokens.Spacing.sm))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -632,7 +647,7 @@ fun ExpressivePillChip(
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val haptics = LocalHapticFeedback.current
     val cornerRadius by animateDpAsState(
-        targetValue = if (selected) 14.dp else 22.dp,
+        targetValue = if (selected) MasroufiTokens.CornerRadius.chipSelected else MasroufiTokens.CornerRadius.chip,
         animationSpec = ExpressiveMotion.bouncySpring(),
         label = "chip_corner"
     )
@@ -676,7 +691,7 @@ fun ExpressivePillChip(
                     imageVector = icon,
                     contentDescription = null,
                     tint = contentColor,
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
             Text(
@@ -693,14 +708,10 @@ fun ExpressivePillChip(
 }
 
 /**
- * Floating Translucent Glass Navigation Dock with spring-animated pill selection
- * and long-press contextual shortcut support.
- */
-/**
- * Vyxel-Style Floating Translucent Glass Navigation Dock:
- * - Translucent obsidian-charcoal capsule (`RoundedCornerShape(36.dp)`) with specular top rim
- * - Active tab features a raised Soft-Periwinkle (`#B8C7FA`) circular badge (`48.dp`) that pops out above
- *   the top edge of the dock with a subtle emerald/periwinkle ambient halo underneath, matching Vyxel Apps.
+ * Floating Translucent Glass Navigation Dock (CardTier.GLASS accent):
+ * - Translucent capsule (`MasroufiTokens.Shapes.dock`) with specular top rim
+ * - Spring-animated active pill indicator, subtle icon scale on selection, and light haptic on tab change
+ * - Generous breathing room above the system navigation bar.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -723,12 +734,11 @@ fun ExpressiveGlassBottomDock(
         modifier = modifier
             .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.BottomCenter
     ) {
-        // Main glass capsule dock
         Surface(
-            shape = RoundedCornerShape(36.dp),
+            shape = MasroufiTokens.Shapes.dock,
             color = dockFill,
             contentColor = MaterialTheme.colorScheme.onSurface,
             tonalElevation = 0.dp,
@@ -741,7 +751,7 @@ fun ExpressiveGlassBottomDock(
                 .fillMaxWidth()
                 .widthIn(max = 560.dp)
                 .glass3d(
-                    cornerRadius = 36.dp,
+                    cornerRadius = MasroufiTokens.CornerRadius.dock,
                     isDark = isDark,
                     drawOuterShadows = true
                 )
@@ -756,9 +766,14 @@ fun ExpressiveGlassBottomDock(
                 tabs.forEachIndexed { pageIdx, (key, label, icon) ->
                     val isSelected = activeTabKey == key
                     val pillWidth by animateDpAsState(
-                        targetValue = if (isSelected) 54.dp else 40.dp,
+                        targetValue = if (isSelected) 58.dp else 42.dp,
                         animationSpec = ExpressiveMotion.bouncySpring(),
                         label = "dock_pill_w_$key"
+                    )
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (isSelected) 1.08f else 1.0f,
+                        animationSpec = ExpressiveMotion.bouncySpring(),
+                        label = "dock_icon_scale_$key"
                     )
                     val labelColor by animateColorAsState(
                         targetValue = if (isSelected) {
@@ -770,11 +785,18 @@ fun ExpressiveGlassBottomDock(
                         label = "dock_label_$key"
                     )
 
+                    val triggerSelect = {
+                        if (!isSelected) {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        onSelectTab(pageIdx, key)
+                    }
+
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .combinedClickable(
-                                onClick = { onSelectTab(pageIdx, key) },
+                                onClick = triggerSelect,
                                 onLongClick = {
                                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     onLongPressTab(key)
@@ -799,7 +821,7 @@ fun ExpressiveGlassBottomDock(
                                     }
                                 )
                                 .combinedClickable(
-                                    onClick = { onSelectTab(pageIdx, key) },
+                                    onClick = triggerSelect,
                                     onLongClick = {
                                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                         onLongPressTab(key)
@@ -812,14 +834,17 @@ fun ExpressiveGlassBottomDock(
                                 imageVector = icon,
                                 contentDescription = label,
                                 tint = if (isSelected) activeBubbleContentColor else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(21.dp)
+                                modifier = Modifier
+                                    .size(21.dp)
+                                    .scale(iconScale)
                             )
                         }
                         Text(
                             text = label,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 12.sp,
                             fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
                             color = labelColor
                         )

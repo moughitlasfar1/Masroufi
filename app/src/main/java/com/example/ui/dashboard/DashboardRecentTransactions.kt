@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -34,8 +33,11 @@ import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.PayCycleEngine
 import com.example.ui.DashboardState
+import com.example.ui.theme.CardTier
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
+import com.example.ui.theme.MasroufiTokens
+import com.example.ui.theme.categoryVisualStyle
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
 import com.example.ui.theme.semanticTransferColor
@@ -56,7 +58,8 @@ fun DashboardRecentTransactions(
     fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
 
     ExpressiveGlassCard(
-        cornerRadius = 26.dp,
+        tier = CardTier.STANDARD,
+        cornerRadius = MasroufiTokens.CornerRadius.card,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("home_recent_transactions_card")
@@ -74,7 +77,7 @@ fun DashboardRecentTransactions(
             )
             TextButton(
                 onClick = onSeeAllTransactions,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                contentPadding = PaddingValues(horizontal = MasroufiTokens.Spacing.sm, vertical = MasroufiTokens.Spacing.xs),
                 modifier = Modifier.testTag("home_see_all_transactions_btn")
             ) {
                 Text(
@@ -100,6 +103,7 @@ fun DashboardRecentTransactions(
             recentTransactions.forEach { tx ->
                 val isIncome = tx.type == "income"
                 val isTransfer = tx.type == "transfer"
+                // Semantic colors strictly reserved for transaction amounts
                 val amtColor = when {
                     isIncome -> semanticIncomeColor(isDark)
                     isTransfer -> semanticTransferColor(isDark)
@@ -115,15 +119,33 @@ fun DashboardRecentTransactions(
                 } else {
                     tx.localizedCategory(lang, envConfigs)
                 }
+                // Category visual identity for the leading icon badge (soft tint + distinct category icon)
+                val catVisual = categoryVisualStyle("${tx.category} $catDisplay", isDark)
+                val badgeBg = when {
+                    isIncome -> amtColor.copy(alpha = 0.14f)
+                    isTransfer -> amtColor.copy(alpha = 0.14f)
+                    else -> catVisual.container
+                }
+                val badgeFg = when {
+                    isIncome -> amtColor
+                    isTransfer -> amtColor
+                    else -> catVisual.foreground
+                }
+                val badgeIcon = when {
+                    isIncome -> Icons.Default.ArrowDownward
+                    isTransfer -> Icons.Default.SwapHoriz
+                    else -> catVisual.icon
+                }
+
                 val accDisplay = accMap[tx.accountId] ?: tx.accountId
                 val friendlyDate = PayCycleEngine.formatFriendlyDate(tx.isoDate, lang, todayIso)
                 ExpressiveGlassSurface(
-                    shape = RoundedCornerShape(18.dp),
+                    shape = MasroufiTokens.Shapes.innerTile,
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     onClick = { onEditTransaction(tx) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp)
+                        .padding(vertical = MasroufiTokens.Spacing.xs)
                         .testTag("home_recent_tx_${tx.id}")
                 ) {
                     Row(
@@ -140,20 +162,16 @@ fun DashboardRecentTransactions(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(11.dp))
-                                    .background(amtColor.copy(alpha = 0.14f)),
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(badgeBg),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = when {
-                                        isIncome -> Icons.Default.ArrowDownward
-                                        isTransfer -> Icons.Default.SwapHoriz
-                                        else -> Icons.Default.ArrowUpward
-                                    },
+                                    imageVector = badgeIcon,
                                     contentDescription = null,
-                                    tint = amtColor,
-                                    modifier = Modifier.size(18.dp)
+                                    tint = badgeFg,
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
                             Column(modifier = Modifier.weight(1f)) {
@@ -174,7 +192,7 @@ fun DashboardRecentTransactions(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(MasroufiTokens.Spacing.sm))
                         Text(
                             text = "$sign${fmt(tx.amount)} $cur",
                             style = MaterialTheme.typography.labelLarge,

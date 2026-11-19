@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,7 +37,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,8 +47,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AccountItem
@@ -57,12 +63,17 @@ import com.example.domain.PayCycleEngine
 import com.example.domain.SmartReminder
 import com.example.ui.dashboard.DashboardHeroCard
 import com.example.ui.dashboard.DashboardRecentTransactions
+import com.example.ui.theme.CardTier
+import com.example.ui.theme.ExpressiveAnimatedProgressBar
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.ExpressiveSectionHeader
-import com.example.ui.theme.VyxelOnPeriwinkle
-import com.example.ui.theme.VyxelPeriwinkle
+import com.example.ui.theme.MasroufiTokens
+import com.example.ui.theme.categoryVisualStyle
+import com.example.ui.theme.semanticExpenseColor
+import com.example.ui.theme.semanticIncomeColor
+import com.example.ui.theme.semanticWarningColor
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -123,10 +134,82 @@ internal fun dashboardSectionLabel(sectionKey: String, lang: String): String = w
 }
 
 /**
- * Phase 3: Lean Home Screen
- * - First-time setup card shows only for new users (`state.isCleanFreshAccount`).
- * - `DashboardHeroCard` shows "Safe to spend today" with one supporting line and tap-to-expand details.
- * - `DashboardRecentTransactions` shows up to 3 recent transactions or a real empty state.
+ * Computes the single contextual line under the Hero card (Prompt 5):
+ * - No data: friendly first action
+ * - Overspending: highlights the category that needs attention
+ * - Start of cycle: available budget
+ * - End of cycle: remaining and forecast
+ * - Mid cycle: spending pace
+ */
+internal fun computeHeroContextualStatusLine(
+    state: DashboardState,
+    cur: String
+): String {
+    val lang = state.profile.language
+    val hide = state.hideAmounts
+    fun fmt(v: Double): String = PayCycleEngine.formatAmountOrMask(v, hide)
+
+    if (state.cycleTransactions.isEmpty()) {
+        return when (lang) {
+            "ar" -> "ابدأ بتسجيل أول مصروف اليوم بالزر + أو بالصوت 🎤"
+            "darija" -> "بدا بتقييد أول مصروف اليوم بالزر + ولا بالصوت 🎤"
+            "en" -> "Log your first expense today with + or hold the mic 🎤"
+            else -> "Ajoutez votre première opération avec + ou maintenez le micro 🎤"
+        }
+    }
+
+    val overEnvelope = state.envelopes.firstOrNull { it.usagePercent > 100 }
+        ?: state.envelopes.maxByOrNull { it.usagePercent }?.takeIf { it.isOver90Percent || it.usagePercent >= 90 }
+    if (state.remainingBudget < 0 || overEnvelope != null) {
+        val catName = overEnvelope?.config?.localizedName(lang) ?: when (lang) {
+            "ar" -> "الميزانية"
+            "darija" -> "الميزانية"
+            "en" -> "Budget"
+            else -> "Budget"
+        }
+        return when (lang) {
+            "ar" -> "تنبيه: فئة «$catName» تحتاج انتباهاً في هذه الدورة"
+            "darija" -> "رد البال: فئة «$catName» قربات ولا فاتت السقف"
+            "en" -> "Heads up: \"$catName\" needs attention this cycle"
+            else -> "Attention : la catégorie « $catName » demande votre vigilance"
+        }
+    }
+
+    val daysElapsed = (state.activeWindow.totalDays - state.daysRemaining).coerceAtLeast(0)
+    if (daysElapsed <= 3) {
+        return when (lang) {
+            "ar" -> "بداية الدورة · الميزانية المتاحة ${fmt(state.totalAvailableBudget)} $cur"
+            "darija" -> "بداية الدورة · الميزانية المتوفرة ${fmt(state.totalAvailableBudget)} $cur"
+            "en" -> "Start of cycle · ${fmt(state.totalAvailableBudget)} $cur available budget"
+            else -> "Début de cycle · ${fmt(state.totalAvailableBudget)} $cur de budget disponible"
+        }
+    }
+
+    if (state.daysRemaining <= 5) {
+        return when (lang) {
+            "ar" -> "نهاية الدورة (${state.daysRemaining} أيام) · المتبقي ${fmt(state.remainingBudget)} $cur"
+            "darija" -> "قربات تسالي الدورة (${state.daysRemaining} أيام) · الباقي ${fmt(state.remainingBudget)} $cur"
+            "en" -> "End of cycle (${state.daysRemaining}d left) · ${fmt(state.remainingBudget)} $cur remaining"
+            else -> "Fin de cycle (${state.daysRemaining}j restants) · ${fmt(state.remainingBudget)} $cur restants"
+        }
+    }
+
+    return when (lang) {
+        "ar" -> "وتيرة الصرف: ${fmt(state.dailyAverageSpend)} $cur/اليوم مقابل سقف ${fmt(state.safeToSpendToday)} $cur/اليوم"
+        "darija" -> "وتيرة الصرف: ${fmt(state.dailyAverageSpend)} $cur/نهار مقابل ${fmt(state.safeToSpendToday)} $cur/نهار"
+        "en" -> "Spending pace: ${fmt(state.dailyAverageSpend)} $cur/day vs ${fmt(state.safeToSpendToday)} $cur/day allowance"
+        else -> "Rythme actuel : ${fmt(state.dailyAverageSpend)} $cur/j pour ${fmt(state.safeToSpendToday)} $cur/j autorisés"
+    }
+}
+
+/**
+ * Dashboard Home Screen with stable reading order (Prompt 5):
+ * 1. First-time setup card (only for clean fresh accounts)
+ * 2. Safe to Spend Hero card
+ * 3. Single contextual status line under the hero
+ * 4. Three compact indicators (Income, Expenses, Net/Savings)
+ * 5. Mini weekly chart & Top 3 categories (when advanced sections are visible)
+ * 6. Recent transactions
  */
 @Composable
 fun OverviewScreen(
@@ -156,23 +239,47 @@ fun OverviewScreen(
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val lang = state.profile.language
+    val isDark = state.profile.isDarkTheme
+    val hide = state.hideAmounts
+    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
 
     val recentThree = remember(state.cycleTransactions) {
         val todayIso = PayCycleEngine.todayIso()
         state.cycleTransactions.filter { it.isoDate <= todayIso }.take(3)
     }
 
+    val contextualLine = remember(
+        state.cycleTransactions.size,
+        state.remainingBudget,
+        state.daysRemaining,
+        state.activeWindow.totalDays,
+        state.dailyAverageSpend,
+        state.safeToSpendToday,
+        state.hideAmounts,
+        lang,
+        cur
+    ) {
+        computeHeroContextualStatusLine(state, cur)
+    }
+
+    val topThreeCategories = remember(state.envelopes) {
+        state.envelopes
+            .filter { it.spent > 0.0 }
+            .sortedByDescending { it.spent }
+            .take(3)
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .testTag("overview_screen"),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(horizontal = MasroufiTokens.Spacing.lg, vertical = MasroufiTokens.Spacing.md),
+        verticalArrangement = Arrangement.spacedBy(MasroufiTokens.Spacing.md)
     ) {
         if (state.isCleanFreshAccount) {
             item(key = "clean_onboarding") {
                 Card(
-                    shape = RoundedCornerShape(26.dp),
+                    shape = MasroufiTokens.Shapes.card,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -181,7 +288,7 @@ fun OverviewScreen(
                     Column(modifier = Modifier.padding(18.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(MasroufiTokens.Spacing.sm)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
@@ -210,7 +317,7 @@ fun OverviewScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(MasroufiTokens.Spacing.md))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -249,12 +356,50 @@ fun OverviewScreen(
             }
         }
 
+        // 1. Safe to Spend Hero Card
         item(key = "hero_card") {
             DashboardHeroCard(
                 state = state,
                 strings = strings,
                 onToggleHideAmounts = onToggleHideAmounts
             )
+        }
+
+        // 2. Single Contextual Line under the Hero
+        item(key = "hero_contextual_status") {
+            val isAlert = state.remainingBudget < 0
+            val stripColor = if (isAlert) semanticWarningColor(isDark) else MaterialTheme.colorScheme.primary
+            Surface(
+                shape = MasroufiTokens.Shapes.innerTile,
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("hero_contextual_status_line")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = stripColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        text = contextualLine,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
         }
 
         if (pendingBankDetectionsCount > 0) {
@@ -296,6 +441,174 @@ fun OverviewScreen(
             }
         }
 
+        // 3. Three Compact Indicators (Income, Expenses, Remaining/Savings)
+        item(key = "home_compact_indicators") {
+            val incomeAmount = state.totalAvailableBudget
+            val expenseAmount = state.cycleExpenses
+            val netSavings = state.remainingBudget
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("home_compact_indicators_row"),
+                horizontalArrangement = Arrangement.spacedBy(MasroufiTokens.Spacing.sm)
+            ) {
+                CompactKpiTile(
+                    label = strings.incomeTab,
+                    amountText = "+${fmt(incomeAmount)} $cur",
+                    amountColor = semanticIncomeColor(isDark),
+                    modifier = Modifier.weight(1f)
+                )
+                CompactKpiTile(
+                    label = strings.expenseTab,
+                    amountText = "-${fmt(expenseAmount)} $cur",
+                    amountColor = semanticExpenseColor(isDark),
+                    modifier = Modifier.weight(1f)
+                )
+                CompactKpiTile(
+                    label = strings.remainingLabel,
+                    amountText = "${fmt(netSavings)} $cur",
+                    amountColor = if (netSavings >= 0.0) semanticIncomeColor(isDark) else semanticExpenseColor(isDark),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // 4. Mini Weekly Chart + Top 3 Categories (stable hierarchy, respects showWeekSummaryRow)
+        if (state.customPrefs.showWeekSummaryRow && (state.weekTotalSpend > 0.0 || topThreeCategories.isNotEmpty())) {
+            item(key = "home_mini_weekly_and_top_categories") {
+                ExpressiveGlassCard(
+                    tier = CardTier.STANDARD,
+                    cornerRadius = MasroufiTokens.CornerRadius.card,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("home_mini_week_and_top_categories_card")
+                ) {
+                    // Mini weekly bars header + sparkline
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = strings.thisWeek,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "-${fmt(state.weekTotalSpend)} $cur",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = semanticExpenseColor(isDark)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(MasroufiTokens.Spacing.sm))
+                    val maxDay = (state.weekDaysSpend.maxOrNull() ?: 1.0).coerceAtLeast(1.0)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        state.weekDaysSpend.forEachIndexed { idx, dayVal ->
+                            val ratio = (dayVal / maxDay).toFloat().safeFraction(0.10f, 1f)
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Bottom
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.65f)
+                                        .fillMaxHeight(ratio * 0.68f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(
+                                            if (dayVal > 0.0) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.surfaceContainerHighest
+                                        )
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = strings.daysShort.getOrElse(idx) { "" },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
+                    // Top 3 categories with category icons & soft tints
+                    if (topThreeCategories.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(MasroufiTokens.Spacing.md))
+                        Column(verticalArrangement = Arrangement.spacedBy(MasroufiTokens.Spacing.sm)) {
+                            topThreeCategories.forEach { envStatus ->
+                                val catName = envStatus.config.localizedName(lang)
+                                val visual = categoryVisualStyle("${envStatus.config.key} $catName", isDark)
+                                val progress = if (envStatus.totalAvailable > 0.0) {
+                                    (envStatus.spent / envStatus.totalAvailable).toFloat().safeFraction(0f, 1f)
+                                } else {
+                                    (envStatus.spent / state.cycleExpenses.coerceAtLeast(1.0)).toFloat().safeFraction(0f, 1f)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(visual.container),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = visual.icon,
+                                            contentDescription = null,
+                                            tint = visual.foreground,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = catName,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = "-${fmt(envStatus.spent)} $cur",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = semanticExpenseColor(isDark)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        ExpressiveAnimatedProgressBar(
+                                            progress = progress,
+                                            color = visual.foreground,
+                                            height = 6.dp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Recent Transactions
         item(key = "home_recent_transactions") {
             DashboardRecentTransactions(
                 state = state,
@@ -305,13 +618,49 @@ fun OverviewScreen(
                 onSeeAllTransactions = onSeeAllTransactions,
                 onAddFirstTransaction = { onOpenAddModal("expense") }
             )
-            Spacer(modifier = Modifier.height(88.dp))
+            Spacer(modifier = Modifier.height(92.dp))
+        }
+    }
+}
+
+@Composable
+private fun CompactKpiTile(
+    label: String,
+    amountText: String,
+    amountColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        shape = MasroufiTokens.Shapes.innerTile,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f)),
+        modifier = modifier
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = amountText,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = amountColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
 
 /**
- * Phase 4: Insights Tab combining Week and Month views with an inline segmented toggle.
+ * Insights Tab combining Week and Month views with an inline segmented toggle.
  */
 @Composable
 fun InsightsScreen(
@@ -417,6 +766,7 @@ fun WeekScreen(
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
+    val haptics = LocalHapticFeedback.current
     fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
     val rawSpentMax = state.weekDaysSpend.maxOrNull() ?: 0.0
     val rawFutureMax = state.weekDaysFutureSpend.maxOrNull() ?: 0.0
@@ -425,6 +775,7 @@ fun WeekScreen(
     val step = listOf(50, 100, 200, 250, 500, 1000, 2000, 5000).firstOrNull { it * 4 >= maxVal }
         ?: (ceil(maxVal / 4000.0).toInt() * 1000).coerceAtLeast(100)
     val ceilVal = (step * 4).toDouble().coerceAtLeast(100.0)
+    var selectedBarIndex by remember { mutableIntStateOf(-1) }
 
     LazyColumn(
         modifier = Modifier
@@ -486,8 +837,7 @@ fun WeekScreen(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "${strings.prevWeek}: ${fmt(state.prevWeekTotalSpend)} $cur",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -514,8 +864,7 @@ fun WeekScreen(
                     } else "—"
                     Text(
                         text = "${strings.mostSpentDay}: $dayName",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -527,11 +876,34 @@ fun WeekScreen(
                 cornerRadius = 28.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text(
-                    text = strings.chartTitle,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = strings.chartTitle,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (selectedBarIndex in 0..6) {
+                        val selectedDayLabel = strings.daysFull.getOrElse(selectedBarIndex) { "" }
+                        val selectedDayAmount = state.weekDaysSpend.getOrElse(selectedBarIndex) { 0.0 }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.testTag("week_chart_selected_tooltip")
+                        ) {
+                            Text(
+                                text = "$selectedDayLabel · ${fmt(selectedDayAmount)} $cur",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(14.dp))
 
                 ExpressiveGlassSurface(
@@ -577,11 +949,17 @@ fun WeekScreen(
                                     label = "week_bar_$idx"
                                 )
                                 val isPeak = idx == state.mostExpensiveDayIndex && value > 0
+                                val isSelected = idx == selectedBarIndex
                                 val barShape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 5.dp, bottomEnd = 5.dp)
                                 Column(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .fillMaxHeight(),
+                                        .fillMaxHeight()
+                                        .clickable {
+                                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            selectedBarIndex = if (selectedBarIndex == idx) -1 else idx
+                                        }
+                                        .testTag("week_bar_column_$idx"),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Bottom
                                 ) {
@@ -589,7 +967,7 @@ fun WeekScreen(
                                         Text(
                                             text = if (hide) "••" else displayVal.safeRoundToInt().toString(),
                                             style = MaterialTheme.typography.labelSmall,
-                                            fontSize = 10.sp,
+                                            fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
@@ -597,7 +975,7 @@ fun WeekScreen(
                                     }
                                     Box(
                                         modifier = Modifier
-                                            .width(28.dp)
+                                            .width(if (isSelected) 32.dp else 28.dp)
                                             .fillMaxHeight(animatedRatio * 0.72f)
                                             .clip(barShape)
                                             .then(
@@ -628,9 +1006,9 @@ fun WeekScreen(
                                     Text(
                                         text = strings.daysShort.getOrElse(idx) { "" },
                                         style = MaterialTheme.typography.labelSmall,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isPeak) FontWeight.ExtraBold else FontWeight.Medium,
-                                        color = if (isPeak) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isPeak || isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                        color = if (isPeak || isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }

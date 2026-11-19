@@ -426,7 +426,7 @@ fun MoonshineWalkieTalkieHud(
                                 label = {
                                     Text(
                                         text = sample,
-                                        fontSize = 11.5.sp,
+                                        fontSize = 12.sp,
                                         maxLines = 1
                                     )
                                 },

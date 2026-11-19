@@ -189,7 +189,7 @@ fun TransactionEditorSheet(
     }
 
     fun computeConvertedAmount(rawTextOverride: String = amountText): Double {
-        val rawAmt = PayCycleEngine.parseFlexibleAmount(rawTextOverride)
+        val rawAmt = evaluateKeypadExpression(rawTextOverride)
         val eurRate = eurRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_EUR_TO_MAD
         val usdRate = usdRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_USD_TO_MAD
         return PayCycleEngine.convertCurrencyAmount(
@@ -210,7 +210,7 @@ fun TransactionEditorSheet(
         ignoreDuplicateCheck: Boolean = false
     ): Boolean {
         val effectiveAmtText = overrideAmountText ?: amountText
-        val rawAmt = PayCycleEngine.parseFlexibleAmount(effectiveAmtText)
+        val rawAmt = evaluateKeypadExpression(effectiveAmtText)
         val convertedAmt = computeConvertedAmount(effectiveAmtText)
         val effectiveAccountId = overrideAccountId ?: selectedAccountId
         val effectiveDesc = overrideDesc ?: desc
@@ -528,6 +528,10 @@ fun TransactionEditorSheet(
                 ) {
                     state.envelopes.forEach { env ->
                         val catLabel = env.config.localizedName(state.profile.language)
+                        val catVisual = com.example.ui.theme.categoryVisualStyle(
+                            "${env.config.key} $catLabel",
+                            state.profile.isDarkTheme
+                        )
                         FilterChip(
                             selected = selectedEnvelopeKey == env.config.key,
                             onClick = {
@@ -540,6 +544,14 @@ fun TransactionEditorSheet(
                                         overrideEnvKey = env.config.key
                                     )
                                 }
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = catVisual.icon,
+                                    contentDescription = null,
+                                    tint = catVisual.foreground,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             },
                             label = { Text(catLabel.take(22)) },
                             modifier = Modifier.testTag("tx_cat_chip_${env.config.key}")
@@ -728,7 +740,7 @@ fun TransactionEditorSheet(
                                         FilterChip(
                                             selected = entryCurrency == code,
                                             onClick = { entryCurrency = code },
-                                            label = { Text(code, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                            label = { Text(code, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                                             modifier = Modifier.testTag("currency_chip_$code")
                                         )
                                     }

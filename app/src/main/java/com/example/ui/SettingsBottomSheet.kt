@@ -896,7 +896,7 @@ fun SettingsBottomSheet(
                                             )
                                         },
                                         label = {
-                                            Text(spokenLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            Text(spokenLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         },
                                         modifier = Modifier.testTag("settings_assistant_sample_$idx")
                                     )
@@ -919,7 +919,7 @@ fun SettingsBottomSheet(
                                     },
                                     modifier = Modifier.testTag("settings_pin_assistant_shortcut_btn")
                                 ) {
-                                    Text(strings.assistantPinShortcutBtn, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text(strings.assistantPinShortcutBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
 
                                 Button(
@@ -937,7 +937,7 @@ fun SettingsBottomSheet(
                                     },
                                     modifier = Modifier.testTag("settings_test_assistant_command_btn")
                                 ) {
-                                    Text(strings.assistantTestCommandBtn, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                    Text(strings.assistantTestCommandBtn, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
                                 }
                             }
                         }
@@ -1141,7 +1141,7 @@ fun SettingsBottomSheet(
                                         qcSelectedPresetId = next
                                         com.example.notifications.QuickCaptureNotification.setSelectedPresetId(context, next)
                                     },
-                                    label = { Text(preset.name, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    label = { Text(preset.name, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                                     modifier = Modifier.testTag("settings_qc_preset_${preset.id}")
                                 )
                             }
@@ -1211,7 +1211,7 @@ fun SettingsBottomSheet(
                             ) {
                                 Text(
                                     text = strings.resetLearningBtn,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -1331,7 +1331,7 @@ fun SettingsBottomSheet(
                                         eveningReminderTime = h to m
                                         MasroufiNotificationManager.setEveningReminderTime(context, h, m)
                                     },
-                                    label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                                    label = { Text(label, fontSize = 12.sp, fontWeight = FontWeight.Bold) },
                                     modifier = Modifier.testTag("settings_evening_time_chip_${h}_${m}")
                                 )
                             }
@@ -1364,7 +1364,7 @@ fun SettingsBottomSheet(
                                         eveningReminderTime.first,
                                         eveningReminderTime.second
                                     ),
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -1404,7 +1404,7 @@ fun SettingsBottomSheet(
                         value = backupPassword,
                         onValueChange = { backupPassword = it },
                         label = {
-                            Text("AES-256-GCM (10+ car.)", fontSize = 11.5.sp)
+                            Text("AES-256-GCM (10+ car.)", fontSize = 12.sp)
                         },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
@@ -1843,7 +1843,7 @@ fun BackgroundWallpaperPickerSection(
                         label = {
                             Text(
                                 text = dimLabel,
-                                fontSize = 11.5.sp,
+                                fontSize = 12.sp,
                                 fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium
                             )
                         },
