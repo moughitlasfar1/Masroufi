@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to publish (e.g. v1.1.1). Leave blank to build artifacts only.'
+        required: false
+        default: 'v1.1.1'
+        type: string
 
 # S11: Default read-only workflow permissions; require manual approval via production environment
 permissions:
@@ -85,15 +91,25 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Publish Signed Production APK Release on Tag (AAB Excluded)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish Signed Production APK Release (AAB Excluded)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.release_tag }}
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            TAG_NAME="$INPUT_TAG"
+          fi
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid release tag '$TAG_NAME'. Expected format vX.Y.Z (e.g. v1.1.1)."
+            exit 1
+          fi
           gh release create "$TAG_NAME" \
             app/build/outputs/apk/release/*.apk \
             --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
             --title "Masroufi ${TAG_NAME}" \
             --latest \
             --generate-notes
