@@ -41,3 +41,21 @@
 -keepclassmembernames class kotlinx.** {
     volatile <fields>;
 }
+
+# R8 Full Mode fix: room-runtime 2.6.1 (used internally by WorkManager) only declares
+# `-keep class * extends androidx.room.RoomDatabase` without `{ <init>(); }`, which causes
+# R8 Full Mode to strip WorkDatabase_Impl.<init>() and crash WorkManagerInitializer on launch.
+-keep class * extends androidx.room.RoomDatabase {
+    public <init>();
+}
+-keep class androidx.work.impl.WorkDatabase_Impl { *; }
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+-keep class com.example.notifications.MasroufiNotificationWorker { *; }
+-keep class com.example.notifications.EveningReminderWorker { *; }
+
+# R8 Full Mode fix: versionedparcelable consumer rule omits <init>()
+-keep class * implements androidx.versionedparcelable.VersionedParcelable {
+    <init>();
+}
