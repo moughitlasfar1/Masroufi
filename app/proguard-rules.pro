@@ -24,6 +24,7 @@
 -keep class com.example.data.AccountItem { *; }
 -keep class com.example.data.EnvelopeConfig { *; }
 -keep class com.example.data.FinancialItem { *; }
+-keep class com.masroufi.credit.data.SavedCreditEntity { *; }
 
 # Keep Firebase Firestore, Auth, and App Check classes
 -keep class com.google.firebase.** { *; }

@@ -134,6 +134,37 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidSavedCredit(data) {
+      return data.keys().hasAll([
+               'userId', 'type', 'loanAmount', 'downPayment', 'financedPrincipal',
+               'durationMonths', 'deferredMonths', 'annualInterestRateHt',
+               'applyInterestTva', 'insuranceRate', 'monthlyPayment', 'totalCost',
+               'debtToIncomeRatio', 'maxAllowedDti', 'linkToMonthlyExpenses', 'createdAt'
+             ]) &&
+             data.keys().hasOnly([
+               'userId', 'type', 'loanAmount', 'downPayment', 'financedPrincipal',
+               'durationMonths', 'deferredMonths', 'annualInterestRateHt',
+               'applyInterestTva', 'insuranceRate', 'monthlyPayment', 'totalCost',
+               'debtToIncomeRatio', 'maxAllowedDti', 'linkToMonthlyExpenses', 'createdAt'
+             ]) &&
+             data.userId is string && data.userId == request.auth.uid &&
+             data.type is string && data.type in ['CONSOMMATION', 'AUTO', 'IMMOBILIER'] &&
+             data.loanAmount is number && data.loanAmount > 0 && data.loanAmount <= 100000000 &&
+             data.downPayment is number && data.downPayment >= 0 && data.downPayment <= data.loanAmount &&
+             data.financedPrincipal is number && data.financedPrincipal >= 0 && data.financedPrincipal <= data.loanAmount &&
+             data.durationMonths is int && data.durationMonths > 0 && data.durationMonths <= 360 &&
+             data.deferredMonths is int && data.deferredMonths >= 0 && data.deferredMonths <= 12 && data.deferredMonths < data.durationMonths &&
+             data.annualInterestRateHt is number && data.annualInterestRateHt >= 0 && data.annualInterestRateHt <= 50 &&
+             data.applyInterestTva is bool &&
+             data.insuranceRate is number && data.insuranceRate >= 0 && data.insuranceRate <= 20 &&
+             data.monthlyPayment is number && data.monthlyPayment >= 0 && data.monthlyPayment <= 100000000 &&
+             data.totalCost is number && data.totalCost >= 0 && data.totalCost <= 500000000 &&
+             data.debtToIncomeRatio is number && data.debtToIncomeRatio >= 0 && data.debtToIncomeRatio <= 10000 &&
+             data.maxAllowedDti is number && data.maxAllowedDti in [45, 50, 55, 60] &&
+             data.linkToMonthlyExpenses is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
     match /users/{userId} {
       allow get: if isOwner(userId) && isValidId(userId);
       allow list: if isOwner(userId) && existing().userId == request.auth.uid;
@@ -190,6 +221,18 @@ service cloud.firestore {
                          incoming().userId == existing().userId &&
                          incoming().createdAt == existing().createdAt;
         allow delete: if isOwner(userId) && isValidId(userId) && isValidId(itemId);
+      }
+
+      match /credits/{creditId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(creditId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(creditId) &&
+                         isValidSavedCredit(incoming());
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(creditId) &&
+                         isValidSavedCredit(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(creditId);
       }
     }
   }

@@ -88,6 +88,35 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "itemType", "name", "subtitle", "amount", "secondaryAmount", "dayOrTurn", "extraInt", "dateOrCycle", "createdAt", "updatedAt"]
+    },
+    "SavedCreditEntity": {
+      "title": "SavedCreditEntity",
+      "description": "Saved Moroccan BCP-aligned credit simulation with monthly installment, total cost, DTI ratio, and optional budget linkage.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "type": { "type": "string", "enum": ["CONSOMMATION", "AUTO", "IMMOBILIER"] },
+        "loanAmount": { "type": "number" },
+        "downPayment": { "type": "number" },
+        "financedPrincipal": { "type": "number" },
+        "durationMonths": { "type": "integer" },
+        "deferredMonths": { "type": "integer" },
+        "annualInterestRateHt": { "type": "number" },
+        "applyInterestTva": { "type": "boolean" },
+        "insuranceRate": { "type": "number" },
+        "monthlyPayment": { "type": "number" },
+        "totalCost": { "type": "number" },
+        "debtToIncomeRatio": { "type": "number" },
+        "maxAllowedDti": { "type": "number" },
+        "linkToMonthlyExpenses": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())" }
+      },
+      "required": [
+        "userId", "type", "loanAmount", "downPayment", "financedPrincipal",
+        "durationMonths", "deferredMonths", "annualInterestRateHt", "applyInterestTva",
+        "insuranceRate", "monthlyPayment", "totalCost", "debtToIncomeRatio",
+        "maxAllowedDti", "linkToMonthlyExpenses", "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -110,6 +139,10 @@
     "/users/{userId}/items/{itemId}": {
       "schema": { "$ref": "#/entities/FinancialItem" },
       "description": "User goals, recurring bills, debts, Daret trackers, seasonal planners, and quick presets."
+    },
+    "/users/{userId}/credits/{creditId}": {
+      "schema": { "$ref": "#/entities/SavedCreditEntity" },
+      "description": "User saved Moroccan credit simulations."
     }
   }
 }

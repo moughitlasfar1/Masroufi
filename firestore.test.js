@@ -392,3 +392,108 @@ test("Prompt 6 negative rules: missing fields, extra fields, wrong types, out-of
   await assertFails(aliceDb.collection("unmapped_public").doc("doc1").set({ hello: "world" }));
 });
 
+test("Credit Simulator: owner can create, list, get, and delete valid credits; unauth, cross-user, and invalid payloads fail", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const past = new Date(Date.now() - 10_000);
+  const farFuture = new Date(Date.now() + 3600_000);
+
+  const validCredit = {
+    userId: ALICE_UID,
+    type: "CONSOMMATION",
+    loanAmount: 100000,
+    downPayment: 10000,
+    financedPrincipal: 90000,
+    durationMonths: 60,
+    deferredMonths: 2,
+    annualInterestRateHt: 7.5,
+    applyInterestTva: true,
+    insuranceRate: 0.45,
+    monthlyPayment: 1865.5,
+    totalCost: 21930.0,
+    debtToIncomeRatio: 31.1,
+    maxAllowedDti: 45.0,
+    linkToMonthlyExpenses: true,
+    createdAt: past,
+  };
+
+  // Owner empty list succeeds (no PERMISSION_DENIED on empty subcollection)
+  await assertSucceeds(aliceDb.collection("users").doc(ALICE_UID).collection("credits").get());
+
+  // Unauthenticated read/write fails
+  await assertFails(unauthDb.collection("users").doc(ALICE_UID).collection("credits").get());
+  await assertFails(unauthDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_unauth").set(validCredit));
+
+  // Owner valid create succeeds
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_1").set(validCredit)
+  );
+
+  // Owner get & list ordered by createdAt desc (mirrors CreditRepository.observeSavedCredits)
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_1").get()
+  );
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").orderBy("createdAt", "desc").get()
+  );
+
+  // Cross-user read/list/write/delete rejected
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_1").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("credits").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_bob").set({ ...validCredit, userId: BOB_UID }));
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_1").delete());
+
+  // Invalid payloads rejected: loanAmount <= 0, durationMonths <= 0, downPayment > loanAmount, unknown type, ghost field, future timestamp, spoofed userId
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_bad_amt").set({
+      ...validCredit,
+      loanAmount: 0,
+      downPayment: 0,
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_bad_dur").set({
+      ...validCredit,
+      durationMonths: 0,
+      deferredMonths: 0,
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_bad_dp").set({
+      ...validCredit,
+      downPayment: 120000,
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_bad_type").set({
+      ...validCredit,
+      type: "CRYPTO_LOAN",
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_ghost").set({
+      ...validCredit,
+      id: "cred_ghost",
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_future").set({
+      ...validCredit,
+      createdAt: farFuture,
+    })
+  );
+  await assertFails(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_spoof").set({
+      ...validCredit,
+      userId: BOB_UID,
+    })
+  );
+
+  // Owner delete succeeds
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).collection("credits").doc("cred_1").delete()
+  );
+});
+
+

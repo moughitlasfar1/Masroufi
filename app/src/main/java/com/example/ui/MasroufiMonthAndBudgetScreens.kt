@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -960,7 +961,9 @@ fun BudgetAndDaretScreen(
     onQuickPresetTap: (FinancialItem) -> Unit = {},
     onAddPresetModal: (FinancialItem?) -> Unit = {},
     onDeletePreset: (String) -> Unit = {},
-    onTriggerReminderAction: (SmartReminder) -> Unit = {}
+    onTriggerReminderAction: (SmartReminder) -> Unit = {},
+    savedCreditsCount: Int = 0,
+    onOpenCreditSimulator: () -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
@@ -1129,6 +1132,93 @@ fun BudgetAndDaretScreen(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // 0A-bis. Dedicated Moroccan Credit Simulator Tool Card
+        item(key = "plan_credit_simulator") {
+            val creditStrings = remember(lang) {
+                com.masroufi.credit.domain.CreditStrings.forLang(lang)
+            }
+            ExpressiveGlassCard(
+                cornerRadius = 28.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenCreditSimulator() }
+                    .testTag("tools_credit_simulator_card")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Calculate,
+                            contentDescription = creditStrings.toolCardTitle,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = creditStrings.toolCardTitle,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                            ) {
+                                Text(
+                                    text = if (savedCreditsCount > 0) {
+                                        "$savedCreditsCount"
+                                    } else {
+                                        "BCP"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = creditStrings.toolCardSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    FilledTonalButton(
+                        onClick = onOpenCreditSimulator,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                        modifier = Modifier.testTag("tools_credit_simulator_open_button")
+                    ) {
+                        Text(
+                            text = creditStrings.toolCardCta,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

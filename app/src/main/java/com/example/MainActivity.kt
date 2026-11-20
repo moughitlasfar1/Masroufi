@@ -188,6 +188,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
+import com.masroufi.credit.data.CreditRepository
+import com.masroufi.credit.domain.CreditCalculator
+import com.masroufi.credit.domain.CreditStrings
+import com.masroufi.credit.presentation.CreditSimulatorScreen
+import com.masroufi.credit.presentation.CreditSimulatorViewModel
 
 internal val MAIN_TAB_KEYS = listOf("vue", "semaine", "categories", "historique")
 
@@ -436,6 +441,24 @@ fun MainFeatureScreen(
             }
         }
     )
+
+    val creditViewModel: CreditSimulatorViewModel = viewModel(
+        key = "credit_simulator_$currentUserId",
+        factory = viewModelFactory {
+            initializer {
+                val app = checkNotNull(this[APPLICATION_KEY]) {
+                    "APPLICATION_KEY missing from CreationExtras"
+                }
+                val databaseId = app.getString(R.string.firestore_database_id)
+                val db = FirebaseFirestore.getInstance(databaseId)
+                CreditSimulatorViewModel(
+                    repository = CreditRepository(db = db, auth = Firebase.auth)
+                )
+            }
+        }
+    )
+    val creditUiState by creditViewModel.uiState.collectAsStateWithLifecycle()
+    var showCreditSimulator by remember { mutableStateOf(false) }
 
     val rawState by viewModel.uiState.collectAsStateWithLifecycle()
     val systemInDark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -827,6 +850,47 @@ fun MainFeatureScreen(
                 return@CompositionLocalProvider
             }
 
+            if (showCreditSimulator) {
+                ExpressiveAmbientBackground(
+                    accentPalette = state.customPrefs.accentPalette,
+                    isDarkTheme = state.profile.isDarkTheme
+                ) {
+                    CreditSimulatorScreen(
+                        viewModel = creditViewModel,
+                        language = state.profile.language,
+                        initialMonthlyIncome = state.profile.baseBudget,
+                        isLocalMode = isLocalMode,
+                        onBack = { showCreditSimulator = false },
+                        onRequestGoogleSignIn = {
+                            showCreditSimulator = false
+                            onExitLocalModeToGoogleSignIn()
+                        },
+                        onCreateLinkedRecurringBill = { savedInput, savedResult ->
+                            val cStrings = CreditStrings.forLang(state.profile.language)
+                            val typeLabel = cStrings.presetLabel(savedInput.creditType)
+                            val billName = cStrings.billPrefixFmt.replace("{type}", typeLabel)
+                            val billSub = cStrings.billSubtitleFmt
+                                .replace("{months}", savedInput.durationMonths.toString())
+                                .replace("{rate}", CreditCalculator.formatPercent(savedInput.annualInterestRateHt))
+                            viewModel.saveFinancialItem(
+                                FinancialItem(
+                                    id = "bill_credit_${System.currentTimeMillis()}",
+                                    itemType = "bill",
+                                    name = billName,
+                                    subtitle = billSub,
+                                    amount = PayCycleEngine.roundMoney(savedResult.monthlyPayment),
+                                    secondaryAmount = 0.0,
+                                    dayOrTurn = state.profile.payCycleDay.coerceIn(1, 28),
+                                    extraInt = 0,
+                                    dateOrCycle = ""
+                                )
+                            )
+                        }
+                    )
+                }
+                return@CompositionLocalProvider
+            }
+
             ExpressiveAmbientBackground(
                 accentPalette = state.customPrefs.accentPalette,
                 isDarkTheme = state.profile.isDarkTheme
@@ -849,6 +913,7 @@ fun MainFeatureScreen(
                                 togglePrivacyMask()
                             },
                             onOpenSettings = { activeSheet = ActiveSheet.Settings },
+                            onOpenCreditSimulator = { showCreditSimulator = true },
                             onShiftCycle = { delta -> viewModel.shiftCycle(delta) }
                         )
                     },
@@ -1244,7 +1309,9 @@ fun MainFeatureScreen(
                                                 "daret" -> viewModel.payDaretRound(reminder.item)
                                                 "debt" -> viewModel.settleDebt(reminder.item, 100.0)
                                             }
-                                        }
+                                        },
+                                        savedCreditsCount = creditUiState.savedCredits.size,
+                                        onOpenCreditSimulator = { showCreditSimulator = true }
                                     )
 
                                     "historique" -> HistoryScreen(

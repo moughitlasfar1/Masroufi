@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -63,6 +64,7 @@ fun DashboardHeader(
     endIso: String,
     onTogglePrivacy: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenCreditSimulator: () -> Unit = {},
     onShiftCycle: (Int) -> Unit
 ) {
     val pal = paletteForKey(accentPalette)
@@ -166,6 +168,29 @@ fun DashboardHeader(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val creditStrings = remember(language) {
+                        com.masroufi.credit.domain.CreditStrings.forLang(language)
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = circleBtnBg,
+                        border = BorderStroke(1.dp, circleBtnBorder),
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .clickable { onOpenCreditSimulator() }
+                            .testTag("credit_simulator_header_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Calculate,
+                                contentDescription = creditStrings.headerButtonDesc,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
                     Surface(
                         shape = CircleShape,
                         color = circleBtnBg,
