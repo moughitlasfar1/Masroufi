@@ -60,3 +60,9 @@
 -keep class * implements androidx.versionedparcelable.VersionedParcelable {
     <init>();
 }
+
+# SQLCipher for Android (minimal R8 rules: net.zetetic.database.** and JNI native methods only)
+-keep class net.zetetic.database.** { *; }
+-keepclasseswithmembernames class * {
+    native <methods>;
+}

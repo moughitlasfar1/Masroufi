@@ -183,11 +183,16 @@ import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreSettings
 import com.google.firebase.firestore.PersistentCacheSettings
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import com.example.data.local.DatabaseHealthState
+import com.example.data.local.MasroufiDatabaseProvider
+import com.example.ui.DatabaseRecoveryDialog
 import com.masroufi.credit.data.CreditRepository
 import com.masroufi.credit.domain.CreditCalculator
 import com.masroufi.credit.domain.CreditStrings
@@ -478,6 +483,16 @@ fun MainFeatureScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     val pendingBankDetections by com.example.notifications.BankDetectionStore.pendingItemsFlow.collectAsStateWithLifecycle()
+    val localDbHealth by MasroufiDatabaseProvider.healthState.collectAsStateWithLifecycle()
+
+    // Phase 1a: Initialize encrypted SQLCipher Room database on IO thread (only when native lib loaded)
+    LaunchedEffect(Unit) {
+        if (MasroufiApplication.isSqlCipherNativeLoaded) {
+            withContext(Dispatchers.IO) {
+                MasroufiDatabaseProvider.getOrOpen(context)
+            }
+        }
+    }
 
     // Restore persistent privacy mask & load pending bank detections
     LaunchedEffect(Unit) {
@@ -1735,6 +1750,23 @@ fun MainFeatureScreen(
                     },
                     onImportFile = {
                         importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    }
+                )
+            }
+
+            if (localDbHealth is DatabaseHealthState.RecoveryRequired) {
+                DatabaseRecoveryDialog(
+                    language = state.profile.language,
+                    onRestoreBackup = {
+                        scope.launch(Dispatchers.IO) {
+                            MasroufiDatabaseProvider.resetAndReopen(context)
+                        }
+                        activeSheet = ActiveSheet.RestoreBackup
+                    },
+                    onResetLocalDatabase = {
+                        scope.launch(Dispatchers.IO) {
+                            MasroufiDatabaseProvider.resetAndReopen(context)
+                        }
                     }
                 )
             }
