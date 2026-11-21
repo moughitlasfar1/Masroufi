@@ -52,6 +52,9 @@ interface MasroufiDao {
     @Query("SELECT * FROM transactions WHERE userId = :userId")
     suspend fun getTransactions(userId: String): List<TransactionEntity>
 
+    @Query("SELECT * FROM transactions WHERE userId = :userId AND id = :txId LIMIT 1")
+    suspend fun getTransactionById(userId: String, txId: String): TransactionEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertTransaction(tx: TransactionEntity)
 
@@ -106,6 +109,9 @@ interface MasroufiDao {
     @Query("SELECT * FROM saved_credits WHERE userId = :userId ORDER BY createdAtEpochMs DESC")
     fun observeSavedCredits(userId: String): Flow<List<SavedCreditLocalEntity>>
 
+    @Query("SELECT * FROM saved_credits WHERE userId = :userId ORDER BY createdAtEpochMs DESC")
+    suspend fun getSavedCredits(userId: String): List<SavedCreditLocalEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSavedCredit(credit: SavedCreditLocalEntity)
 
@@ -143,6 +149,55 @@ interface MasroufiDao {
 
     @Query("DELETE FROM user_profiles WHERE userId = :userId")
     suspend fun deleteProfileForUser(userId: String)
+
+    @Transaction
+    suspend fun upsertItemAndTransactionAtomically(
+        item: FinancialItemEntity,
+        tx: TransactionEntity
+    ) {
+        upsertFinancialItem(item)
+        upsertTransaction(tx)
+    }
+
+    @Transaction
+    suspend fun resetUserToCleanAtomically(
+        userId: String,
+        txIdsToDelete: List<String>,
+        itemIdsToDelete: List<String>,
+        accountIdsToDelete: List<String>,
+        cleanAccounts: List<AccountEntity>
+    ) {
+        txIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteTransaction(userId, id) }
+        itemIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteFinancialItem(userId, id) }
+        accountIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteAccount(userId, id) }
+        if (cleanAccounts.isNotEmpty()) upsertAccounts(cleanAccounts)
+    }
+
+    @Transaction
+    suspend fun restoreBackupSnapshotAtomically(
+        userId: String,
+        profile: UserProfileEntity?,
+        customPrefsItem: FinancialItemEntity?,
+        accounts: List<AccountEntity>,
+        envelopes: List<EnvelopeEntity>,
+        financialItems: List<FinancialItemEntity>,
+        transactions: List<TransactionEntity>,
+        staleTxIdsToDelete: List<String>,
+        staleItemIdsToDelete: List<String>,
+        staleAccountIdsToDelete: List<String>,
+        staleEnvelopeIdsToDelete: List<String>
+    ) {
+        if (profile != null) upsertProfile(profile)
+        if (customPrefsItem != null) upsertFinancialItem(customPrefsItem)
+        if (accounts.isNotEmpty()) upsertAccounts(accounts)
+        if (envelopes.isNotEmpty()) upsertEnvelopes(envelopes)
+        if (financialItems.isNotEmpty()) upsertFinancialItems(financialItems)
+        if (transactions.isNotEmpty()) upsertTransactions(transactions)
+        staleTxIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteTransaction(userId, id) }
+        staleItemIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteFinancialItem(userId, id) }
+        staleAccountIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteAccount(userId, id) }
+        staleEnvelopeIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteEnvelope(userId, id) }
+    }
 
     @Transaction
     suspend fun replaceAllUserData(

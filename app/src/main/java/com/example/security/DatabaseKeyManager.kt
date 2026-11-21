@@ -146,4 +146,44 @@ object DatabaseKeyManager {
             }
         }
     }
+
+    private val SQLITE_PLAINTEXT_MAGIC = "SQLite format 3".toByteArray(Charsets.US_ASCII)
+    private const val SQLITE_HEADER_PROBE_BYTES = 16
+
+    /**
+     * Reads the first 16 bytes of [file] directly from disk and verifies that it does NOT
+     * begin with the unencrypted SQLite header ("SQLite format 3").
+     *
+     * A real SQLCipher database encrypts page 1 (starting with a random 16-byte salt), so its
+     * on-disk header will never match the plaintext SQLite magic string.
+     */
+    fun verifyDatabaseFileEncrypted(file: File): DbEncryptionHeaderCheck {
+        if (!file.exists() || file.length() < SQLITE_HEADER_PROBE_BYTES) {
+            return DbEncryptionHeaderCheck.FileMissingOrTooShort
+        }
+        return runCatching {
+            val header = ByteArray(SQLITE_HEADER_PROBE_BYTES)
+            val bytesRead = file.inputStream().use { it.read(header) }
+            if (bytesRead < SQLITE_PLAINTEXT_MAGIC.size) {
+                return@runCatching DbEncryptionHeaderCheck.FileMissingOrTooShort
+            }
+            val matchesPlaintext = SQLITE_PLAINTEXT_MAGIC.indices.all { idx ->
+                header[idx] == SQLITE_PLAINTEXT_MAGIC[idx]
+            }
+            if (matchesPlaintext) {
+                DbEncryptionHeaderCheck.PlaintextSqliteDetected
+            } else {
+                DbEncryptionHeaderCheck.VerifiedEncrypted
+            }
+        }.getOrElse {
+            DbEncryptionHeaderCheck.ReadError
+        }
+    }
+}
+
+sealed interface DbEncryptionHeaderCheck {
+    data object VerifiedEncrypted : DbEncryptionHeaderCheck
+    data object PlaintextSqliteDetected : DbEncryptionHeaderCheck
+    data object FileMissingOrTooShort : DbEncryptionHeaderCheck
+    data object ReadError : DbEncryptionHeaderCheck
 }

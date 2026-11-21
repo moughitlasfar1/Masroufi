@@ -27,13 +27,16 @@
    - The new exported schema JSON committed in `app/schemas/com.example.data.local.MasroufiDatabase/<N+1>.json`.
    - An automated Room `MigrationTest` verifying zero row loss and accurate default/backfill values.
 
-## 4. Phase 1b Transition Plan (Firestore → Encrypted Room)
+## 4. Phase 1b Implementation (Firestore → Encrypted Room)
 
-- In Phase 1a, `MasroufiDatabase` v1 is bootstrapped and verified alongside the existing Firestore repository.
-- In Phase 1b:
-  1. Extract a clean data-source interface from `MasroufiRepository` and place a Room-backed repository behind it so ViewModels remain unchanged.
-  2. Perform a safe **one-time read-only Firestore → Room import** for existing signed-in users:
-     - First generate and persist an encrypted `.masroufi` backup snapshot.
-     - Read all 6 user collections (`profile`, `accounts`, `transactions`, `envelopes`, `items`, `credits`) into Room inside a single atomic `@Transaction`.
-     - Verify per-collection row counts match 100% and record verification in `import_metadata`.
-     - **Never** modify or delete any Firestore documents during import.
+- **Repository Interface & Routing**:
+  - `MasroufiDataSource` is extracted from `MasroufiRepository`; `MasroufiViewModel` depends strictly on `MasroufiDataSource` with zero behavioral changes.
+  - `RoomMasroufiRepository` writes atomically to Room first and performs non-blocking best-effort write-through to Firestore (swallowing offline errors) until Phase 2 replaces it with opt-in encrypted sync.
+  - `SwitchingMasroufiRepository` observes `DataSourceConfigStore.activeMode` (`flatMapLatest`) to flip reactively from `FIRESTORE_LEGACY` to `ROOM_PRIMARY` without recreating ViewModels, and honors the **Firestore fallback kill switch** (`settings_firestore_kill_switch`) immediately if fallback is needed.
+- **One-Time Read-Only `Source.SERVER` Import (`FirestoreToRoomImporter`)**:
+  1. Reads all 6 user collections (`profile`, `accounts`, `transactions`, `envelopes`, `items`, `credits`) strictly with `Source.SERVER` — never modifies or deletes Firestore documents.
+  2. If offline or any server read fails, aborts immediately with a localized 4-language error (`fr`/`ar`/`darija`/`en`) and leaves Room untouched.
+  3. Writes an AES-256-GCM encrypted `pre_import_<uid>.masroufi` backup to private app storage BEFORE writing any row to Room.
+  4. Writes all collections into Room inside a single atomic `@Transaction` (`replaceAllUserData`).
+  5. Verifies every per-collection row count independently against Room before writing `import_metadata` and flipping `DataSourceConfigStore` to `ROOM_PRIMARY`.
+  6. Fully idempotent and resumable on retry.

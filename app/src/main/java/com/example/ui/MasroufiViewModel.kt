@@ -8,7 +8,7 @@ import com.example.data.CustomizationPrefs
 import com.example.data.DefaultCategoryResolver
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
-import com.example.data.MasroufiRepository
+import com.example.data.MasroufiDataSource
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.domain.AccountWithBalance
@@ -666,7 +666,7 @@ data class DashboardState(
 )
 
 class MasroufiViewModel(
-    private val repository: MasroufiRepository,
+    private val repository: MasroufiDataSource,
     private val currentUserId: String,
     initialHideAmounts: Boolean = false,
     initialRollbackSnapshot: String? = null,

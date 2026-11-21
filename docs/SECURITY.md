@@ -14,11 +14,12 @@
   - Intermediate passphrase `ByteArray` buffers are explicitly zeroed (`fill(0)`) in `finally` blocks.
   - `SupportOpenHelperFactory(passphrase, null, clearPassphrase = true)` clears the passphrase array internally immediately after keying SQLCipher.
   - No key material is ever hardcoded, logged, or stored in plaintext SharedPreferences.
+- **On-Disk Encryption Header Verification**: After opening `masroufi_encrypted.db` with SQLCipher, `DatabaseKeyManager.verifyDatabaseFileEncrypted()` reads the first 16 bytes directly from disk and asserts they do **not** match the plaintext SQLite magic header (`"SQLite format 3"`). If a plaintext header is ever detected on a production DB, `MasroufiDatabaseProvider` closes the connection and fails closed to `RecoveryRequired("plaintext_header_detected")`.
 - **Corruption & Keystore Invalidation Recovery**:
   - If `masroufi_encrypted.db` already exists on disk while the `SecureStore` key is missing, malformed, or undecryptable (for example, after an OS Keystore reset or unsupported device restore), `DatabaseKeyManager.resolvePassphrase()` returns `DatabaseKeyResolution.KeyCorruptedOrMissing` without modifying or deleting the DB file.
   - `MasroufiDatabaseProvider` publishes `DatabaseHealthState.RecoveryRequired`, causing `MainActivity` to render `DatabaseRecoveryDialog` (4 languages) with two explicit choices:
     1. **Restore Encrypted Backup** (opens Masroufi's AES-256-GCM backup restore flow).
-    2. **Reset Local Database** (explicitly deletes DB + `-wal`/`-shm`/`-journal` and regenerates a fresh 256-bit key).
+    2. **Reset Local Database** (explicitly deletes DB + `-wal`/`-shm`/`-journal` and regenerates a fresh 256-bit key). Once Firestore → Room import has completed (`isRoomPrimaryAfterImport = true`), the dialog prominently warns that Room is now the only local copy and requires a second-step explicit checkbox confirmation before wiping.
 
 ## 3. Backup & Data Extraction Hardening
 

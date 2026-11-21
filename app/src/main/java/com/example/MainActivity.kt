@@ -190,8 +190,15 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.example.data.DataSourceConfigStore
+import com.example.data.SwitchingMasroufiRepository
 import com.example.data.local.DatabaseHealthState
+import com.example.data.local.FirebaseFirestoreServerSource
+import com.example.data.local.FirestoreImportResult
+import com.example.data.local.FirestoreToRoomImporter
+import com.example.data.local.MasroufiDatabase
 import com.example.data.local.MasroufiDatabaseProvider
+import com.example.data.local.RoomMasroufiRepository
 import com.example.ui.DatabaseRecoveryDialog
 import com.masroufi.credit.data.CreditRepository
 import com.masroufi.credit.domain.CreditCalculator
@@ -421,8 +428,30 @@ fun MainFeatureScreen(
                 }
                 val databaseId = app.getString(R.string.firestore_database_id)
                 val db = FirebaseFirestore.getInstance(databaseId)
+                val firestoreRepo = MasroufiRepository(db)
+                var cachedDbRef: MasroufiDatabase? = null
+                var cachedRoomRepo: RoomMasroufiRepository? = null
+                val switchingRepo = SwitchingMasroufiRepository(
+                    firestoreFallback = firestoreRepo,
+                    roomRepositoryProvider = {
+                        val openDb = MasroufiDatabaseProvider.getOpenInstanceOrNull()
+                        if (openDb == null) {
+                            null
+                        } else if (openDb === cachedDbRef && cachedRoomRepo != null) {
+                            cachedRoomRepo
+                        } else {
+                            RoomMasroufiRepository(
+                                dao = openDb.masroufiDao(),
+                                cloudWriteThrough = firestoreRepo
+                            ).also {
+                                cachedDbRef = openDb
+                                cachedRoomRepo = it
+                            }
+                        }
+                    }
+                )
                 MasroufiViewModel(
-                    repository = MasroufiRepository(db),
+                    repository = switchingRepo,
                     currentUserId = currentUserId,
                     initialHideAmounts = AppSecurityManager.isHideAmountsEnabled(app),
                     initialRollbackSnapshot = AppSecurityManager.loadEncryptedRollbackSnapshot(app),
@@ -484,12 +513,50 @@ fun MainFeatureScreen(
 
     val pendingBankDetections by com.example.notifications.BankDetectionStore.pendingItemsFlow.collectAsStateWithLifecycle()
     val localDbHealth by MasroufiDatabaseProvider.healthState.collectAsStateWithLifecycle()
+    val killSwitchEnabled by DataSourceConfigStore.killSwitchEnabled.collectAsStateWithLifecycle()
+    var importRetryTick by remember { mutableStateOf(0) }
 
-    // Phase 1a: Initialize encrypted SQLCipher Room database on IO thread (only when native lib loaded)
-    LaunchedEffect(Unit) {
-        if (MasroufiApplication.isSqlCipherNativeLoaded) {
-            withContext(Dispatchers.IO) {
-                MasroufiDatabaseProvider.getOrOpen(context)
+    // Phase 1a + 1b: Open encrypted SQLCipher Room DB and run one-time Source.SERVER import
+    LaunchedEffect(currentUserId, killSwitchEnabled, importRetryTick) {
+        if (!MasroufiApplication.isSqlCipherNativeLoaded) {
+            DataSourceConfigStore.refreshActiveMode(context, currentUserId, isRoomHealthy = false)
+            return@LaunchedEffect
+        }
+        val importResult = withContext(Dispatchers.IO) {
+            val roomDb = MasroufiDatabaseProvider.getOrOpen(context)
+            val healthy = roomDb != null
+            DataSourceConfigStore.refreshActiveMode(context, currentUserId, isRoomHealthy = healthy)
+            if (roomDb != null &&
+                !DataSourceConfigStore.isFirestoreKillSwitchEnabled(context) &&
+                !DataSourceConfigStore.isRoomImportCompleted(context, currentUserId)
+            ) {
+                val databaseId = context.getString(R.string.firestore_database_id)
+                val firestoreDb = FirebaseFirestore.getInstance(databaseId)
+                FirestoreToRoomImporter.runImport(
+                    context = context,
+                    userId = currentUserId,
+                    language = state.profile.language,
+                    dao = roomDb.masroufiDao(),
+                    serverSource = FirebaseFirestoreServerSource(firestoreDb)
+                )
+            } else {
+                null
+            }
+        }
+        if (importResult is FirestoreImportResult.Failed) {
+            val retryLabel = when (state.profile.language.lowercase()) {
+                "ar" -> "إعادة"
+                "darija" -> "عاود"
+                "en" -> "Retry"
+                else -> "Réessayer"
+            }
+            val snackRes = snackbarHostState.showSnackbar(
+                message = importResult.localizedMessage,
+                actionLabel = retryLabel,
+                duration = SnackbarDuration.Long
+            )
+            if (snackRes == SnackbarResult.ActionPerformed) {
+                importRetryTick++
             }
         }
     }
@@ -1755,17 +1822,25 @@ fun MainFeatureScreen(
             }
 
             if (localDbHealth is DatabaseHealthState.RecoveryRequired) {
+                val roomPrimaryAfterImport = remember(currentUserId, localDbHealth) {
+                    DataSourceConfigStore.isRoomImportCompleted(context, currentUserId) ||
+                        DataSourceConfigStore.isAnyUserRoomImportCompleted(context)
+                }
                 DatabaseRecoveryDialog(
                     language = state.profile.language,
+                    isRoomPrimaryAfterImport = roomPrimaryAfterImport,
                     onRestoreBackup = {
                         scope.launch(Dispatchers.IO) {
                             MasroufiDatabaseProvider.resetAndReopen(context)
+                            DataSourceConfigStore.refreshActiveMode(context, currentUserId)
                         }
                         activeSheet = ActiveSheet.RestoreBackup
                     },
                     onResetLocalDatabase = {
                         scope.launch(Dispatchers.IO) {
+                            DataSourceConfigStore.clearRoomImportCompletedForUser(context, currentUserId)
                             MasroufiDatabaseProvider.resetAndReopen(context)
+                            DataSourceConfigStore.refreshActiveMode(context, currentUserId)
                         }
                     }
                 )

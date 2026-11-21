@@ -783,6 +783,52 @@ fun SettingsBottomSheet(
                             modifier = Modifier.testTag("settings_cloud_only_mode_switch")
                         )
                     }
+
+                    // Phase 1b: Kill switch to fall back to legacy Firestore repository immediately
+                    var firestoreKillSwitch by remember {
+                        mutableStateOf(com.example.data.DataSourceConfigStore.isFirestoreKillSwitchEnabled(context))
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "الرجوع الطارئ إلى Firestore (إيقاف القاعدة المحلية)"
+                                    "darija" -> "رجوع طارئ لـ Firestore (حبس القاعدة المحلية)"
+                                    "en" -> "Legacy Firestore fallback (kill switch)"
+                                    else -> "Bascule de secours Firestore (kill switch)"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = when (lang) {
+                                    "ar" -> "يعيد القراءة والكتابة مباشرة إلى Firestore في حال تعذّر الاستيراد المحلي"
+                                    "darija" -> "كيرجّع التطبيق يخدم نيشان بـ Firestore إلا وقع مشكل فالنقل المحلي"
+                                    "en" -> "Falls back immediately to the legacy Firestore repository if local import fails"
+                                    else -> "Revient immédiatement au dépôt Firestore classique en cas d'échec d'import local"
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Switch(
+                            checked = firestoreKillSwitch,
+                            onCheckedChange = { enabled ->
+                                firestoreKillSwitch = enabled
+                                com.example.data.DataSourceConfigStore.setFirestoreKillSwitchEnabled(
+                                    context = context,
+                                    enabled = enabled,
+                                    currentUserId = state.profile.userId.ifBlank { null }
+                                )
+                            },
+                            modifier = Modifier.testTag("settings_firestore_kill_switch")
+                        )
+                    }
                 }
             }
 

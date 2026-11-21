@@ -10,8 +10,9 @@
   - Pure Kotlin engines with zero Android framework dependencies: `PayCycleEngine`, `VoiceDarijaParser`, `BankMessageParser`, `CreditCalculator`.
   - Runtime 4-language localization tables (`Translations.kt`, `CreditStrings.kt`) supporting **Français**, **العربية** (RTL), **الدارجة المغربية**, and **English** with instant in-app switching (no XML locale resources).
 - **Data (`com.example.data`, `com.example.data.local`, `com.masroufi.credit.data`)**:
-  - **Local Encrypted DB (Phase 1a+)**: Room `2.7.0` + SQLCipher `4.20.0` (`MasroufiDatabase`, `MasroufiDao`, `MasroufiDatabaseProvider`).
-  - **Cloud Firestore**: Named database (`R.string.firestore_database_id`) with zero-trust owner-only security rules (`firestore.rules`) and Firebase App Check. Transitioning to an optional, opt-in encrypted sync layer in Phases 1b–2.
+  - **Repository Boundary**: `MasroufiDataSource` interface implemented by `RoomMasroufiRepository` (encrypted local Room + best-effort Firestore write-through), `MasroufiRepository` (legacy Firestore fallback), and `SwitchingMasroufiRepository` (runtime router controlled by `DataSourceConfigStore` + Firestore fallback kill switch).
+  - **Local Encrypted DB (Phase 1a–1b)**: Room `2.7.0` + SQLCipher `4.20.0` (`MasroufiDatabase`, `MasroufiDao`, `MasroufiDatabaseProvider`) with strict `Source.SERVER` one-time read-only `FirestoreToRoomImporter`.
+  - **Cloud Firestore**: Named database (`R.string.firestore_database_id`) with zero-trust owner-only security rules (`firestore.rules`) and Firebase App Check. Transitioning to an optional, opt-in client-encrypted sync layer in Phase 2.
 - **Security (`com.example.security`)**:
   - `SecureStore`: AndroidKeyStore AES-256-GCM key-value wrapper with key-name AAD binding.
   - `DatabaseKeyManager`: Manages the 256-bit SQLCipher passphrase inside `SecureStore`.
