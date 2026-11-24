@@ -68,4 +68,27 @@ class QuickTileAndShortcutsStep1Test {
         assertEquals("25.0", voiceBiiForward!!.getStringExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_AMOUNT))
         assertEquals("Taxi", voiceBiiForward.getStringExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_MERCHANT))
     }
+
+    @Test
+    fun `QuickAddLauncherAliasManager toggles Masroufi + power button shortcut alias and has 4-language strings`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        org.junit.Assert.assertFalse(
+            com.example.notifications.QuickAddLauncherAliasManager.isQuickAddAliasEnabled(context)
+        )
+        com.example.notifications.QuickAddLauncherAliasManager.setQuickAddAliasEnabled(context, true)
+        assertTrue(
+            com.example.notifications.QuickAddLauncherAliasManager.isQuickAddAliasEnabled(context)
+        )
+        com.example.notifications.QuickAddLauncherAliasManager.setQuickAddAliasEnabled(context, false)
+        org.junit.Assert.assertFalse(
+            com.example.notifications.QuickAddLauncherAliasManager.isQuickAddAliasEnabled(context)
+        )
+
+        for (lang in listOf("fr", "en", "ar", "darija")) {
+            val s = com.example.domain.Translations.forLang(lang)
+            assertTrue(s.powerButtonQuickAddTitle.isNotBlank())
+            assertTrue(s.powerButtonOpenSettingsBtn.isNotBlank())
+            assertTrue(s.powerButtonGuideSteps.isNotBlank())
+        }
+    }
 }

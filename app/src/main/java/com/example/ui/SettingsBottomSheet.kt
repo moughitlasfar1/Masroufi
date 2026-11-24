@@ -13,6 +13,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -42,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -934,6 +936,112 @@ fun SettingsBottomSheet(
                             },
                             modifier = Modifier.testTag("settings_voice_launcher_alias_switch")
                         )
+                    }
+
+                    // Double-tap Power / Side Button -> Add Expense ("Masroufi +" launcher alias)
+                    var quickAddAliasEnabled by remember {
+                        mutableStateOf(
+                            com.example.notifications.QuickAddLauncherAliasManager.isQuickAddAliasEnabled(context)
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_power_button_card")
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = strings.powerButtonQuickAddTitle,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = strings.powerButtonQuickAddSub,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = strings.powerButtonToggleLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Switch(
+                                    checked = quickAddAliasEnabled,
+                                    onCheckedChange = { enabled ->
+                                        quickAddAliasEnabled = enabled
+                                        com.example.notifications.QuickAddLauncherAliasManager.setQuickAddAliasEnabled(
+                                            context,
+                                            enabled
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("settings_quick_add_launcher_alias_switch")
+                                )
+                            }
+                            Text(
+                                text = strings.powerButtonGuideSteps,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (!quickAddAliasEnabled) {
+                                            quickAddAliasEnabled = true
+                                            com.example.notifications.QuickAddLauncherAliasManager.setQuickAddAliasEnabled(
+                                                context,
+                                                true
+                                            )
+                                        }
+                                        com.example.notifications.QuickAddLauncherAliasManager.openSystemPowerButtonSettings(
+                                            context
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("settings_power_button_open_btn")
+                                ) {
+                                    Text(
+                                        text = strings.powerButtonOpenSettingsBtn,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        com.example.notifications.QuickAddLauncherAliasManager.launchQuickAddTest(context)
+                                    },
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier.testTag("settings_power_button_test_btn")
+                                ) {
+                                    Text(
+                                        text = strings.powerButtonTestBtn,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
                     }
 
                     // Google Assistant ("Ok Google") Expense Integration Section

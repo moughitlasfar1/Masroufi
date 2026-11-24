@@ -113,6 +113,20 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- Opt-in launcher alias for Power / Side button double-press -> Open app -> Masroufi + -->
+        <activity-alias
+            android:name=".widget.MasroufiQuickAddLauncherAlias"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_round"
+            android:label="@string/quick_add_launcher_alias_label"
+            android:targetActivity=".widget.QuickCaptureActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <activity
             android:name=".widget.WidgetConfigActivity"
             android:exported="true"

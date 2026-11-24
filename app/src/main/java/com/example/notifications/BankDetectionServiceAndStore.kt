@@ -1082,3 +1082,79 @@ object VoiceLauncherAliasManager {
         }
     }
 }
+
+/**
+ * Manages the opt-in "Masroufi +" launcher activity-alias so users can map
+ * Double-press Power / Side Button -> Open app -> "Masroufi +" in Android OEM settings
+ * (Samsung Side button, Xiaomi/Redmi/POCO Gesture shortcuts, OnePlus/Nothing/Pixel Quick Tap).
+ */
+object QuickAddLauncherAliasManager {
+    const val ALIAS_CLASS_NAME = "com.example.widget.MasroufiQuickAddLauncherAlias"
+
+    fun isQuickAddAliasEnabled(context: Context): Boolean {
+        return runCatching {
+            val cn = ComponentName(context.packageName, ALIAS_CLASS_NAME)
+            val state = context.packageManager.getComponentEnabledSetting(cn)
+            state == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        }.getOrDefault(false)
+    }
+
+    fun setQuickAddAliasEnabled(context: Context, enabled: Boolean) {
+        runCatching {
+            val cn = ComponentName(context.packageName, ALIAS_CLASS_NAME)
+            val newState = if (enabled) {
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+            } else {
+                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+            }
+            context.packageManager.setComponentEnabledSetting(
+                cn,
+                newState,
+                PackageManager.DONT_KILL_APP
+            )
+        }
+    }
+
+    /**
+     * Opens the closest available system Power/Side button or Gesture settings screen,
+     * falling back safely to Android System Settings without crashing on any OEM ROM.
+     */
+    fun openSystemPowerButtonSettings(context: Context): Boolean {
+        val candidates = listOf(
+            // Samsung One UI Side button settings
+            Intent().setClassName(
+                "com.android.settings",
+                "com.samsung.android.settings.usefulfeature.functionkey.FunctionKeySettings"
+            ),
+            // Xiaomi MIUI / HyperOS Gesture & Button shortcuts
+            Intent().setClassName(
+                "com.android.settings",
+                "com.android.settings.KeySettingsActivity"
+            ),
+            // Standard Android System Gestures settings
+            Intent("android.settings.GESTURE_SETTINGS"),
+            // Universal fallback: main Android Settings
+            Intent(android.provider.Settings.ACTION_SETTINGS)
+        )
+        for (candidate in candidates) {
+            candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val launched = runCatching {
+                context.startActivity(candidate)
+                true
+            }.getOrDefault(false)
+            if (launched) return true
+        }
+        return false
+    }
+
+    /** Launches QuickCaptureActivity directly in Add Expense keypad mode for instant preview/testing. */
+    fun launchQuickAddTest(context: Context) {
+        runCatching {
+            val intent = Intent(context, com.example.widget.QuickCaptureActivity::class.java).apply {
+                action = com.example.widget.MasroufiAppWidget.ACTION_QUICK_ADD
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            context.startActivity(intent)
+        }
+    }
+}

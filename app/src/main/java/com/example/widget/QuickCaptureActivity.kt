@@ -169,6 +169,7 @@ class QuickCaptureActivity : FragmentActivity() {
         AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
 
         val launchedViaVoiceAlias = intent?.component?.className?.endsWith("MasroufiVoiceLauncherAlias") == true
+        val launchedViaQuickAddAlias = intent?.component?.className?.endsWith("MasroufiQuickAddLauncherAlias") == true
         val rawAction = intent?.action
         val presetName = AssistantEntryValidator.sanitizeText(
             intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_NAME)
@@ -198,6 +199,7 @@ class QuickCaptureActivity : FragmentActivity() {
                     assistantResolution is AssistantExpenseResolution.AutoLoggedBatch -> "confirm_batch"
                     assistantResolution is AssistantExpenseResolution.OpenVoiceCapture -> MasroufiAppWidget.ACTION_QUICK_VOICE
                     assistantResolution is AssistantExpenseResolution.OpenKeypadCapture -> MasroufiAppWidget.ACTION_QUICK_ADD
+                    launchedViaQuickAddAlias -> MasroufiAppWidget.ACTION_QUICK_ADD
                     launchedViaVoiceAlias -> MasroufiAppWidget.ACTION_QUICK_VOICE
                     rawAction == MasroufiAppWidget.ACTION_QUICK_VOICE -> MasroufiAppWidget.ACTION_QUICK_VOICE
                     rawAction == MasroufiAppWidget.ACTION_QUICK_PRESET -> "confirm_preset"
