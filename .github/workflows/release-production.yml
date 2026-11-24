@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag to publish (e.g. v1.1.4). Leave blank to build artifacts only.'
+        description: 'Release tag to publish (e.g. v1.2.0). Leave blank to build artifacts only.'
         required: false
-        default: 'v1.1.4'
+        default: 'v1.2.0'
         type: string
 
 # S11: Default read-only workflow permissions; require manual approval via production environment
@@ -71,7 +71,19 @@ jobs:
             cp .env.example .env
           fi
           if [ -n "$GOOGLE_SERVICES_JSON_SECRET" ]; then
-            printf '%s\n' "$GOOGLE_SERVICES_JSON_SECRET" > app/google-services.json
+            FIRST_CHAR=$(printf '%s' "$GOOGLE_SERVICES_JSON_SECRET" | tr -d '\r\n\t ' | cut -c1)
+            if [ "$FIRST_CHAR" = "{" ]; then
+              printf '%s\n' "$GOOGLE_SERVICES_JSON_SECRET" > app/google-services.json.tmp
+            else
+              printf '%s' "$GOOGLE_SERVICES_JSON_SECRET" | tr -d '\r\n ' | base64 -d > app/google-services.json.tmp 2>/dev/null || true
+            fi
+            if grep -q '"project_info"' app/google-services.json.tmp 2>/dev/null && grep -q '"com.aistudio.masroufi.kxmpzq"' app/google-services.json.tmp 2>/dev/null; then
+              mv app/google-services.json.tmp app/google-services.json
+              echo "Loaded valid app/google-services.json from GitHub Secret GOOGLE_SERVICES_JSON."
+            else
+              rm -f app/google-services.json.tmp
+              echo "NOTICE: GOOGLE_SERVICES_JSON secret did not match package com.aistudio.masroufi.kxmpzq; keeping repository app/google-services.json."
+            fi
           fi
           gradle :app:bundleRelease :app:assembleRelease --stacktrace --no-daemon
 
@@ -91,7 +103,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Publish Signed Production APK Release (AAB Excluded)
+      - name: Publish Signed Production Release (APK & AAB)
         if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,18 +115,20 @@ jobs:
             TAG_NAME="$INPUT_TAG"
           fi
           if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "ERROR: Invalid release tag '$TAG_NAME'. Expected format vX.Y.Z (e.g. v1.1.3)."
+            echo "ERROR: Invalid release tag '$TAG_NAME'. Expected format vX.Y.Z (e.g. v1.2.0)."
             exit 1
           fi
           if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release ${TAG_NAME} already exists — updating signed APK asset (--clobber)."
+            echo "Release ${TAG_NAME} already exists — updating signed APK & AAB assets (--clobber)."
             gh release upload "$TAG_NAME" \
               app/build/outputs/apk/release/*.apk \
+              app/build/outputs/bundle/release/*.aab \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
             gh release create "$TAG_NAME" \
               app/build/outputs/apk/release/*.apk \
+              app/build/outputs/bundle/release/*.aab \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Masroufi ${TAG_NAME}" \
