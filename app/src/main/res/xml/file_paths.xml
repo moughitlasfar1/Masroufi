@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Strictly scoped cache directory for temporary Daret & Sellef share card PNGs only -->
+    <cache-path
+        name="shared_cards"
+        path="shared_cards/" />
+</paths>

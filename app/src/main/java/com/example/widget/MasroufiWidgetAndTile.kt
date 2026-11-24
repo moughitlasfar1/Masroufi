@@ -335,15 +335,36 @@ object MasroufiWidgetStore {
                 .apply()
         }
 
-        // Also persist directly to Firestore offline cache if a Firebase user is signed in
+        // Persist directly to encrypted Room (when ROOM_PRIMARY) or legacy Firestore fallback
         runCatching {
-            val firebaseUser = Firebase.auth.currentUser
-            if (firebaseUser != null) {
-                val dbId = appCtx.getString(R.string.firestore_database_id)
-                val repo = MasroufiRepository(FirebaseFirestore.getInstance(dbId))
-                CoroutineScope(Dispatchers.IO).launch {
+            val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+            val dbId = appCtx.getString(R.string.firestore_database_id)
+            val firestoreRepo = if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
+                runCatching { MasroufiRepository(FirebaseFirestore.getInstance(dbId)) }.getOrNull()
+            } else {
+                null
+            }
+            CoroutineScope(Dispatchers.IO).launch {
+                val roomRepo = if (com.example.MasroufiApplication.isSqlCipherNativeLoaded &&
+                    com.example.data.DataSourceConfigStore.isRoomImportCompleted(appCtx, uid) &&
+                    !com.example.data.DataSourceConfigStore.isFirestoreKillSwitchEnabled(appCtx)
+                ) {
+                    com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)?.let { roomDb ->
+                        com.example.data.local.RoomMasroufiRepository(
+                            dao = roomDb.masroufiDao(),
+                            cloudWriteThrough = firestoreRepo,
+                            userIdProvider = { uid }
+                        )
+                    }
+                } else {
+                    null
+                }
+                val targetRepo = roomRepo ?: firestoreRepo
+                if (targetRepo != null) {
                     createdTxs.forEach { tx ->
-                        runCatching { repo.upsertTransaction(tx) }
+                        runCatching { targetRepo.upsertTransaction(tx, uid) }
                     }
                 }
             }
@@ -405,15 +426,36 @@ object MasroufiWidgetStore {
                 .apply()
         }
 
-        // Also delete from Firestore offline cache if signed in
+        // Delete from encrypted Room (when ROOM_PRIMARY) or legacy Firestore fallback
         runCatching {
-            val firebaseUser = Firebase.auth.currentUser
-            if (firebaseUser != null) {
-                val dbId = appCtx.getString(R.string.firestore_database_id)
-                val repo = MasroufiRepository(FirebaseFirestore.getInstance(dbId))
-                CoroutineScope(Dispatchers.IO).launch {
+            val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+            val dbId = appCtx.getString(R.string.firestore_database_id)
+            val firestoreRepo = if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
+                runCatching { MasroufiRepository(FirebaseFirestore.getInstance(dbId)) }.getOrNull()
+            } else {
+                null
+            }
+            CoroutineScope(Dispatchers.IO).launch {
+                val roomRepo = if (com.example.MasroufiApplication.isSqlCipherNativeLoaded &&
+                    com.example.data.DataSourceConfigStore.isRoomImportCompleted(appCtx, uid) &&
+                    !com.example.data.DataSourceConfigStore.isFirestoreKillSwitchEnabled(appCtx)
+                ) {
+                    com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)?.let { roomDb ->
+                        com.example.data.local.RoomMasroufiRepository(
+                            dao = roomDb.masroufiDao(),
+                            cloudWriteThrough = firestoreRepo,
+                            userIdProvider = { uid }
+                        )
+                    }
+                } else {
+                    null
+                }
+                val targetRepo = roomRepo ?: firestoreRepo
+                if (targetRepo != null) {
                     createdTxs.forEach { tx ->
-                        runCatching { repo.deleteTransaction(tx.id) }
+                        runCatching { targetRepo.deleteTransaction(tx.id, uid) }
                     }
                 }
             }
@@ -534,6 +576,7 @@ object MasroufiWidgetStore {
             val cur = snapshot.currencySymbol.ifBlank { "DH" }
             val dynamicList = mutableListOf<ShortcutInfo>()
 
+            val maskShortcuts = snapshot.hideAmounts || snapshot.appLockEnabled
             snapshot.presets.take(2).forEachIndexed { idx, preset ->
                 val presetIntent = Intent(context, QuickCaptureActivity::class.java).apply {
                     action = MasroufiAppWidget.ACTION_QUICK_PRESET
@@ -542,7 +585,11 @@ object MasroufiWidgetStore {
                     putExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE, preset.envelopeKey)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
-                val label = "${preset.name} (${PayCycleEngine.formatDh(preset.amount)} $cur)"
+                val label = if (maskShortcuts) {
+                    preset.name
+                } else {
+                    "${preset.name} (${PayCycleEngine.formatDh(preset.amount)} $cur)"
+                }
                 val shortcut = ShortcutInfo.Builder(context, "dyn_preset_$idx")
                     .setShortLabel(preset.name.take(12))
                     .setLongLabel("${strings.widgetQuickAddBtn} $label")
@@ -767,13 +814,15 @@ class MasroufiAppWidget : AppWidgetProvider() {
                     views.setViewVisibility(R.id.widget_secondary_line, View.GONE)
                     views.setViewVisibility(R.id.widget_action_row, View.VISIBLE)
                     if (p1 != null) {
-                        views.setTextViewText(R.id.widget_btn_add_expense, "+ ${p1.name} ${PayCycleEngine.formatDh(p1.amount)}")
+                        val p1Label = if (mask) "+ ${p1.name}" else "+ ${p1.name} ${PayCycleEngine.formatDh(p1.amount)}"
+                        views.setTextViewText(R.id.widget_btn_add_expense, p1Label)
                     } else {
                         views.setTextViewText(R.id.widget_btn_add_expense, strings.widgetQuickAddBtn)
                     }
                     if (p2 != null) {
+                        val p2Label = if (mask) "+ ${p2.name}" else "+ ${p2.name} ${PayCycleEngine.formatDh(p2.amount)}"
                         views.setViewVisibility(R.id.widget_btn_preset_two, View.VISIBLE)
-                        views.setTextViewText(R.id.widget_btn_preset_two, "+ ${p2.name} ${PayCycleEngine.formatDh(p2.amount)}")
+                        views.setTextViewText(R.id.widget_btn_preset_two, p2Label)
                     } else {
                         views.setViewVisibility(R.id.widget_btn_preset_two, View.GONE)
                     }
@@ -959,10 +1008,16 @@ class MasroufiQuickTileService : TileService() {
         val tile = qsTile ?: return
         val snap = MasroufiWidgetStore.loadSnapshot(this)
         val strings = Translations.forLang(snap.language)
+        val cur = snap.currencySymbol.ifBlank { "DH" }
         tile.state = Tile.STATE_ACTIVE
         tile.label = strings.tileKeypadLabel
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = MasroufiWidgetStore.getTodaySpendFormatted(this)
+            val maskForLock = isLocked || snap.hideAmounts || snap.appLockEnabled
+            tile.subtitle = if (maskForLock) {
+                "•••• $cur"
+            } else {
+                MasroufiWidgetStore.getTodaySpendFormatted(this)
+            }
         }
         tile.updateTile()
     }
@@ -998,7 +1053,7 @@ class MasroufiVoiceTileService : TileService() {
 }
 
 /**
- * Tile 3 (Phase 3): Left Today (Safe-to-Spend) Tile — subtitle shows safeToSpendToday respecting hideAmounts.
+ * Tile 3 (Phase 3): Left Today (Safe-to-Spend) Tile — subtitle shows safeToSpendToday respecting hideAmounts & lockscreen.
  */
 class MasroufiSafeTodayTileService : TileService() {
 
@@ -1007,10 +1062,16 @@ class MasroufiSafeTodayTileService : TileService() {
         val tile = qsTile ?: return
         val snap = MasroufiWidgetStore.loadSnapshot(this)
         val strings = Translations.forLang(snap.language)
+        val cur = snap.currencySymbol.ifBlank { "DH" }
         tile.state = Tile.STATE_ACTIVE
         tile.label = strings.tileLeftTodayLabel
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = MasroufiWidgetStore.getSafeTodayFormatted(this)
+            val maskForLock = isLocked || snap.hideAmounts || snap.appLockEnabled
+            tile.subtitle = if (maskForLock) {
+                "${strings.widgetSafePrefix} •••• $cur"
+            } else {
+                MasroufiWidgetStore.getSafeTodayFormatted(this)
+            }
         }
         tile.updateTile()
     }
@@ -1026,29 +1087,38 @@ internal fun launchQuickCaptureFromTile(
     action: String,
     requestCode: Int
 ) {
-    val intent = Intent(service, QuickCaptureActivity::class.java).apply {
-        this.action = action
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+    val startBlock = Runnable {
+        val intent = Intent(service, QuickCaptureActivity::class.java).apply {
+            this.action = action
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val pi = PendingIntent.getActivity(
+                    service,
+                    requestCode,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                service.startActivityAndCollapse(pi)
+            } else {
+                @Suppress("DEPRECATION")
+                service.startActivityAndCollapse(intent)
+            }
+        }
     }
     runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val pi = PendingIntent.getActivity(
-                service,
-                requestCode,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            service.startActivityAndCollapse(pi)
+        if (service.isLocked) {
+            service.unlockAndRun(startBlock)
         } else {
-            @Suppress("DEPRECATION")
-            service.startActivityAndCollapse(intent)
+            startBlock.run()
         }
     }
 }
 
 /**
  * Phase 3: Prompts the user to add one of the 3 Masroufi Quick Settings tiles on Android 13+ (TIRAMISU).
- * Returns true if the system dialog was requested, or false on Android 12 and below.
+ * Shows a localized fallback hint on Android 12 and below.
  */
 fun requestAddMasroufiTile(
     context: Context,
@@ -1077,5 +1147,12 @@ fun requestAddMasroufiTile(
             return
         }
     }
-    onResultMessage("Ajoutez « $label » depuis le volet des raccourcis rapides Android.")
+    val lang = MasroufiWidgetStore.loadSnapshot(context).language
+    val fallbackMsg = when (lang) {
+        "en" -> "Add \"$label\" from the Android Quick Settings shade."
+        "ar" -> "أضف «$label» من شريط الإعدادات السريعة في أندرويد."
+        "darija" -> "زيد «$label» من شريط الإعدادات السريعة ديال أندرويد."
+        else -> "Ajoutez « $label » depuis le volet des raccourcis rapides Android."
+    }
+    onResultMessage(fallbackMsg)
 }

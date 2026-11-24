@@ -493,6 +493,9 @@ fun MainFeatureScreen(
     )
     val creditUiState by creditViewModel.uiState.collectAsStateWithLifecycle()
     var showCreditSimulator by remember { mutableStateOf(false) }
+    var showAnnualBills by remember { mutableStateOf(false) }
+    var showZakatTracker by remember { mutableStateOf(false) }
+    var activeShareCard by remember { mutableStateOf<com.example.ui.ShareCardPayload?>(null) }
 
     val rawState by viewModel.uiState.collectAsStateWithLifecycle()
     val systemInDark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -515,6 +518,89 @@ fun MainFeatureScreen(
     val localDbHealth by MasroufiDatabaseProvider.healthState.collectAsStateWithLifecycle()
     val killSwitchEnabled by DataSourceConfigStore.killSwitchEnabled.collectAsStateWithLifecycle()
     var importRetryTick by remember { mutableStateOf(0) }
+    var annualBillsList by remember {
+        mutableStateOf(com.masroufi.fiscal.data.FiscalRepository.loadAnnualBills(context))
+    }
+    var zakatConfig by remember {
+        mutableStateOf(com.masroufi.fiscal.data.FiscalRepository.loadZakatConfig(context))
+    }
+
+    fun upsertAnnualBillReserve(item: com.masroufi.fiscal.domain.AnnualBillItem) {
+        val fStrings = com.masroufi.fiscal.domain.FiscalStrings.forLang(state.profile.language)
+        val (curYear, curMonth) = com.masroufi.fiscal.domain.AnnualBillCalculator.currentYearAndMonth()
+        val existingSaved = state.goals.find { it.id == item.linkedGoalId }?.secondaryAmount ?: 0.0
+        val (goalItem, recurringBillItem) = com.masroufi.fiscal.data.FiscalRepository.buildBackingGoalAndRecurringBill(
+            bill = item,
+            existingGoalSavedAmount = existingSaved,
+            payCycleDay = state.profile.payCycleDay,
+            strings = fStrings,
+            currentYear = curYear,
+            currentMonth = curMonth
+        )
+        val syncedItem = item.copy(
+            linkedGoalId = goalItem.id,
+            linkedBillId = recurringBillItem.id
+        )
+        val updatedList = annualBillsList.filterNot { it.id == syncedItem.id } + syncedItem
+        annualBillsList = updatedList
+        com.masroufi.fiscal.data.FiscalRepository.saveAnnualBills(context, updatedList)
+        viewModel.saveFinancialItem(goalItem)
+        viewModel.saveFinancialItem(recurringBillItem)
+        val curSym = state.customPrefs.currencySymbol.ifBlank { "DH" }
+        val monthlyFormatted = "${PayCycleEngine.formatAmountOrMask(recurringBillItem.amount, state.hideAmounts)} $curSym"
+        scope.launch {
+            snackbarHostState.showSnackbar(
+                fStrings.reserveCreatedToastFmt.replace("{monthly}", monthlyFormatted)
+            )
+        }
+    }
+
+    fun markAnnualBillPaid(item: com.masroufi.fiscal.domain.AnnualBillItem, logExpense: Boolean) {
+        val fStrings = com.masroufi.fiscal.domain.FiscalStrings.forLang(state.profile.language)
+        val todayIso = PayCycleEngine.todayIso()
+        val updatedList = annualBillsList.map { existing ->
+            if (existing.id == item.id) existing.copy(isPaid = true, paidIsoDate = todayIso) else existing
+        }
+        annualBillsList = updatedList
+        com.masroufi.fiscal.data.FiscalRepository.saveAnnualBills(context, updatedList)
+        if (item.linkedGoalId.isNotBlank()) {
+            viewModel.deleteFinancialItem(item.linkedGoalId)
+        }
+        if (item.linkedBillId.isNotBlank()) {
+            viewModel.deleteFinancialItem(item.linkedBillId)
+        }
+        if (logExpense && item.annualAmountMad > 0.0) {
+            val envKey = if (item.preset == com.masroufi.fiscal.domain.AnnualBillPreset.VIGNETTE ||
+                item.preset == com.masroufi.fiscal.domain.AnnualBillPreset.CAR_INSURANCE
+            ) "transport" else "charges"
+            viewModel.saveTransaction(
+                existingId = "tx_fiscal_${item.id}_${System.currentTimeMillis()}",
+                type = "expense",
+                amount = item.annualAmountMad,
+                category = envKey,
+                envelopeKey = envKey,
+                accountId = state.accounts.firstOrNull()?.account?.id ?: "acc_bank",
+                toAccountId = "",
+                desc = item.title,
+                isoDate = todayIso
+            )
+        }
+        scope.launch {
+            snackbarHostState.showSnackbar(
+                fStrings.billPaidLoggedToastFmt.replace("{title}", item.title)
+            )
+        }
+    }
+
+    fun deleteAnnualBill(item: com.masroufi.fiscal.domain.AnnualBillItem) {
+        val updatedList = annualBillsList.filterNot { it.id == item.id }
+        annualBillsList = updatedList
+        com.masroufi.fiscal.data.FiscalRepository.saveAnnualBills(context, updatedList)
+        if (!item.isPaid) {
+            if (item.linkedGoalId.isNotBlank()) viewModel.deleteFinancialItem(item.linkedGoalId)
+            if (item.linkedBillId.isNotBlank()) viewModel.deleteFinancialItem(item.linkedBillId)
+        }
+    }
 
     // Phase 1a + 1b: Open encrypted SQLCipher Room DB and run one-time Source.SERVER import
     LaunchedEffect(currentUserId, killSwitchEnabled, importRetryTick) {
@@ -973,6 +1059,90 @@ fun MainFeatureScreen(
                 return@CompositionLocalProvider
             }
 
+            if (showAnnualBills) {
+                ExpressiveAmbientBackground(
+                    accentPalette = state.customPrefs.accentPalette,
+                    isDarkTheme = state.profile.isDarkTheme
+                ) {
+                    com.masroufi.fiscal.presentation.AnnualBillsScreen(
+                        annualBills = annualBillsList,
+                        existingGoals = state.goals,
+                        language = state.profile.language,
+                        currencySymbol = state.customPrefs.currencySymbol,
+                        hideAmounts = state.hideAmounts,
+                        isDarkTheme = state.profile.isDarkTheme,
+                        onBack = { showAnnualBills = false },
+                        onSaveReserve = { item -> upsertAnnualBillReserve(item) },
+                        onMarkBillPaid = { item, logExp -> markAnnualBillPaid(item, logExp) },
+                        onDeleteBill = { item -> deleteAnnualBill(item) }
+                    )
+                }
+                return@CompositionLocalProvider
+            }
+
+            if (showZakatTracker) {
+                val savingsTotal = remember(state.goals) {
+                    state.goals.sumOf { it.secondaryAmount.coerceAtLeast(0.0) }
+                }
+                val shortTermBorrowedDebts = remember(state.debts) {
+                    state.debts
+                        .filter { !it.dateOrCycle.equals("lent", ignoreCase = true) }
+                        .sumOf { (it.amount - it.secondaryAmount).coerceAtLeast(0.0) }
+                }
+                val linkedZakatBill = remember(annualBillsList, zakatConfig) {
+                    annualBillsList.find { it.id == zakatConfig.linkedAnnualBillId && !it.isPaid }
+                }
+                val alreadyReservedZakat = remember(linkedZakatBill, state.goals) {
+                    val gid = linkedZakatBill?.linkedGoalId.orEmpty()
+                    if (gid.isBlank()) 0.0 else state.goals.find { it.id == gid }?.secondaryAmount ?: 0.0
+                }
+                ExpressiveAmbientBackground(
+                    accentPalette = state.customPrefs.accentPalette,
+                    isDarkTheme = state.profile.isDarkTheme
+                ) {
+                    com.masroufi.fiscal.presentation.ZakatTrackerScreen(
+                        accountsTotalMad = state.totalNetWorth.coerceAtLeast(0.0),
+                        savingsTotalMad = savingsTotal,
+                        shortTermDebtsOwedMad = shortTermBorrowedDebts,
+                        alreadyReservedMad = alreadyReservedZakat,
+                        initialConfig = zakatConfig,
+                        language = state.profile.language,
+                        currencySymbol = state.customPrefs.currencySymbol,
+                        hideAmounts = state.hideAmounts,
+                        isDarkTheme = state.profile.isDarkTheme,
+                        onBack = { showZakatTracker = false },
+                        onSaveConfig = { updatedCfg ->
+                            zakatConfig = updatedCfg
+                            com.masroufi.fiscal.data.FiscalRepository.saveZakatConfig(context, updatedCfg)
+                        },
+                        onCreateMonthlyReserve = { zakatDueMad, hawlDueIso ->
+                            val fStrings = com.masroufi.fiscal.domain.FiscalStrings.forLang(state.profile.language)
+                            val parts = hawlDueIso.split("-")
+                            val dueYear = parts.getOrNull(0)?.toIntOrNull()
+                                ?: com.masroufi.fiscal.domain.AnnualBillCalculator.currentYearAndMonth().first
+                            val dueMonth = parts.getOrNull(1)?.toIntOrNull()?.coerceIn(1, 12) ?: 1
+                            val billId = zakatConfig.linkedAnnualBillId.ifBlank { "zakat_reserve_active" }
+                            val zakatBill = com.masroufi.fiscal.domain.AnnualBillItem(
+                                id = billId,
+                                preset = com.masroufi.fiscal.domain.AnnualBillPreset.ZAKAT,
+                                title = fStrings.presetZakat,
+                                annualAmountMad = zakatDueMad,
+                                dueMonth = dueMonth,
+                                dueYear = dueYear,
+                                linkedGoalId = linkedZakatBill?.linkedGoalId.orEmpty().ifBlank { "goal_fiscal_$billId" },
+                                linkedBillId = linkedZakatBill?.linkedBillId.orEmpty().ifBlank { "bill_fiscal_$billId" }
+                            )
+                            val updatedCfg = zakatConfig.copy(linkedAnnualBillId = billId)
+                            zakatConfig = updatedCfg
+                            com.masroufi.fiscal.data.FiscalRepository.saveZakatConfig(context, updatedCfg)
+                            upsertAnnualBillReserve(zakatBill)
+                            showZakatTracker = false
+                        }
+                    )
+                }
+                return@CompositionLocalProvider
+            }
+
             ExpressiveAmbientBackground(
                 accentPalette = state.customPrefs.accentPalette,
                 isDarkTheme = state.profile.isDarkTheme
@@ -1393,7 +1563,11 @@ fun MainFeatureScreen(
                                             }
                                         },
                                         savedCreditsCount = creditUiState.savedCredits.size,
-                                        onOpenCreditSimulator = { showCreditSimulator = true }
+                                        onOpenCreditSimulator = { showCreditSimulator = true },
+                                        activeAnnualBillsCount = annualBillsList.count { !it.isPaid },
+                                        onOpenAnnualBills = { showAnnualBills = true },
+                                        onOpenZakatTracker = { showZakatTracker = true },
+                                        onShareCard = { payload -> activeShareCard = payload }
                                     )
 
                                     "historique" -> HistoryScreen(
@@ -1843,6 +2017,18 @@ fun MainFeatureScreen(
                             DataSourceConfigStore.refreshActiveMode(context, currentUserId)
                         }
                     }
+                )
+            }
+
+            // Step 2: Daret & Sellef WhatsApp Share Card Sheet (LTR/RTL Bitmap + Text fallback)
+            val currentSharePayload = activeShareCard
+            if (currentSharePayload != null) {
+                com.example.ui.ShareCardBottomSheet(
+                    payload = currentSharePayload,
+                    initialAppLanguage = state.profile.language,
+                    initialHideAmounts = state.hideAmounts,
+                    isDarkTheme = state.profile.isDarkTheme,
+                    onDismiss = { activeShareCard = null }
                 )
             }
         }

@@ -1911,7 +1911,9 @@ class ExampleRobolectricTest {
             itemId = "d1",
             isBill = false
         )
-        val updatedNotifJson = org.json.JSONObject(notifPrefs.getString("notif_snapshot_json", "{}") ?: "{}")
+        val updatedNotifRaw = com.example.notifications.MasroufiNotificationManager.loadNotificationSnapshotRaw(context) ?: "{}"
+        assertFalse(notifPrefs.contains("notif_snapshot_json"))
+        val updatedNotifJson = org.json.JSONObject(updatedNotifRaw)
         assertEquals(0, updatedNotifJson.getJSONArray("upcomingBills").length())
         assertEquals(2, updatedNotifJson.getJSONArray("activeDarets").getJSONObject(0).getInt("paidRounds"))
     }

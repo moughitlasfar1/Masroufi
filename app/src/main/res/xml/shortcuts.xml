@@ -28,7 +28,7 @@
         <intent
             android:action="com.aistudio.masroufi.ACTION_QUICK_ADD"
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
-            android:targetClass="com.example.widget.QuickCaptureActivity" />
+            android:targetClass="com.example.widget.AssistantEntryActivity" />
         <capability-binding android:key="actions.intent.OPEN_APP_FEATURE">
             <parameter-binding
                 android:key="feature"
@@ -36,12 +36,12 @@
         </capability-binding>
     </shortcut>
 
-    <!-- Google Assistant BII 1: Open App Feature ("Ok Google, ouvre Ajouter dépense sur Masroufi") -->
+    <!-- Google Assistant BII 1: Open App Feature ("Hey Google, add an expense in Masroufi") -->
     <capability android:name="actions.intent.OPEN_APP_FEATURE">
         <intent
-            android:action="com.aistudio.masroufi.ACTION_QUICK_VOICE"
+            android:action="com.aistudio.masroufi.ACTION_QUICK_ADD"
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
-            android:targetClass="com.example.widget.QuickCaptureActivity">
+            android:targetClass="com.example.widget.AssistantEntryActivity">
             <Parameter
                 android:name="feature"
                 android:key="feature" />
@@ -53,7 +53,7 @@
         <intent
             android:action="com.aistudio.masroufi.ACTION_ASSISTANT_ADD_EXPENSE"
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
-            android:targetClass="com.example.widget.QuickCaptureActivity">
+            android:targetClass="com.example.widget.AssistantEntryActivity">
             <Parameter
                 android:name="thing.name"
                 android:key="extra_assistant_query" />
@@ -68,7 +68,7 @@
         <intent
             android:action="com.aistudio.masroufi.ACTION_ASSISTANT_ADD_EXPENSE"
             android:targetPackage="com.aistudio.masroufi.kxmpzq"
-            android:targetClass="com.example.widget.QuickCaptureActivity">
+            android:targetClass="com.example.widget.AssistantEntryActivity">
             <Parameter
                 android:name="moneyTransfer.amount.value"
                 android:key="extra_assistant_amount" />

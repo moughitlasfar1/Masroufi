@@ -963,7 +963,11 @@ fun BudgetAndDaretScreen(
     onDeletePreset: (String) -> Unit = {},
     onTriggerReminderAction: (SmartReminder) -> Unit = {},
     savedCreditsCount: Int = 0,
-    onOpenCreditSimulator: () -> Unit = {}
+    onOpenCreditSimulator: () -> Unit = {},
+    activeAnnualBillsCount: Int = 0,
+    onOpenAnnualBills: () -> Unit = {},
+    onOpenZakatTracker: () -> Unit = {},
+    onShareCard: (ShareCardPayload) -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
@@ -1219,6 +1223,153 @@ fun BudgetAndDaretScreen(
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+                }
+            }
+        }
+
+        // 0A-ter. Step 1 & Step 5: Annual Bills Reserve & Zakat Tracker (isolated com.masroufi.fiscal)
+        item(key = "plan_fiscal_tools") {
+            val fiscalStrings = remember(lang) {
+                com.masroufi.fiscal.domain.FiscalStrings.forLang(lang)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenAnnualBills() }
+                        .testTag("tools_annual_bills_card")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Event,
+                                contentDescription = fiscalStrings.annualBillsCardTitle,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(25.dp)
+                            )
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = fiscalStrings.annualBillsCardTitle,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (activeAnnualBillsCount > 0) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = AccentEmerald.copy(alpha = 0.16f)
+                                    ) {
+                                        Text(
+                                            text = "$activeAnnualBillsCount",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = AccentEmerald,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            Text(
+                                text = fiscalStrings.annualBillsCardSubtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = onOpenAnnualBills,
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.testTag("tools_annual_bills_open_button")
+                        ) {
+                            Text(
+                                text = fiscalStrings.annualBillsCardCta,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                ExpressiveGlassCard(
+                    cornerRadius = 28.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenZakatTracker() }
+                        .testTag("tools_zakat_card")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(AccentEmerald.copy(alpha = 0.16f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Savings,
+                                contentDescription = fiscalStrings.zakatCardTitle,
+                                tint = AccentEmerald,
+                                modifier = Modifier.size(25.dp)
+                            )
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = fiscalStrings.zakatCardTitle,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = fiscalStrings.zakatCardSubtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = onOpenZakatTracker,
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            modifier = Modifier.testTag("tools_zakat_open_button")
+                        ) {
+                            Text(
+                                text = fiscalStrings.zakatCardCta,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -1895,8 +2046,17 @@ fun BudgetAndDaretScreen(
                                         }
                                         IconButton(
                                             onClick = {
-                                                val msg = "Salam l-khout! Rappel Daret '${daret.name}' : cotisation ${daret.amount.toInt()} $cur (Tour actuel: $whoseTurn, réception prévue: $cleanPayoutDate). Lah yssakher 🙏"
-                                                onSendWhatsAppReminder(msg)
+                                                onShareCard(
+                                                    ShareCardPayload.DaretCard(
+                                                        groupName = daret.name,
+                                                        turnNumber = daret.dayOrTurn,
+                                                        totalMembers = totalMembers,
+                                                        amountMad = daret.amount,
+                                                        recipientName = whoseTurn,
+                                                        payoutDate = cleanPayoutDate,
+                                                        currencySymbol = cur
+                                                    )
+                                                )
                                             },
                                             modifier = Modifier.testTag("btn_whatsapp_daret_${daret.id}")
                                         ) {
@@ -2112,12 +2272,15 @@ fun BudgetAndDaretScreen(
                                         if (remDebt > 0) {
                                             IconButton(
                                                 onClick = {
-                                                    val waMsg = if (isLent) {
-                                                        "Salam ${debt.name} ! Petit rappel sympa pour le sellef (${debt.subtitle.ifBlank { "avance" }}) : il reste ${remDebt.toInt()} $cur sur ${debt.amount.toInt()} $cur. Lah yhfdek 🙏"
-                                                    } else {
-                                                        "Salam ${debt.name} ! Je te confirme qu'il me reste ${remDebt.toInt()} $cur à te régler sur ${debt.amount.toInt()} $cur. Merci 🙏"
-                                                    }
-                                                    onSendWhatsAppReminder(waMsg)
+                                                    onShareCard(
+                                                        ShareCardPayload.SellefCard(
+                                                            personName = debt.name,
+                                                            totalBalanceMad = debt.amount,
+                                                            remainingMad = remDebt,
+                                                            isLent = isLent,
+                                                            currencySymbol = cur
+                                                        )
+                                                    )
                                                 },
                                                 modifier = Modifier.testTag("btn_whatsapp_sellef_${debt.id}")
                                             ) {

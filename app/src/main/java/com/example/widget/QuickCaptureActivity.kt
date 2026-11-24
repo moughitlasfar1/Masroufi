@@ -52,6 +52,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -66,10 +67,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.fragment.app.FragmentActivity
@@ -220,34 +223,43 @@ class QuickCaptureActivity : FragmentActivity() {
                 )
             }
 
+            val layoutDirection = if (Translations.forLang(effectiveSnapshot.language).isRtl) {
+                LayoutDirection.Rtl
+            } else {
+                LayoutDirection.Ltr
+            }
+
             MasroufiTheme(
                 darkTheme = effectiveIsDark,
-                accentPalette = effectiveSnapshot.accentPalette
+                accentPalette = effectiveSnapshot.accentPalette,
+                language = effectiveSnapshot.language
             ) {
-                // S2: External Assistant intents always require unlock when app lock is enabled
-                val requiresPinUnlock = remember(appLockActive, allowQuickCaptureWhenLocked, fromExternal) {
-                    appLockActive && (!allowQuickCaptureWhenLocked || fromExternal)
-                }
-                var isUnlocked by remember { mutableStateOf(!requiresPinUnlock) }
+                CompositionLocalProvider(LocalLayoutDirection provides layoutDirection) {
+                    // S2: External Assistant intents always require unlock when app lock is enabled
+                    val requiresPinUnlock = remember(appLockActive, allowQuickCaptureWhenLocked, fromExternal) {
+                        appLockActive && (!allowQuickCaptureWhenLocked || fromExternal)
+                    }
+                    var isUnlocked by remember { mutableStateOf(!requiresPinUnlock) }
 
-                if (!isUnlocked) {
-                    MasroufiSecurityLockScreen(
-                        language = effectiveSnapshot.language,
-                        accentPalette = effectiveSnapshot.accentPalette,
-                        onUnlocked = { isUnlocked = true },
-                        onSignOutRecovery = { finish() }
-                    )
-                } else {
-                    QuickCaptureOverlayContent(
-                        initialAction = resolvedAction,
-                        presetName = presetName,
-                        presetAmount = presetAmount,
-                        presetEnvelope = presetEnvelope,
-                        assistantAutoItems = assistantAutoItems,
-                        snapshot = effectiveSnapshot,
-                        isLockedPrivacyMode = appLockActive && allowQuickCaptureWhenLocked && !fromExternal,
-                        onCloseActivity = { finish() }
-                    )
+                    if (!isUnlocked) {
+                        MasroufiSecurityLockScreen(
+                            language = effectiveSnapshot.language,
+                            accentPalette = effectiveSnapshot.accentPalette,
+                            onUnlocked = { isUnlocked = true },
+                            onSignOutRecovery = { finish() }
+                        )
+                    } else {
+                        QuickCaptureOverlayContent(
+                            initialAction = resolvedAction,
+                            presetName = presetName,
+                            presetAmount = presetAmount,
+                            presetEnvelope = presetEnvelope,
+                            assistantAutoItems = assistantAutoItems,
+                            snapshot = effectiveSnapshot,
+                            isLockedPrivacyMode = appLockActive && allowQuickCaptureWhenLocked && !fromExternal,
+                            onCloseActivity = { finish() }
+                        )
+                    }
                 }
             }
         }

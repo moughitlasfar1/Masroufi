@@ -4,9 +4,9 @@ import android.app.Activity
 import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -56,8 +56,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -80,7 +83,7 @@ import kotlin.math.roundToInt
  * - Privacy Masking (`follow_app`, `always_hide`, `hide_when_locked`)
  * Includes a live interactive widget preview at the top.
  */
-class WidgetConfigActivity : ComponentActivity() {
+class WidgetConfigActivity : FragmentActivity() {
 
     private var appWidgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
 
@@ -108,6 +111,7 @@ class WidgetConfigActivity : ComponentActivity() {
 
         val snapshot = MasroufiWidgetStore.loadSnapshot(this)
         val initialStyle = MasroufiWidgetStore.loadWidgetStyle(this, appWidgetId)
+        val initialNeedsUnlock = com.example.security.AppSecurityManager.isAppLockEnabled(this)
 
         setContent {
             val systemInDark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -115,30 +119,48 @@ class WidgetConfigActivity : ComponentActivity() {
             val effectiveSnapshot = remember(snapshot, effectiveIsDark) {
                 snapshot.copy(isDarkTheme = effectiveIsDark)
             }
-            MasroufiTheme(
-                darkTheme = effectiveIsDark,
-                accentPalette = effectiveSnapshot.accentPalette
-            ) {
-                WidgetConfigScreen(
-                    appWidgetId = appWidgetId,
-                    snapshot = effectiveSnapshot,
-                    initialStyle = initialStyle,
-                    onSaveStyle = { finalStyle ->
-                        MasroufiWidgetStore.saveWidgetStyle(this@WidgetConfigActivity, finalStyle)
-                        val appWidgetManager = AppWidgetManager.getInstance(this@WidgetConfigActivity)
-                        if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
-                            MasroufiAppWidget.updateSingleWidget(
-                                this@WidgetConfigActivity,
-                                appWidgetManager,
-                                appWidgetId
-                            )
-                        }
-                        val okIntent = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
-                        setResult(Activity.RESULT_OK, okIntent)
-                        finish()
-                    },
-                    onCancel = { finish() }
-                )
+            val layoutDir = if (effectiveSnapshot.language == "ar" || effectiveSnapshot.language == "darija") {
+                LayoutDirection.Rtl
+            } else {
+                LayoutDirection.Ltr
+            }
+            var isLocked by remember { mutableStateOf(initialNeedsUnlock) }
+
+            CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
+                MasroufiTheme(
+                    darkTheme = effectiveIsDark,
+                    accentPalette = effectiveSnapshot.accentPalette
+                ) {
+                    if (isLocked) {
+                        com.example.security.MasroufiSecurityLockScreen(
+                            language = effectiveSnapshot.language,
+                            accentPalette = effectiveSnapshot.accentPalette,
+                            onUnlocked = { isLocked = false },
+                            onSignOutRecovery = { finish() }
+                        )
+                    } else {
+                        WidgetConfigScreen(
+                            appWidgetId = appWidgetId,
+                            snapshot = effectiveSnapshot,
+                            initialStyle = initialStyle,
+                            onSaveStyle = { finalStyle ->
+                                MasroufiWidgetStore.saveWidgetStyle(this@WidgetConfigActivity, finalStyle)
+                                val appWidgetManager = AppWidgetManager.getInstance(this@WidgetConfigActivity)
+                                if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                                    MasroufiAppWidget.updateSingleWidget(
+                                        this@WidgetConfigActivity,
+                                        appWidgetManager,
+                                        appWidgetId
+                                    )
+                                }
+                                val okIntent = Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                                setResult(Activity.RESULT_OK, okIntent)
+                                finish()
+                            },
+                            onCancel = { finish() }
+                        )
+                    }
+                }
             }
         }
     }

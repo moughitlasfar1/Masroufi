@@ -597,8 +597,8 @@ object MasroufiNotificationManager {
                 put("over80Envelopes", over80EnvelopesArr)
             }
 
+            saveNotificationSnapshotRaw(context, snapshot.toString())
             prefs(context).edit()
-                .putString(KEY_SNAPSHOT_JSON, snapshot.toString())
                 .putInt(KEY_ADAPTIVE_EVENING_HOUR, adaptiveHour)
                 .putInt(KEY_ADAPTIVE_EVENING_MINUTE, adaptiveMinute)
                 .apply()
@@ -606,6 +606,23 @@ object MasroufiNotificationManager {
             schedulePeriodicWorker(context)
             scheduleNextEveningReminder(context)
         }
+    }
+
+    internal fun saveNotificationSnapshotRaw(context: Context, json: String) {
+        val stored = com.example.security.SecureStore.putString(context, KEY_SNAPSHOT_JSON, json)
+        // Always scrub legacy plaintext copy once encrypted storage succeeds
+        if (stored) {
+            prefs(context).edit().remove(KEY_SNAPSHOT_JSON).apply()
+        }
+    }
+
+    internal fun loadNotificationSnapshotRaw(context: Context): String? {
+        return com.example.security.SecureStore.migrateStringFromLegacyPrefs(
+            context = context,
+            legacyPrefsName = PREFS_NAME,
+            legacyKey = KEY_SNAPSHOT_JSON,
+            secureKey = KEY_SNAPSHOT_JSON
+        )
     }
 
     fun schedulePeriodicWorker(context: Context) {
@@ -640,12 +657,13 @@ object MasroufiNotificationManager {
         if (!hasNotificationPermission(context)) return 0
         ensureChannels(context)
 
-        val raw = prefs(context).getString(KEY_SNAPSHOT_JSON, null) ?: return 0
+        val raw = loadNotificationSnapshotRaw(context) ?: return 0
         val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return 0
 
         val lang = obj.optString("lang", "fr")
         val cur = obj.optString("currency", "DH")
-        val hide = obj.optBoolean("hideAmounts", false)
+        val hide = obj.optBoolean("hideAmounts", false) ||
+            com.example.security.AppSecurityManager.isAppLockEnabled(context)
         var postedCount = 0
 
         val strings = Translations.forLang(lang)
@@ -916,7 +934,7 @@ object MasroufiNotificationManager {
         isBill: Boolean
     ) {
         if (itemId.isBlank()) return
-        val raw = prefs(context).getString(KEY_SNAPSHOT_JSON, null) ?: return
+        val raw = loadNotificationSnapshotRaw(context) ?: return
         val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return
         if (isBill) {
             val arr = obj.optJSONArray("upcomingBills") ?: return
@@ -944,7 +962,7 @@ object MasroufiNotificationManager {
             }
             obj.put("activeDarets", updated)
         }
-        prefs(context).edit().putString(KEY_SNAPSHOT_JSON, obj.toString()).apply()
+        saveNotificationSnapshotRaw(context, obj.toString())
     }
 
     /**

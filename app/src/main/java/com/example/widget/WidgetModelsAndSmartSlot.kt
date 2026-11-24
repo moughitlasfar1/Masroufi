@@ -85,12 +85,13 @@ data class WidgetStyle(
     val selectedPresetIds: List<String> = emptyList()
 ) {
     fun shouldMaskAmounts(snapshotHideAmounts: Boolean, appLockEnabled: Boolean): Boolean {
+        // Privacy Audit: App Lock always masks home-screen widget and tile amounts.
+        if (appLockEnabled) return true
         return when (privacyMode) {
             "always_hide" -> true
             "always_show" -> false
-            "hide_when_locked" -> appLockEnabled || snapshotHideAmounts
-            // S4: Default ("follow_app") masks widget and tile amounts when app lock is enabled
-            else -> appLockEnabled || snapshotHideAmounts
+            "hide_when_locked" -> snapshotHideAmounts
+            else -> snapshotHideAmounts
         }
     }
 

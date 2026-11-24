@@ -234,7 +234,8 @@ object GoogleAssistantExpenseBridge {
                 .build()
             ShortcutManagerCompat.pushDynamicShortcut(context, voiceShortcut)
 
-            // 2. Top 2 user presets bound for Google Assistant
+            // 2. Top 2 user presets bound for Google Assistant (respect hideAmounts & App Lock)
+            val maskAmounts = snapshot.hideAmounts || snapshot.appLockEnabled
             snapshot.presets.take(2).forEachIndexed { idx, preset ->
                 val presetPhrase = "${preset.name} ${preset.amount.toInt()}"
                 val presetIntent = Intent(context, AssistantEntryActivity::class.java).apply {
@@ -242,7 +243,16 @@ object GoogleAssistantExpenseBridge {
                     putExtra(EXTRA_ASSISTANT_QUERY, presetPhrase)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
-                val label = "${preset.name} (${PayCycleEngine.formatDh(preset.amount)} $cur)"
+                val label = if (maskAmounts) {
+                    preset.name
+                } else {
+                    "${preset.name} (${PayCycleEngine.formatDh(preset.amount)} $cur)"
+                }
+                val bindingValues = if (maskAmounts) {
+                    listOf(preset.name.lowercase(Locale.ROOT))
+                } else {
+                    listOf(preset.name.lowercase(Locale.ROOT), label.lowercase(Locale.ROOT))
+                }
                 val presetShortcut = ShortcutInfoCompat.Builder(context, "dyn_preset_$idx")
                     .setShortLabel(preset.name.take(12))
                     .setLongLabel("${strings.widgetQuickAddBtn} $label")
@@ -251,7 +261,7 @@ object GoogleAssistantExpenseBridge {
                     .addCapabilityBinding(
                         "actions.intent.OPEN_APP_FEATURE",
                         "feature",
-                        listOf(preset.name.lowercase(Locale.ROOT), label.lowercase(Locale.ROOT))
+                        bindingValues
                     )
                     .build()
                 ShortcutManagerCompat.pushDynamicShortcut(context, presetShortcut)

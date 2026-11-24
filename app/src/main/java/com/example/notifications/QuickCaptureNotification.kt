@@ -171,12 +171,15 @@ object QuickCaptureNotification {
         val cur = snapshot.currencySymbol.ifBlank { "DH" }
         val showLeft = isShowLeftTodayEnabled(context)
         val showLockAmounts = isShowLockScreenAmountsEnabled(context)
+        val appLockActive = snapshot.appLockEnabled ||
+            com.example.security.AppSecurityManager.isAppLockEnabled(context)
+        val effectiveHide = snapshot.hideAmounts || appLockActive
 
         val bodyText = if (showLeft) {
             val formatted = PayCycleEngine.formatCurrencyOrMask(
                 snapshot.safeToSpendToday,
                 cur,
-                snapshot.hideAmounts
+                effectiveHide
             )
             "${strings.widgetLeftTodayTitle}: $formatted"
         } else {
@@ -184,7 +187,7 @@ object QuickCaptureNotification {
         }
 
         val publicText = strings.quickCaptureNotifPublicText
-        val visibility = if (showLockAmounts && !snapshot.hideAmounts) {
+        val visibility = if (showLockAmounts && !effectiveHide) {
             NotificationCompat.VISIBILITY_PUBLIC
         } else {
             NotificationCompat.VISIBILITY_PRIVATE

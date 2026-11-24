@@ -139,7 +139,8 @@ class SecurityAuditHardeningTest {
         val defaultStyle = WidgetStyle()
         assertTrue(defaultStyle.shouldMaskAmounts(snapshotHideAmounts = false, appLockEnabled = true))
         assertFalse(defaultStyle.shouldMaskAmounts(snapshotHideAmounts = false, appLockEnabled = false))
-        assertFalse(defaultStyle.copy(privacyMode = "always_show").shouldMaskAmounts(snapshotHideAmounts = true, appLockEnabled = true))
+        assertTrue(defaultStyle.copy(privacyMode = "always_show").shouldMaskAmounts(snapshotHideAmounts = true, appLockEnabled = true))
+        assertFalse(defaultStyle.copy(privacyMode = "always_show").shouldMaskAmounts(snapshotHideAmounts = true, appLockEnabled = false))
 
         // Cloud-only mode defaults to false and persists toggle
         assertFalse(AppSecurityManager.isCloudOnlyModeEnabled(context))
