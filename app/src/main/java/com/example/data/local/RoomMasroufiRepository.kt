@@ -1,5 +1,6 @@
 package com.example.data.local
 
+import android.util.Log
 import com.example.data.AccountItem
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
@@ -13,61 +14,45 @@ import com.example.domain.PayCycleEngine
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 
 /**
- * Offline-first encrypted Room implementation of [MasroufiDataSource].
+ * Strict local-first encrypted Room implementation of [MasroufiDataSource].
  *
+ * - Single source of truth for all daily reads and writes (never requires network or Firestore).
  * - All reads observe local Room tables reactively via Kotlin [Flow].
- * - All writes commit atomically to Room first so offline UX is instant and durable.
- * - Until Phase 2 replaces it with opt-in encrypted sync, every write also performs a
- *   non-blocking, best-effort write-through to [cloudWriteThrough] (legacy Firestore)
- *   so existing cloud data does not go stale. Cloud write errors never fail local writes.
+ * - All writes commit atomically to Room first.
+ * - After each local commit succeeds, invokes [remoteMirror] (defaults to [NoOpRemoteMirror]).
+ *   Any exception thrown by [remoteMirror] is caught and logged safely and NEVER rolls back or
+ *   fails the committed Room write.
  */
 class RoomMasroufiRepository(
     private val dao: MasroufiDao,
-    private val cloudWriteThrough: MasroufiDataSource? = null,
+    private val remoteMirror: RemoteMirror = NoOpRemoteMirror,
     private val userIdProvider: () -> String = {
         runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
             ?.takeIf { it.isNotBlank() }
             ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
-    },
-    private val writeThroughScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    private val awaitWriteThroughForTesting: Boolean = false
+    }
 ) : MasroufiDataSource {
 
     override fun requireUserId(explicitUserId: String?): String {
         return explicitUserId?.takeIf { it.isNotBlank() } ?: userIdProvider()
     }
 
-    private suspend fun dispatchBestEffortWriteThrough(
-        uid: String,
-        action: suspend (MasroufiDataSource) -> Unit
+    private suspend inline fun notifyRemoteMirror(
+        opName: String,
+        crossinline action: suspend (RemoteMirror) -> Unit
     ) {
-        val cloud = cloudWriteThrough ?: return
-        if (uid == MasroufiRepository.LOCAL_DEVICE_USER_ID) return
-        if (awaitWriteThroughForTesting) {
-            try {
-                action(cloud)
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (_: Throwable) {
-                // Best-effort only: local Room write already succeeded
-            }
-            return
-        }
-        writeThroughScope.launch {
-            try {
-                action(cloud)
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (_: Throwable) {
-                // Best-effort only: never crash or fail local Room writes when offline
+        if (remoteMirror === NoOpRemoteMirror) return
+        try {
+            action(remoteMirror)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            runCatching {
+                Log.w(TAG, "RemoteMirror hook failed after local Room commit ($opName): ${t.message}")
             }
         }
     }
@@ -116,16 +101,17 @@ class RoomMasroufiRepository(
             seeded = true
         )
         dao.upsertProfile(entity)
-        dispatchBestEffortWriteThrough(uid) { it.saveProfile(profile, uid) }
+        val committed = entity.toDomain()
+        notifyRemoteMirror("saveProfile") { it.onProfileUpserted(uid, committed) }
     }
 
     override suspend fun upsertTransaction(tx: TransactionItem, userId: String): String {
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
         val entity = tx.toEntity(uid, now)
-        val resolvedTx = tx.copy(id = entity.id, userId = uid)
         dao.upsertTransaction(entity)
-        dispatchBestEffortWriteThrough(uid) { it.upsertTransaction(resolvedTx, uid) }
+        val committed = entity.toDomain()
+        notifyRemoteMirror("upsertTransaction") { it.onTransactionUpserted(uid, committed) }
         return entity.id
     }
 
@@ -138,16 +124,16 @@ class RoomMasroufiRepository(
         if (txId.isBlank()) return
         val uid = requireUserId(userId)
         dao.deleteTransaction(uid, txId)
-        dispatchBestEffortWriteThrough(uid) { it.deleteTransaction(txId, uid) }
+        notifyRemoteMirror("deleteTransaction") { it.onTransactionDeleted(uid, txId) }
     }
 
     override suspend fun upsertAccount(account: AccountItem, userId: String): String {
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
         val entity = account.toEntity(uid, nowMs = now)
-        val resolved = account.copy(id = entity.id, userId = uid)
         dao.upsertAccount(entity)
-        dispatchBestEffortWriteThrough(uid) { it.upsertAccount(resolved, uid) }
+        val committed = entity.toDomain()
+        notifyRemoteMirror("upsertAccount") { it.onAccountUpserted(uid, committed) }
         return entity.id
     }
 
@@ -155,16 +141,16 @@ class RoomMasroufiRepository(
         if (accId.isBlank()) return
         val uid = requireUserId(userId)
         dao.deleteAccount(uid, accId)
-        dispatchBestEffortWriteThrough(uid) { it.deleteAccount(accId, uid) }
+        notifyRemoteMirror("deleteAccount") { it.onAccountDeleted(uid, accId) }
     }
 
     override suspend fun upsertEnvelope(envelope: EnvelopeConfig, userId: String): String {
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
         val entity = envelope.toEntity(uid, now)
-        val resolved = envelope.copy(id = entity.id, userId = uid)
         dao.upsertEnvelope(entity)
-        dispatchBestEffortWriteThrough(uid) { it.upsertEnvelope(resolved, uid) }
+        val committed = entity.toDomain()
+        notifyRemoteMirror("upsertEnvelope") { it.onEnvelopeUpserted(uid, committed) }
         return entity.id
     }
 
@@ -176,25 +162,25 @@ class RoomMasroufiRepository(
             val withId = if (env.id.isBlank()) env.copy(id = "env_${now}_$idx") else env
             withId.toEntity(uid, now)
         }
-        val resolved = envelopes.mapIndexed { idx, env -> env.copy(id = entities[idx].id, userId = uid) }
         dao.upsertEnvelopes(entities)
-        dispatchBestEffortWriteThrough(uid) { it.upsertEnvelopesAtomically(resolved, uid) }
+        val committed = entities.map { it.toDomain() }
+        notifyRemoteMirror("upsertEnvelopesAtomically") { it.onEnvelopesUpserted(uid, committed) }
     }
 
     override suspend fun deleteEnvelope(envId: String, userId: String) {
         if (envId.isBlank()) return
         val uid = requireUserId(userId)
         dao.deleteEnvelope(uid, envId)
-        dispatchBestEffortWriteThrough(uid) { it.deleteEnvelope(envId, uid) }
+        notifyRemoteMirror("deleteEnvelope") { it.onEnvelopeDeleted(uid, envId) }
     }
 
     override suspend fun upsertFinancialItem(item: FinancialItem, userId: String): String {
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
         val entity = item.toEntity(uid, now)
-        val resolved = item.copy(id = entity.id, userId = uid)
         dao.upsertFinancialItem(entity)
-        dispatchBestEffortWriteThrough(uid) { it.upsertFinancialItem(resolved, uid) }
+        val committed = entity.toDomain()
+        notifyRemoteMirror("upsertFinancialItem") { it.onFinancialItemUpserted(uid, committed) }
         return entity.id
     }
 
@@ -208,16 +194,33 @@ class RoomMasroufiRepository(
         val itemEntity = item.toEntity(uid, now)
         val txEntity = tx.toEntity(uid, now)
         dao.upsertItemAndTransactionAtomically(itemEntity, txEntity)
-        val resolvedItem = item.copy(id = itemEntity.id, userId = uid)
-        val resolvedTx = tx.copy(id = txEntity.id, userId = uid)
-        dispatchBestEffortWriteThrough(uid) { it.upsertItemAndTransactionAtomically(resolvedItem, resolvedTx, uid) }
+        val committedItem = itemEntity.toDomain()
+        val committedTx = txEntity.toDomain()
+        notifyRemoteMirror("upsertItemAndTransactionAtomically") {
+            it.onItemAndTransactionUpserted(uid, committedItem, committedTx)
+        }
     }
 
     override suspend fun deleteFinancialItem(itemId: String, userId: String) {
         if (itemId.isBlank()) return
         val uid = requireUserId(userId)
         dao.deleteFinancialItem(uid, itemId)
-        dispatchBestEffortWriteThrough(uid) { it.deleteFinancialItem(itemId, uid) }
+        notifyRemoteMirror("deleteFinancialItem") { it.onFinancialItemDeleted(uid, itemId) }
+    }
+
+    override suspend fun adoptLocalDataIntoUser(
+        sourceUserId: String,
+        targetUserId: String
+    ): Int {
+        val target = requireUserId(targetUserId)
+        if (sourceUserId.isBlank() || sourceUserId == target) return 0
+        val adopted = dao.adoptUserDataAtomically(sourceUserId, target)
+        if (adopted > 0) {
+            notifyRemoteMirror("adoptLocalDataIntoUser") {
+                it.onLocalDataAdopted(sourceUserId, target, adopted)
+            }
+        }
+        return adopted
     }
 
     private fun defaultStandardEnvelopes(uid: String): List<EnvelopeConfig> = listOf(
@@ -235,8 +238,21 @@ class RoomMasroufiRepository(
         FinancialItem(id = "pre_oncf", itemType = "preset", name = "Ticket ONCF", subtitle = "transport", amount = 50.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_bank")
     )
 
+    private fun collisionSafeSeedId(baseId: String, ownerUid: String?, currentUid: String): String {
+        if (ownerUid == null || ownerUid == currentUid) return baseId
+        val suffix = currentUid.replace(Regex("[^a-zA-Z0-9]"), "").take(10).ifBlank { "u" }
+        return "${baseId}_$suffix"
+    }
+
     override suspend fun ensureSeeded(userId: String) {
         val uid = requireUserId(userId)
+
+        // When signing in with a real account, atomically adopt any local_device_user Room data first
+        // so Local Mode records are never orphaned or overwritten by fresh default seeds.
+        if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
+            adoptLocalDataIntoUser(MasroufiRepository.LOCAL_DEVICE_USER_ID, uid)
+        }
+
         val existing = dao.getProfile(uid)
         if (existing != null && existing.seeded) {
             return
@@ -257,16 +273,25 @@ class RoomMasroufiRepository(
             AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981"),
             AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8"),
             AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#FBBF24")
-        ).mapIndexed { idx, acc -> acc.toEntity(uid, sortOrder = idx, nowMs = now) }
-        val envelopes = defaultStandardEnvelopes(uid).map { it.toEntity(uid, now) }
-        val presets = defaultQuickPresets().map { it.toEntity(uid, now) }
+        ).mapIndexed { idx, acc ->
+            val safeId = collisionSafeSeedId(acc.id, dao.getAccountOwner(acc.id), uid)
+            acc.copy(id = safeId).toEntity(uid, sortOrder = idx, nowMs = now)
+        }
+        val envelopes = defaultStandardEnvelopes(uid).map { env ->
+            val safeId = collisionSafeSeedId(env.id, dao.getEnvelopeOwner(env.id), uid)
+            env.copy(id = safeId).toEntity(uid, now)
+        }
+        val presets = defaultQuickPresets().map { item ->
+            val safeId = collisionSafeSeedId(item.id, dao.getFinancialItemOwner(item.id), uid)
+            item.copy(id = safeId).toEntity(uid, now)
+        }
 
         dao.upsertProfile(newProfile)
         dao.upsertAccounts(cleanAccounts)
         dao.upsertEnvelopes(envelopes)
         dao.upsertFinancialItems(presets)
 
-        dispatchBestEffortWriteThrough(uid) { it.ensureSeeded(uid) }
+        notifyRemoteMirror("ensureSeeded") { it.onUserSeeded(uid) }
     }
 
     override suspend fun loadDemoData(
@@ -314,9 +339,7 @@ class RoomMasroufiRepository(
         dao.upsertTransactions(demoTxs)
         dao.upsertFinancialItems(demoItems)
 
-        dispatchBestEffortWriteThrough(uid) {
-            it.loadDemoData(existingAccounts, existingEnvelopes, existingItems, existingTransactions, uid)
-        }
+        notifyRemoteMirror("loadDemoData") { it.onDemoDataLoaded(uid) }
     }
 
     override suspend fun resetToCleanAccount(
@@ -345,8 +368,8 @@ class RoomMasroufiRepository(
             cleanAccounts = cleanAccounts
         )
 
-        dispatchBestEffortWriteThrough(uid) {
-            it.resetToCleanAccount(existingTxIds, existingItemIdsToClear, existingAccounts, uid)
+        notifyRemoteMirror("resetToCleanAccount") {
+            it.onAccountReset(uid, existingTxIds, existingItemIdsToClear, extraAccountIds)
         }
     }
 
@@ -424,21 +447,18 @@ class RoomMasroufiRepository(
         )
         onChunkProgress(1, 1)
 
-        dispatchBestEffortWriteThrough(uid) {
-            it.restoreFullBackupAtomically(
-                profile = profile,
-                customPrefsItem = customPrefsItem,
-                accounts = accounts,
-                envelopes = envelopes,
-                financialItems = financialItems,
-                transactions = transactions,
-                staleTxIdsToDelete = staleTxIdsToDelete,
-                staleItemIdsToDelete = staleItemIdsToDelete,
-                staleAccountIdsToDelete = staleAccountIdsToDelete,
-                staleEnvelopeIdsToDelete = staleEnvelopeIdsToDelete,
-                onChunkProgress = { _, _ -> },
-                userId = uid
+        notifyRemoteMirror("restoreFullBackupAtomically") {
+            it.onBackupRestored(
+                userId = uid,
+                restoredTxCount = txEntities.size,
+                restoredItemCount = itemEntities.size,
+                restoredAccountCount = accountEntities.size,
+                restoredEnvelopeCount = envelopeEntities.size
             )
         }
+    }
+
+    companion object {
+        private const val TAG = "RoomMasroufiRepo"
     }
 }

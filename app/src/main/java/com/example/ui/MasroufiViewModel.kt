@@ -703,61 +703,20 @@ class MasroufiViewModel(
         _verifiedActiveDates.value = current + isoDate
     }
 
-    // Instant optimistic local overrides so UI never lags or reverts on rapid clicks (and works in local mode)
+    // Instant optimistic local overrides (nullable; null means observe Room repository directly)
     private val isLocalOnlyUser = currentUserId == LOCAL_DEVICE_USER_ID
     private val _isBulkImporting = MutableStateFlow(false)
     val isBulkImporting: StateFlow<Boolean> = _isBulkImporting.asStateFlow()
     private val _optimisticProfile = MutableStateFlow<UserProfile?>(null)
     private val _optimisticCustomPrefs = MutableStateFlow<CustomizationPrefs?>(null)
     private val _localTransactions = MutableStateFlow<List<TransactionItem>?>(null)
-    private val _localAccounts = MutableStateFlow<List<AccountItem>?>(
-        if (isLocalOnlyUser) {
-            listOf(
-                AccountItem(id = "acc_cash", userId = currentUserId, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981"),
-                AccountItem(id = "acc_bank", userId = currentUserId, name = "Compte Bancaire", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8"),
-                AccountItem(id = "acc_wallet", userId = currentUserId, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#F59E0B")
-            )
-        } else null
-    )
-    private val _localEnvelopes = MutableStateFlow<List<EnvelopeConfig>?>(
-        if (isLocalOnlyUser) {
-            listOf("charges", "marche", "transport", "cafe", "epargne", "autre").mapIndexed { idx, key ->
-                EnvelopeConfig(
-                    id = "env_$key",
-                    userId = currentUserId,
-                    key = key,
-                    nameFr = DefaultCategoryResolver.localizedDefaultName(key, "fr") ?: "Marché",
-                    nameAr = DefaultCategoryResolver.localizedDefaultName(key, "ar") ?: "السوق",
-                    nameDarija = DefaultCategoryResolver.localizedDefaultName(key, "darija") ?: "التقدية",
-                    nameEn = DefaultCategoryResolver.localizedDefaultName(key, "en") ?: "Groceries",
-                    percentage = when (key) {
-                        "charges" -> 35.0
-                        "marche" -> 25.0
-                        "transport" -> 15.0
-                        "cafe" -> 10.0
-                        "epargne" -> 10.0
-                        else -> 5.0
-                    },
-                    hasCap = key != "autre",
-                    colorHex = listOf("#284299", "#059669", "#0284C7", "#D97706", "#6D28D9", "#E11D48")[idx % 6]
-                )
-            }
-        } else null
-    )
-    private val _localItems = MutableStateFlow<List<FinancialItem>?>(
-        if (isLocalOnlyUser) {
-            listOf(
-                FinancialItem(id = "preset_cafe", userId = currentUserId, itemType = "preset", name = "Café", subtitle = "cafe", amount = 15.0, dateOrCycle = "acc_cash"),
-                FinancialItem(id = "preset_ pain", userId = currentUserId, itemType = "preset", name = "Courses", subtitle = "marche", amount = 50.0, dateOrCycle = "acc_cash"),
-                FinancialItem(id = "preset_taxi", userId = currentUserId, itemType = "preset", name = "Taxi", subtitle = "transport", amount = 20.0, dateOrCycle = "acc_cash")
-            )
-        } else null
-    )
+    private val _localAccounts = MutableStateFlow<List<AccountItem>?>(null)
+    private val _localEnvelopes = MutableStateFlow<List<EnvelopeConfig>?>(null)
+    private val _localItems = MutableStateFlow<List<FinancialItem>?>(null)
     private val _errorMessage = MutableStateFlow<String?>(null)
     private val _customPrefsItemCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
 
     private fun safeLaunch(tag: String, block: suspend () -> Unit) {
-        if (isLocalOnlyUser) return
         viewModelScope.launch {
             var markedSlowSync = false
             val slowSyncJob = launch {
@@ -1154,8 +1113,9 @@ class MasroufiViewModel(
     fun clearLearnedCategories() {
         PayCycleEngine.clearLearnedCategories()
         onLearnedCategoriesUpdated("")
-        val currentItems = (_localItems.value ?: emptyList()).filterNot { it.id == "learned_categories" }
-        _localItems.value = currentItems
+        safeLaunch("clearLearnedCategories") {
+            repository.deleteFinancialItem("learned_categories")
+        }
     }
 
     private fun persistLearnedCategories() {
@@ -1166,11 +1126,6 @@ class MasroufiViewModel(
             existingCreatedAt = _learnedCategoriesCreatedAt.value
         )
         lastSyncedLearnedSignature = "${item.subtitle}|${item.dateOrCycle}"
-        if (isLocalOnlyUser) {
-            val currentItems = (_localItems.value ?: emptyList()).filterNot { it.id == "learned_categories" }
-            _localItems.value = currentItems + item
-            return
-        }
         safeLaunch("persistLearnedCategories") {
             repository.upsertFinancialItem(item)
         }
@@ -1292,13 +1247,6 @@ class MasroufiViewModel(
     fun saveCustomizationPrefs(prefs: CustomizationPrefs) {
         _optimisticCustomPrefs.value = prefs
         val item = buildCustomPrefsFinancialItem(prefs, _customPrefsItemCreatedAt.value)
-        if (isLocalOnlyUser) {
-            val currentItems = (_localItems.value ?: emptyList()).filterNot {
-                it.id == "custom_prefs" || (it.itemType == "custom_prefs" && it.id != "learned_categories")
-            }
-            _localItems.value = currentItems + item
-            return
-        }
         safeLaunch("saveCustomizationPrefs") {
             repository.upsertFinancialItem(item)
         }
@@ -1429,11 +1377,6 @@ class MasroufiViewModel(
         if (_verifiedActiveDates.value != null) {
             recordActiveOrConfirmedDate(validatedDate)
         }
-        if (isLocalOnlyUser) {
-            val curList = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == newTx.id }
-            _localTransactions.value = listOf(newTx) + curList
-            return
-        }
         safeLaunch("saveTransaction") {
             repository.upsertTransaction(newTx.copy(id = existingId))
         }
@@ -1466,11 +1409,6 @@ class MasroufiViewModel(
         }
         _lastDeletedTx.value = tx
         onAdded(tx)
-        if (isLocalOnlyUser) {
-            val curList = _localTransactions.value ?: uiState.value.allTransactions
-            _localTransactions.value = listOf(tx) + curList
-            return
-        }
         safeLaunch("quickAddPreset") {
             repository.upsertTransaction(tx)
         }
@@ -1488,11 +1426,6 @@ class MasroufiViewModel(
             updatedAt = null
         )
         onDuplicated(duplicated)
-        if (isLocalOnlyUser) {
-            val curList = _localTransactions.value ?: uiState.value.allTransactions
-            _localTransactions.value = listOf(duplicated) + curList
-            return
-        }
         safeLaunch("duplicateTransaction") {
             repository.upsertTransaction(duplicated)
         }
@@ -1534,14 +1467,6 @@ class MasroufiViewModel(
             )
         }
 
-        if (isLocalOnlyUser) {
-            if (updatedEnvelopes.isNotEmpty()) {
-                _localEnvelopes.value = updatedEnvelopes
-            }
-            onDone()
-            return
-        }
-
         safeLaunch("completeQuickOnboarding") {
             repository.saveProfile(updatedProfile)
             if (updatedEnvelopes.isNotEmpty()) {
@@ -1553,10 +1478,6 @@ class MasroufiViewModel(
 
     fun deleteTransactionWithUndo(tx: TransactionItem) {
         _lastDeletedTx.value = tx
-        if (isLocalOnlyUser) {
-            _localTransactions.value = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
-            return
-        }
         safeLaunch("deleteTransactionWithUndo") {
             repository.deleteTransaction(tx.id)
         }
@@ -1565,10 +1486,6 @@ class MasroufiViewModel(
     fun undoDeleteTransaction() {
         val tx = _lastDeletedTx.value ?: return
         _lastDeletedTx.value = null
-        if (isLocalOnlyUser) {
-            _localTransactions.value = listOf(tx) + (_localTransactions.value ?: uiState.value.allTransactions)
-            return
-        }
         safeLaunch("undoDeleteTransaction") {
             repository.upsertTransaction(tx.copy(createdAt = null, updatedAt = null))
         }
@@ -1630,12 +1547,6 @@ class MasroufiViewModel(
             persistLearnedCategories()
         }
 
-        if (isLocalOnlyUser) {
-            val curList = _localTransactions.value ?: s.allTransactions
-            _localTransactions.value = createdTxs + curList
-            return createdTxs
-        }
-
         safeLaunch("saveVoiceBatchTransactions") {
             createdTxs.forEach { tx ->
                 repository.upsertTransaction(tx)
@@ -1681,21 +1592,6 @@ class MasroufiViewModel(
             persistLearnedCategories()
         }
 
-        if (isLocalOnlyUser) {
-            _isBulkImporting.value = true
-            try {
-                val incomingIds = validTxs.mapTo(HashSet()) { it.id }
-                val existing = (_localTransactions.value ?: uiState.value.allTransactions)
-                    .filterNot { it.id in incomingIds }
-                _localTransactions.value = validTxs + existing
-                onChunkProgress(total, total)
-            } finally {
-                _isBulkImporting.value = false
-            }
-            onComplete(total)
-            return
-        }
-
         safeLaunch("importStatementTransactions") {
             _isBulkImporting.value = true
             var completed = 0
@@ -1717,12 +1613,6 @@ class MasroufiViewModel(
 
     fun deleteTransactionsBatch(txs: List<TransactionItem>) {
         if (txs.isEmpty()) return
-        val idsToRemove = txs.map { it.id }.toSet()
-        if (isLocalOnlyUser) {
-            val curList = _localTransactions.value ?: uiState.value.allTransactions
-            _localTransactions.value = curList.filterNot { it.id in idsToRemove }
-            return
-        }
         safeLaunch("deleteTransactionsBatch") {
             txs.forEach { tx ->
                 repository.deleteTransaction(tx.id)
@@ -1932,13 +1822,6 @@ class MasroufiViewModel(
             isoDate = PayCycleEngine.todayIso(),
             createdAt = existingTx?.createdAt
         )
-        if (isLocalOnlyUser) {
-            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedBill.id }
-            _localItems.value = items + updatedBill
-            val txs = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
-            _localTransactions.value = listOf(tx) + txs
-            return
-        }
         safeLaunch("payRecurringBill") {
             repository.upsertItemAndTransactionAtomically(updatedBill, tx)
         }
@@ -1962,13 +1845,6 @@ class MasroufiViewModel(
             desc = item.name,
             isoDate = PayCycleEngine.todayIso()
         )
-        if (isLocalOnlyUser) {
-            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedItem.id }
-            _localItems.value = items + updatedItem
-            val txs = _localTransactions.value ?: uiState.value.allTransactions
-            _localTransactions.value = listOf(tx) + txs
-            return
-        }
         safeLaunch("contributeToGoalOrSeasonal") {
             repository.upsertItemAndTransactionAtomically(updatedItem, tx)
         }
@@ -1992,13 +1868,6 @@ class MasroufiViewModel(
             isoDate = PayCycleEngine.todayIso(),
             createdAt = existingTx?.createdAt
         )
-        if (isLocalOnlyUser) {
-            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedDaret.id }
-            _localItems.value = items + updatedDaret
-            val txs = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
-            _localTransactions.value = listOf(tx) + txs
-            return
-        }
         safeLaunch("payDaretRound") {
             repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
         }
@@ -2027,13 +1896,6 @@ class MasroufiViewModel(
             isoDate = PayCycleEngine.todayIso(),
             createdAt = existingTx?.createdAt
         )
-        if (isLocalOnlyUser) {
-            val items = (_localItems.value ?: emptyList()).filterNot { it.id == updatedDaret.id }
-            _localItems.value = items + updatedDaret
-            val txs = (_localTransactions.value ?: uiState.value.allTransactions).filterNot { it.id == tx.id }
-            _localTransactions.value = listOf(tx) + txs
-            return
-        }
         safeLaunch("collectDaretPot") {
             repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
         }

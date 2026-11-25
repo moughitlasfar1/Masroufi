@@ -222,4 +222,55 @@ interface MasroufiDao {
         if (financialItems.isNotEmpty()) upsertFinancialItems(financialItems)
         if (savedCredits.isNotEmpty()) upsertSavedCredits(savedCredits)
     }
+
+    // --- Ownership lookups (prevent cross-user PK collision during seeding) ---
+    @Query("SELECT userId FROM accounts WHERE id = :accountId LIMIT 1")
+    suspend fun getAccountOwner(accountId: String): String?
+
+    @Query("SELECT userId FROM envelopes WHERE id = :envelopeId LIMIT 1")
+    suspend fun getEnvelopeOwner(envelopeId: String): String?
+
+    @Query("SELECT userId FROM financial_items WHERE id = :itemId LIMIT 1")
+    suspend fun getFinancialItemOwner(itemId: String): String?
+
+    // --- Atomic Local Mode -> Signed-In User Adoption ---
+    @Query("UPDATE accounts SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignAccountsOwner(sourceUserId: String, targetUserId: String): Int
+
+    @Query("UPDATE envelopes SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignEnvelopesOwner(sourceUserId: String, targetUserId: String): Int
+
+    @Query("UPDATE transactions SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignTransactionsOwner(sourceUserId: String, targetUserId: String): Int
+
+    @Query("UPDATE financial_items SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignFinancialItemsOwner(sourceUserId: String, targetUserId: String): Int
+
+    @Query("UPDATE saved_credits SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignSavedCreditsOwner(sourceUserId: String, targetUserId: String): Int
+
+    @Transaction
+    suspend fun adoptUserDataAtomically(sourceUserId: String, targetUserId: String): Int {
+        if (sourceUserId.isBlank() || targetUserId.isBlank() || sourceUserId == targetUserId) {
+            return 0
+        }
+        val sourceProfile = getProfile(sourceUserId)
+        val targetProfile = getProfile(targetUserId)
+
+        var adoptedCount = 0
+        adoptedCount += reassignAccountsOwner(sourceUserId, targetUserId)
+        adoptedCount += reassignEnvelopesOwner(sourceUserId, targetUserId)
+        adoptedCount += reassignTransactionsOwner(sourceUserId, targetUserId)
+        adoptedCount += reassignFinancialItemsOwner(sourceUserId, targetUserId)
+        adoptedCount += reassignSavedCreditsOwner(sourceUserId, targetUserId)
+
+        if (sourceProfile != null) {
+            if (targetProfile == null) {
+                upsertProfile(sourceProfile.copy(userId = targetUserId))
+                adoptedCount += 1
+            }
+            deleteProfileForUser(sourceUserId)
+        }
+        return adoptedCount
+    }
 }

@@ -6,9 +6,9 @@ import kotlinx.coroutines.flow.Flow
  * Storage-agnostic repository contract for Masroufi financial data.
  *
  * Implemented by:
- * - [MasroufiRepository] (legacy Firestore backend / fallback kill switch / cloud write-through target)
- * - [com.example.data.local.RoomMasroufiRepository] (encrypted local Room source of truth)
- * - [SwitchingMasroufiRepository] (runtime router flipping to Room only after verified import)
+ * - [com.example.data.local.RoomMasroufiRepository] (primary local-first encrypted Room source of truth)
+ * - [LocalRoomMasroufiDataSource] (thin single-repo Room facade bound to [com.example.data.local.MasroufiDatabaseProvider])
+ * - [MasroufiRepository] (isolated legacy Firestore utility & emulator rules test target)
  */
 interface MasroufiDataSource {
 
@@ -86,4 +86,9 @@ interface MasroufiDataSource {
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit = { _, _ -> },
         userId: String = requireUserId()
     )
+
+    suspend fun adoptLocalDataIntoUser(
+        sourceUserId: String = MasroufiRepository.LOCAL_DEVICE_USER_ID,
+        targetUserId: String = requireUserId()
+    ): Int = 0
 }

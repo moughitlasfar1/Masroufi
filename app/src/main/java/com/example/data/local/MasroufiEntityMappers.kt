@@ -252,4 +252,24 @@ internal object MasroufiEntityMappers {
             createdAtEpochMs = createdMs
         )
     }
+
+    fun SavedCreditLocalEntity.toDomain(): SavedCreditEntity = SavedCreditEntity(
+        id = id,
+        userId = userId,
+        type = type,
+        loanAmount = loanAmount,
+        downPayment = downPayment,
+        financedPrincipal = financedPrincipal,
+        durationMonths = durationMonths,
+        deferredMonths = deferredMonths,
+        annualInterestRateHt = annualInterestRateHt,
+        applyInterestTva = applyInterestTva,
+        insuranceRate = insuranceRate,
+        monthlyPayment = monthlyPayment,
+        totalCost = totalCost,
+        debtToIncomeRatio = debtToIncomeRatio,
+        maxAllowedDti = maxAllowedDti,
+        linkToMonthlyExpenses = linkToMonthlyExpenses,
+        createdAt = epochMsToTimestamp(createdAtEpochMs)
+    )
 }

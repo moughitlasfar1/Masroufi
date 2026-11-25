@@ -180,9 +180,6 @@ import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderF
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.FirebaseFirestoreSettings
-import com.google.firebase.firestore.PersistentCacheSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
@@ -191,16 +188,13 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.data.DataSourceConfigStore
-import com.example.data.SwitchingMasroufiRepository
+import com.example.data.LocalRoomMasroufiDataSource
 import com.example.data.local.DatabaseHealthState
-import com.example.data.local.FirebaseFirestoreServerSource
-import com.example.data.local.FirestoreImportResult
-import com.example.data.local.FirestoreToRoomImporter
-import com.example.data.local.MasroufiDatabase
 import com.example.data.local.MasroufiDatabaseProvider
+import com.example.data.local.NoOpRemoteMirror
 import com.example.data.local.RoomMasroufiRepository
 import com.example.ui.DatabaseRecoveryDialog
-import com.masroufi.credit.data.CreditRepository
+import com.masroufi.credit.data.RoomCreditRepository
 import com.masroufi.credit.domain.CreditCalculator
 import com.masroufi.credit.domain.CreditStrings
 import com.masroufi.credit.presentation.CreditSimulatorScreen
@@ -335,7 +329,6 @@ class MainActivity : FragmentActivity() {
         runCatching {
             AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
         }
-        initFirestoreOfflineCache()
         val launchedFromQuickAdd = intent?.action == MasroufiAppWidget.ACTION_QUICK_ADD
         val launchedFromQuickVoice = intent?.action == MasroufiAppWidget.ACTION_QUICK_VOICE
         val targetTabExtra = intent?.getStringExtra(MasroufiAppWidget.EXTRA_TARGET_TAB).orEmpty()
@@ -345,23 +338,6 @@ class MainActivity : FragmentActivity() {
                 openQuickVoiceOnLaunch = launchedFromQuickVoice,
                 initialTargetTab = targetTabExtra
             )
-        }
-    }
-
-    private fun initFirestoreOfflineCache() {
-        runCatching {
-            ensureFirebaseInitialized(this)
-            val databaseId = getString(R.string.firestore_database_id)
-            val db = FirebaseFirestore.getInstance(databaseId)
-            val cacheSettings = if (AppSecurityManager.isCloudOnlyModeEnabled(this)) {
-                com.google.firebase.firestore.MemoryCacheSettings.newBuilder().build()
-            } else {
-                PersistentCacheSettings.newBuilder().build()
-            }
-            val settings = FirebaseFirestoreSettings.Builder()
-                .setLocalCacheSettings(cacheSettings)
-                .build()
-            db.firestoreSettings = settings
         }
     }
 }
@@ -429,32 +405,13 @@ fun MainFeatureScreen(
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                val databaseId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(databaseId)
-                val firestoreRepo = MasroufiRepository(db)
-                var cachedDbRef: MasroufiDatabase? = null
-                var cachedRoomRepo: RoomMasroufiRepository? = null
-                val switchingRepo = SwitchingMasroufiRepository(
-                    firestoreFallback = firestoreRepo,
-                    roomRepositoryProvider = {
-                        val openDb = MasroufiDatabaseProvider.getOpenInstanceOrNull()
-                        if (openDb == null) {
-                            null
-                        } else if (openDb === cachedDbRef && cachedRoomRepo != null) {
-                            cachedRoomRepo
-                        } else {
-                            RoomMasroufiRepository(
-                                dao = openDb.masroufiDao(),
-                                cloudWriteThrough = firestoreRepo
-                            ).also {
-                                cachedDbRef = openDb
-                                cachedRoomRepo = it
-                            }
-                        }
-                    }
+                val roomDataSource = LocalRoomMasroufiDataSource(
+                    context = app,
+                    remoteMirror = NoOpRemoteMirror,
+                    userIdProvider = { currentUserId }
                 )
                 MasroufiViewModel(
-                    repository = switchingRepo,
+                    repository = roomDataSource,
                     currentUserId = currentUserId,
                     initialHideAmounts = AppSecurityManager.isHideAmountsEnabled(app),
                     initialRollbackSnapshot = AppSecurityManager.loadEncryptedRollbackSnapshot(app),
@@ -486,10 +443,12 @@ fun MainFeatureScreen(
                 val app = checkNotNull(this[APPLICATION_KEY]) {
                     "APPLICATION_KEY missing from CreationExtras"
                 }
-                val databaseId = app.getString(R.string.firestore_database_id)
-                val db = FirebaseFirestore.getInstance(databaseId)
                 CreditSimulatorViewModel(
-                    repository = CreditRepository(db = db, auth = Firebase.auth)
+                    repository = RoomCreditRepository(
+                        context = app,
+                        userIdProvider = { currentUserId },
+                        remoteMirror = NoOpRemoteMirror
+                    )
                 )
             }
         }
@@ -519,8 +478,6 @@ fun MainFeatureScreen(
 
     val pendingBankDetections by com.example.notifications.BankDetectionStore.pendingItemsFlow.collectAsStateWithLifecycle()
     val localDbHealth by MasroufiDatabaseProvider.healthState.collectAsStateWithLifecycle()
-    val killSwitchEnabled by DataSourceConfigStore.killSwitchEnabled.collectAsStateWithLifecycle()
-    var importRetryTick by remember { mutableStateOf(0) }
     var annualBillsList by remember {
         mutableStateOf(com.masroufi.fiscal.data.FiscalRepository.loadAnnualBills(context))
     }
@@ -605,47 +562,26 @@ fun MainFeatureScreen(
         }
     }
 
-    // Phase 1a + 1b: Open encrypted SQLCipher Room DB and run one-time Source.SERVER import
-    LaunchedEffect(currentUserId, killSwitchEnabled, importRetryTick) {
+    // Phase 1: Open encrypted SQLCipher Room DB as the single local-first source of truth
+    // and atomically adopt any local_device_user records when signed in with Google.
+    LaunchedEffect(currentUserId) {
         if (!MasroufiApplication.isSqlCipherNativeLoaded) {
             DataSourceConfigStore.refreshActiveMode(context, currentUserId, isRoomHealthy = false)
             return@LaunchedEffect
         }
-        val importResult = withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             val roomDb = MasroufiDatabaseProvider.getOrOpen(context)
             val healthy = roomDb != null
             DataSourceConfigStore.refreshActiveMode(context, currentUserId, isRoomHealthy = healthy)
-            if (roomDb != null &&
-                !DataSourceConfigStore.isFirestoreKillSwitchEnabled(context) &&
-                !DataSourceConfigStore.isRoomImportCompleted(context, currentUserId)
-            ) {
-                val databaseId = context.getString(R.string.firestore_database_id)
-                val firestoreDb = FirebaseFirestore.getInstance(databaseId)
-                FirestoreToRoomImporter.runImport(
-                    context = context,
-                    userId = currentUserId,
-                    language = state.profile.language,
+            if (roomDb != null && currentUserId != LOCAL_DEVICE_USER_ID) {
+                RoomMasroufiRepository(
                     dao = roomDb.masroufiDao(),
-                    serverSource = FirebaseFirestoreServerSource(firestoreDb)
+                    remoteMirror = NoOpRemoteMirror,
+                    userIdProvider = { currentUserId }
+                ).adoptLocalDataIntoUser(
+                    sourceUserId = LOCAL_DEVICE_USER_ID,
+                    targetUserId = currentUserId
                 )
-            } else {
-                null
-            }
-        }
-        if (importResult is FirestoreImportResult.Failed) {
-            val retryLabel = when (state.profile.language.lowercase()) {
-                "ar" -> "إعادة"
-                "darija" -> "عاود"
-                "en" -> "Retry"
-                else -> "Réessayer"
-            }
-            val snackRes = snackbarHostState.showSnackbar(
-                message = importResult.localizedMessage,
-                actionLabel = retryLabel,
-                duration = SnackbarDuration.Long
-            )
-            if (snackRes == SnackbarResult.ActionPerformed) {
-                importRetryTick++
             }
         }
     }

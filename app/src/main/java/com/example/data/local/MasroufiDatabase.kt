@@ -62,6 +62,9 @@ object MasroufiDatabaseProvider {
     private val _headerCheckState = MutableStateFlow<DbEncryptionHeaderCheck?>(null)
     val headerCheckState: StateFlow<DbEncryptionHeaderCheck?> = _headerCheckState.asStateFlow()
 
+    private val _dbGeneration = MutableStateFlow(0L)
+    val dbGeneration: StateFlow<Long> = _dbGeneration.asStateFlow()
+
     fun getOpenInstanceOrNull(): MasroufiDatabase? = instance
 
     /**
@@ -156,6 +159,7 @@ object MasroufiDatabaseProvider {
             }
             instance = db
             _healthState.value = DatabaseHealthState.Healthy
+            _dbGeneration.value = _dbGeneration.value + 1L
             db
         } catch (e: Throwable) {
             passphrase.fill(0)
@@ -169,13 +173,18 @@ object MasroufiDatabaseProvider {
     }
 
     private fun closeInternal() {
+        val hadInstance = instance != null
         runCatching { instance?.close() }
         instance = null
+        if (hadInstance) {
+            _dbGeneration.value = _dbGeneration.value + 1L
+        }
     }
 
     internal fun resetForTesting() = synchronized(lock) {
         closeInternal()
         _healthState.value = DatabaseHealthState.Uninitialized
         _headerCheckState.value = null
+        _dbGeneration.value = _dbGeneration.value + 1L
     }
 }

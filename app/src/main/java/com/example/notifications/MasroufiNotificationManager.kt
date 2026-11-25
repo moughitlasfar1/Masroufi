@@ -30,7 +30,6 @@ import com.example.ui.DashboardState
 import com.example.widget.MasroufiAppWidget
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestore
 import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -1411,9 +1410,16 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 }
 
                 runCatching {
-                    val dbId = appCtx.getString(R.string.firestore_database_id)
-                    val repo = MasroufiRepository(FirebaseFirestore.getInstance(dbId))
-                    if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
+                    val roomDb = com.example.data.local.MasroufiDatabaseProvider.getOpenInstanceOrNull()
+                        ?: if (com.example.MasroufiApplication.isSqlCipherNativeLoaded) {
+                            com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)
+                        } else null
+                    if (roomDb != null) {
+                        val repo = com.example.data.local.RoomMasroufiRepository(
+                            dao = roomDb.masroufiDao(),
+                            remoteMirror = com.example.data.local.NoOpRemoteMirror,
+                            userIdProvider = { uid }
+                        )
                         withTimeoutOrNull(2500L) {
                             repo.upsertItemAndTransactionAtomically(updatedItem, tx, userId = uid)
                         }

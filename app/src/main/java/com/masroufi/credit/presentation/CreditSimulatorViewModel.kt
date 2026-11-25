@@ -2,7 +2,7 @@ package com.masroufi.credit.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.masroufi.credit.data.CreditRepository
+import com.masroufi.credit.data.CreditDataSource
 import com.masroufi.credit.data.SavedCreditEntity
 import com.masroufi.credit.domain.CreditCalculator
 import com.masroufi.credit.domain.CreditInput
@@ -44,7 +44,7 @@ object CreditValidationKeys {
 }
 
 class CreditSimulatorViewModel(
-    private val repository: CreditRepository? = null,
+    private val repository: CreditDataSource? = null,
     initialLanguage: String = "fr"
 ) : ViewModel() {
 

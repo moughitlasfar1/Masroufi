@@ -2,14 +2,22 @@ package com.example.data
 
 import android.content.Context
 import com.example.data.local.DatabaseHealthState
+import com.example.data.local.MasroufiDatabase
 import com.example.data.local.MasroufiDatabaseProvider
+import com.example.data.local.NoOpRemoteMirror
+import com.example.data.local.RemoteMirror
 import com.example.data.local.RoomMasroufiRepository
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 
 enum class ActiveDataSourceMode {
     FIRESTORE_LEGACY,
@@ -17,9 +25,11 @@ enum class ActiveDataSourceMode {
 }
 
 /**
- * Persists per-user Firestore -> Room import completion flags and the Firestore fallback
- * kill switch, publishing reactive state so [SwitchingMasroufiRepository] and UI components
- * can flip data sources safely without recreating ViewModels.
+ * Tracks one-time legacy Firestore -> Room migration metadata flags.
+ *
+ * Phase 1 enforces strict local-first Room persistence for all normal app operations:
+ * [activeMode] is always [ActiveDataSourceMode.ROOM_PRIMARY], and runtime dual-source
+ * Firestore switching has been removed.
  */
 object DataSourceConfigStore {
     private const val PREFS_NAME = "masroufi_datasource_prefs"
@@ -27,7 +37,7 @@ object DataSourceConfigStore {
     private const val KEY_IMPORT_COMPLETED_PREFIX = "room_import_completed_v1_"
     private const val KEY_ANY_IMPORT_COMPLETED = "any_user_room_import_completed_v1"
 
-    private val _activeMode = MutableStateFlow(ActiveDataSourceMode.FIRESTORE_LEGACY)
+    private val _activeMode = MutableStateFlow(ActiveDataSourceMode.ROOM_PRIMARY)
     val activeMode: StateFlow<ActiveDataSourceMode> = _activeMode.asStateFlow()
 
     private val _killSwitchEnabled = MutableStateFlow(false)
@@ -51,7 +61,7 @@ object DataSourceConfigStore {
             .putBoolean("$KEY_IMPORT_COMPLETED_PREFIX$userId", true)
             .putBoolean(KEY_ANY_IMPORT_COMPLETED, true)
             .apply()
-        refreshActiveMode(context, userId)
+        _activeMode.value = ActiveDataSourceMode.ROOM_PRIMARY
     }
 
     fun clearRoomImportCompletedForUser(context: Context, userId: String) {
@@ -59,7 +69,7 @@ object DataSourceConfigStore {
         prefs(context).edit()
             .putBoolean("$KEY_IMPORT_COMPLETED_PREFIX$userId", false)
             .apply()
-        refreshActiveMode(context, userId)
+        _activeMode.value = ActiveDataSourceMode.ROOM_PRIMARY
     }
 
     fun isFirestoreKillSwitchEnabled(context: Context): Boolean {
@@ -69,134 +79,183 @@ object DataSourceConfigStore {
     }
 
     /**
-     * Kill switch: immediately forces Masroufi to fall back to the legacy Firestore repository
-     * (e.g., if an import fails or troubleshooting is needed).
+     * Retained for settings preference compatibility; daily operations always remain
+     * local-first on Room in Phase 1+.
      */
     fun setFirestoreKillSwitchEnabled(context: Context, enabled: Boolean, currentUserId: String? = null) {
         prefs(context).edit()
             .putBoolean(KEY_FORCE_FIRESTORE_KILL_SWITCH, enabled)
             .apply()
         _killSwitchEnabled.value = enabled
-        if (currentUserId != null) {
-            refreshActiveMode(context, currentUserId)
-        } else if (enabled) {
-            _activeMode.value = ActiveDataSourceMode.FIRESTORE_LEGACY
-        }
+        _activeMode.value = ActiveDataSourceMode.ROOM_PRIMARY
     }
 
     fun resolveEffectiveMode(
         context: Context,
         userId: String,
         isRoomHealthy: Boolean = MasroufiDatabaseProvider.healthState.value is DatabaseHealthState.Healthy
-    ): ActiveDataSourceMode {
-        val killSwitch = isFirestoreKillSwitchEnabled(context)
-        if (killSwitch || !isRoomHealthy) {
-            return ActiveDataSourceMode.FIRESTORE_LEGACY
-        }
-        return if (isRoomImportCompleted(context, userId)) {
-            ActiveDataSourceMode.ROOM_PRIMARY
-        } else {
-            ActiveDataSourceMode.FIRESTORE_LEGACY
-        }
-    }
+    ): ActiveDataSourceMode = ActiveDataSourceMode.ROOM_PRIMARY
 
     fun refreshActiveMode(
         context: Context,
         userId: String,
         isRoomHealthy: Boolean = MasroufiDatabaseProvider.healthState.value is DatabaseHealthState.Healthy
     ): ActiveDataSourceMode {
-        val mode = resolveEffectiveMode(context, userId, isRoomHealthy)
-        _activeMode.value = mode
-        return mode
+        _activeMode.value = ActiveDataSourceMode.ROOM_PRIMARY
+        return ActiveDataSourceMode.ROOM_PRIMARY
     }
 
     internal fun resetForTesting(context: Context) {
         prefs(context).edit().clear().commit()
         _killSwitchEnabled.value = false
-        _activeMode.value = ActiveDataSourceMode.FIRESTORE_LEGACY
+        _activeMode.value = ActiveDataSourceMode.ROOM_PRIMARY
     }
 }
 
 /**
- * Runtime router implementing [MasroufiDataSource].
+ * Thin single-repository Room facade implementing [MasroufiDataSource].
  *
- * ViewModels observe a single [SwitchingMasroufiRepository] instance and never need to be
- * recreated when the verified Firestore -> Room import completes or when the Firestore
- * fallback kill switch is toggled.
+ * Binds reactively to [MasroufiDatabaseProvider.dbGeneration] so ViewModels never need to be
+ * recreated when the encrypted Room database opens asynchronously on cold start or reopens
+ * after recovery. Never touches Firestore or requires network connectivity.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
-class SwitchingMasroufiRepository(
-    private val firestoreFallback: MasroufiDataSource,
-    private val roomRepositoryProvider: () -> RoomMasroufiRepository?,
-    private val activeModeFlow: StateFlow<ActiveDataSourceMode> = DataSourceConfigStore.activeMode
+class LocalRoomMasroufiDataSource(
+    context: Context,
+    private val remoteMirror: RemoteMirror = NoOpRemoteMirror,
+    private val userIdProvider: () -> String = {
+        runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+            ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+    }
 ) : MasroufiDataSource {
 
-    private fun currentBackend(mode: ActiveDataSourceMode = activeModeFlow.value): MasroufiDataSource {
-        if (mode == ActiveDataSourceMode.ROOM_PRIMARY) {
-            roomRepositoryProvider()?.let { return it }
+    private val appContext = context.applicationContext
+
+    @Volatile
+    private var cachedDbRef: MasroufiDatabase? = null
+
+    @Volatile
+    private var cachedRepo: RoomMasroufiRepository? = null
+
+    private fun currentOpenRepoOrNull(): RoomMasroufiRepository? {
+        val openDb = MasroufiDatabaseProvider.getOpenInstanceOrNull() ?: return null
+        if (openDb === cachedDbRef) {
+            cachedRepo?.let { return it }
         }
-        return firestoreFallback
+        return RoomMasroufiRepository(
+            dao = openDb.masroufiDao(),
+            remoteMirror = remoteMirror,
+            userIdProvider = userIdProvider
+        ).also {
+            cachedDbRef = openDb
+            cachedRepo = it
+        }
     }
 
-    override fun requireUserId(explicitUserId: String?): String =
-        currentBackend().requireUserId(explicitUserId)
+    private suspend fun requireOpenRepo(): RoomMasroufiRepository? {
+        currentOpenRepoOrNull()?.let { return it }
+        val db = withContext(Dispatchers.IO) {
+            MasroufiDatabaseProvider.getOrOpen(appContext)
+        } ?: return null
+        return RoomMasroufiRepository(
+            dao = db.masroufiDao(),
+            remoteMirror = remoteMirror,
+            userIdProvider = userIdProvider
+        ).also {
+            cachedDbRef = db
+            cachedRepo = it
+        }
+    }
+
+    override fun requireUserId(explicitUserId: String?): String {
+        return explicitUserId?.takeIf { it.isNotBlank() } ?: userIdProvider()
+    }
 
     override fun observeProfile(userId: String): Flow<UserProfile?> =
-        activeModeFlow.flatMapLatest { mode -> currentBackend(mode).observeProfile(userId) }
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeProfile(userId) ?: flowOf(null)
+        }
 
     override fun observeTransactions(userId: String, minIsoDate: String?): Flow<List<TransactionItem>> =
-        activeModeFlow.flatMapLatest { mode -> currentBackend(mode).observeTransactions(userId, minIsoDate) }
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeTransactions(userId, minIsoDate) ?: flowOf(emptyList())
+        }
 
     override fun observeAccounts(userId: String): Flow<List<AccountItem>> =
-        activeModeFlow.flatMapLatest { mode -> currentBackend(mode).observeAccounts(userId) }
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeAccounts(userId) ?: flowOf(emptyList())
+        }
 
     override fun observeEnvelopes(userId: String): Flow<List<EnvelopeConfig>> =
-        activeModeFlow.flatMapLatest { mode -> currentBackend(mode).observeEnvelopes(userId) }
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeEnvelopes(userId) ?: flowOf(emptyList())
+        }
 
     override fun observeFinancialItems(userId: String): Flow<List<FinancialItem>> =
-        activeModeFlow.flatMapLatest { mode -> currentBackend(mode).observeFinancialItems(userId) }
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeFinancialItems(userId) ?: flowOf(emptyList())
+        }
 
-    override suspend fun saveProfile(profile: UserProfile, userId: String) =
-        currentBackend().saveProfile(profile, userId)
+    override suspend fun saveProfile(profile: UserProfile, userId: String) {
+        requireOpenRepo()?.saveProfile(profile, userId)
+    }
 
-    override suspend fun upsertTransaction(tx: TransactionItem, userId: String): String =
-        currentBackend().upsertTransaction(tx, userId)
+    override suspend fun upsertTransaction(tx: TransactionItem, userId: String): String {
+        val repo = requireOpenRepo() ?: return tx.id
+        return repo.upsertTransaction(tx, userId)
+    }
 
-    override suspend fun getTransactionById(targetUserId: String, txId: String): TransactionItem? =
-        currentBackend().getTransactionById(targetUserId, txId)
+    override suspend fun getTransactionById(targetUserId: String, txId: String): TransactionItem? {
+        return requireOpenRepo()?.getTransactionById(targetUserId, txId)
+    }
 
-    override suspend fun deleteTransaction(txId: String, userId: String) =
-        currentBackend().deleteTransaction(txId, userId)
+    override suspend fun deleteTransaction(txId: String, userId: String) {
+        requireOpenRepo()?.deleteTransaction(txId, userId)
+    }
 
-    override suspend fun upsertAccount(account: AccountItem, userId: String): String =
-        currentBackend().upsertAccount(account, userId)
+    override suspend fun upsertAccount(account: AccountItem, userId: String): String {
+        val repo = requireOpenRepo() ?: return account.id
+        return repo.upsertAccount(account, userId)
+    }
 
-    override suspend fun deleteAccount(accId: String, userId: String) =
-        currentBackend().deleteAccount(accId, userId)
+    override suspend fun deleteAccount(accId: String, userId: String) {
+        requireOpenRepo()?.deleteAccount(accId, userId)
+    }
 
-    override suspend fun upsertEnvelope(envelope: EnvelopeConfig, userId: String): String =
-        currentBackend().upsertEnvelope(envelope, userId)
+    override suspend fun upsertEnvelope(envelope: EnvelopeConfig, userId: String): String {
+        val repo = requireOpenRepo() ?: return envelope.id
+        return repo.upsertEnvelope(envelope, userId)
+    }
 
-    override suspend fun upsertEnvelopesAtomically(envelopes: List<EnvelopeConfig>, userId: String) =
-        currentBackend().upsertEnvelopesAtomically(envelopes, userId)
+    override suspend fun upsertEnvelopesAtomically(envelopes: List<EnvelopeConfig>, userId: String) {
+        requireOpenRepo()?.upsertEnvelopesAtomically(envelopes, userId)
+    }
 
-    override suspend fun deleteEnvelope(envId: String, userId: String) =
-        currentBackend().deleteEnvelope(envId, userId)
+    override suspend fun deleteEnvelope(envId: String, userId: String) {
+        requireOpenRepo()?.deleteEnvelope(envId, userId)
+    }
 
-    override suspend fun upsertFinancialItem(item: FinancialItem, userId: String): String =
-        currentBackend().upsertFinancialItem(item, userId)
+    override suspend fun upsertFinancialItem(item: FinancialItem, userId: String): String {
+        val repo = requireOpenRepo() ?: return item.id
+        return repo.upsertFinancialItem(item, userId)
+    }
 
     override suspend fun upsertItemAndTransactionAtomically(
         item: FinancialItem,
         tx: TransactionItem,
         userId: String
-    ) = currentBackend().upsertItemAndTransactionAtomically(item, tx, userId)
+    ) {
+        requireOpenRepo()?.upsertItemAndTransactionAtomically(item, tx, userId)
+    }
 
-    override suspend fun deleteFinancialItem(itemId: String, userId: String) =
-        currentBackend().deleteFinancialItem(itemId, userId)
+    override suspend fun deleteFinancialItem(itemId: String, userId: String) {
+        requireOpenRepo()?.deleteFinancialItem(itemId, userId)
+    }
 
-    override suspend fun ensureSeeded(userId: String) =
-        currentBackend().ensureSeeded(userId)
+    override suspend fun ensureSeeded(userId: String) {
+        requireOpenRepo()?.ensureSeeded(userId)
+    }
 
     override suspend fun loadDemoData(
         existingAccounts: List<AccountItem>,
@@ -204,25 +263,29 @@ class SwitchingMasroufiRepository(
         existingItems: List<FinancialItem>,
         existingTransactions: List<TransactionItem>,
         userId: String
-    ) = currentBackend().loadDemoData(
-        existingAccounts,
-        existingEnvelopes,
-        existingItems,
-        existingTransactions,
-        userId
-    )
+    ) {
+        requireOpenRepo()?.loadDemoData(
+            existingAccounts,
+            existingEnvelopes,
+            existingItems,
+            existingTransactions,
+            userId
+        )
+    }
 
     override suspend fun resetToCleanAccount(
         existingTxIds: List<String>,
         existingItemIdsToClear: List<String>,
         existingAccounts: List<AccountItem>,
         userId: String
-    ) = currentBackend().resetToCleanAccount(
-        existingTxIds,
-        existingItemIdsToClear,
-        existingAccounts,
-        userId
-    )
+    ) {
+        requireOpenRepo()?.resetToCleanAccount(
+            existingTxIds,
+            existingItemIdsToClear,
+            existingAccounts,
+            userId
+        )
+    }
 
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
@@ -237,18 +300,24 @@ class SwitchingMasroufiRepository(
         staleEnvelopeIdsToDelete: List<String>,
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit,
         userId: String
-    ) = currentBackend().restoreFullBackupAtomically(
-        profile,
-        customPrefsItem,
-        accounts,
-        envelopes,
-        financialItems,
-        transactions,
-        staleTxIdsToDelete,
-        staleItemIdsToDelete,
-        staleAccountIdsToDelete,
-        staleEnvelopeIdsToDelete,
-        onChunkProgress,
-        userId
-    )
+    ) {
+        requireOpenRepo()?.restoreFullBackupAtomically(
+            profile,
+            customPrefsItem,
+            accounts,
+            envelopes,
+            financialItems,
+            transactions,
+            staleTxIdsToDelete,
+            staleItemIdsToDelete,
+            staleAccountIdsToDelete,
+            staleEnvelopeIdsToDelete,
+            onChunkProgress,
+            userId
+        )
+    }
+
+    override suspend fun adoptLocalDataIntoUser(sourceUserId: String, targetUserId: String): Int {
+        return requireOpenRepo()?.adoptLocalDataIntoUser(sourceUserId, targetUserId) ?: 0
+    }
 }

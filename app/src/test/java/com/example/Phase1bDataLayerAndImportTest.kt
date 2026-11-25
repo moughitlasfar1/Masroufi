@@ -8,8 +8,7 @@ import com.example.data.ActiveDataSourceMode
 import com.example.data.DataSourceConfigStore
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
-import com.example.data.MasroufiDataSource
-import com.example.data.SwitchingMasroufiRepository
+import com.example.data.LocalRoomMasroufiDataSource
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.data.local.FirestoreImportResult
@@ -17,6 +16,8 @@ import com.example.data.local.FirestoreImportSource
 import com.example.data.local.FirestoreToRoomImporter
 import com.example.data.local.FirestoreUserSnapshot
 import com.example.data.local.MasroufiDatabaseProvider
+import com.example.data.local.NoOpRemoteMirror
+import com.example.data.local.RemoteMirror
 import com.example.data.local.RoomMasroufiRepository
 import com.example.security.DatabaseKeyManager
 import com.example.security.DbEncryptionHeaderCheck
@@ -25,8 +26,6 @@ import java.io.File
 import java.io.IOException
 import java.security.SecureRandom
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -118,7 +117,7 @@ class Phase1bDataLayerAndImportTest {
         }
 
     @Test
-    fun `Source SERVER import failure leaves Room untouched, does not flip mode, and returns localized errors`() =
+    fun `Source SERVER import failure leaves Room untouched, does not mark import completed, and returns localized errors`() =
         runBlocking(Dispatchers.IO) {
             val db = MasroufiDatabaseProvider.getOrOpen(
                 context = context,
@@ -151,7 +150,7 @@ class Phase1bDataLayerAndImportTest {
                 assertTrue("Localized error for $lang must not be blank", failed.localizedMessage.isNotBlank())
             }
 
-            // Room untouched, no backup file, data source still FIRESTORE_LEGACY
+            // Room untouched, no backup file, import not marked completed; app stays strictly local-first ROOM_PRIMARY
             assertEquals(0, dao.countProfiles(uid))
             assertEquals(0, dao.countTransactions(uid))
             assertNull(dao.getImportMetadata(uid))
@@ -159,13 +158,13 @@ class Phase1bDataLayerAndImportTest {
             assertFalse(FirestoreToRoomImporter.preImportBackupFile(context, uid).exists())
             assertFalse(DataSourceConfigStore.isRoomImportCompleted(context, uid))
             assertEquals(
-                ActiveDataSourceMode.FIRESTORE_LEGACY,
+                ActiveDataSourceMode.ROOM_PRIMARY,
                 DataSourceConfigStore.resolveEffectiveMode(context, uid, isRoomHealthy = true)
             )
         }
 
     @Test
-    fun `import is resumable after count mismatch, creates encrypted masroufi backup, flips mode only when counts match, and is idempotent`() =
+    fun `import is resumable after count mismatch, creates encrypted masroufi backup, records completion only when counts match, and is idempotent`() =
         runBlocking(Dispatchers.IO) {
             val db = MasroufiDatabaseProvider.getOrOpen(
                 context = context,
@@ -221,7 +220,7 @@ class Phase1bDataLayerAndImportTest {
                 }
             }
 
-            // Attempt 1: Count verification fails -> must NOT flip data source or write metadata
+            // Attempt 1: Count verification fails -> must NOT write import metadata or mark completed
             val mismatchResult = FirestoreToRoomImporter.runImport(
                 context = context,
                 userId = uid,
@@ -234,9 +233,8 @@ class Phase1bDataLayerAndImportTest {
             assertEquals("count_mismatch", (mismatchResult as FirestoreImportResult.Failed).reasonCode)
             assertNull(dao.getImportMetadata(uid))
             assertFalse(DataSourceConfigStore.isRoomImportCompleted(context, uid))
-            assertEquals(ActiveDataSourceMode.FIRESTORE_LEGACY, DataSourceConfigStore.activeMode.value)
 
-            // Attempt 2: Resume import cleanly -> counts match -> encrypted .masroufi backup written & flipped to Room
+            // Attempt 2: Resume import cleanly -> counts match -> encrypted .masroufi backup written & marked completed
             val successResult = FirestoreToRoomImporter.runImport(
                 context = context,
                 userId = uid,
@@ -278,223 +276,85 @@ class Phase1bDataLayerAndImportTest {
         }
 
     @Test
-    fun `RoomMasroufiRepository writes locally first and performs best-effort Firestore write-through`() =
+    fun `RoomMasroufiRepository writes locally first and isolates RemoteMirror failures`() =
         runBlocking(Dispatchers.IO) {
             val db = MasroufiDatabaseProvider.getOrOpen(
                 context = context,
                 dbName = testDbName,
                 customFactory = FrameworkSQLiteOpenHelperFactory()
             )!!
-            val uid = "uid_writethrough"
-            val cloudSpy = InMemoryFakeDataSource(uid)
+            val uid = "uid_remote_mirror"
+            val mirroredIds = mutableListOf<String>()
+            var failMirror = false
+            val spyMirror = object : RemoteMirror {
+                override suspend fun onTransactionUpserted(userId: String, transaction: TransactionItem) {
+                    if (failMirror) throw IOException("Simulated remote mirror failure")
+                    mirroredIds.add(transaction.id)
+                }
+            }
 
             val roomRepo = RoomMasroufiRepository(
                 dao = db.masroufiDao(),
-                cloudWriteThrough = cloudSpy,
-                userIdProvider = { uid },
-                awaitWriteThroughForTesting = true
+                remoteMirror = spyMirror,
+                userIdProvider = { uid }
             )
 
-            // Online write-through succeeds in both Room and Cloud spy
+            // Post-commit mirror receives committed transaction
             val txId = roomRepo.upsertTransaction(
-                TransactionItem(id = "tx_wt_1", type = "expense", amount = 75.0, desc = "Cafe", isoDate = "2026-11-21"),
+                TransactionItem(id = "tx_rm_1", type = "expense", amount = 75.0, desc = "Cafe", isoDate = "2026-11-21"),
                 uid
             )
-            assertEquals("tx_wt_1", txId)
+            assertEquals("tx_rm_1", txId)
             assertEquals(1, roomRepo.observeTransactions(uid).first().size)
-            assertEquals(1, cloudSpy.transactions.value.size)
+            assertEquals(listOf("tx_rm_1"), mirroredIds)
 
-            // Simulate offline Firestore error -> local Room write MUST still succeed without throwing
-            cloudSpy.failAllWrites = true
+            // Failing RemoteMirror MUST NOT roll back or crash local Room write
+            failMirror = true
             val offlineTxId = roomRepo.upsertTransaction(
-                TransactionItem(id = "tx_wt_offline", type = "expense", amount = 120.0, desc = "Taxi", isoDate = "2026-11-21"),
+                TransactionItem(id = "tx_rm_offline", type = "expense", amount = 120.0, desc = "Taxi", isoDate = "2026-11-21"),
                 uid
             )
-            assertEquals("tx_wt_offline", offlineTxId)
+            assertEquals("tx_rm_offline", offlineTxId)
             assertEquals(2, roomRepo.observeTransactions(uid).first().size)
-            assertEquals("Cloud spy should not receive offline write", 1, cloudSpy.transactions.value.size)
+            assertEquals(listOf("tx_rm_1"), mirroredIds)
         }
 
     @Test
-    fun `SwitchingMasroufiRepository flips to Room after import and falls back immediately on kill switch`() =
+    fun `LocalRoomMasroufiDataSource always serves Room reactively across database open and reopen`() =
         runBlocking(Dispatchers.IO) {
+            val uid = "uid_local_facade"
+            val facade = LocalRoomMasroufiDataSource(
+                context = context,
+                remoteMirror = NoOpRemoteMirror,
+                userIdProvider = { uid }
+            )
+
+            // Before DB opens -> returns empty safely without throwing or touching Firestore
+            assertEquals(emptyList<TransactionItem>(), facade.observeTransactions(uid).first())
+
+            // Open Room DB -> facade immediately binds reactively
             val db = MasroufiDatabaseProvider.getOrOpen(
                 context = context,
                 dbName = testDbName,
                 customFactory = FrameworkSQLiteOpenHelperFactory()
             )!!
-            val uid = "uid_switch"
-            val firestoreFake = InMemoryFakeDataSource(uid)
-            firestoreFake.upsertTransaction(
-                TransactionItem(id = "tx_cloud_only", type = "expense", amount = 50.0, desc = "CloudRow", isoDate = "2026-11-21"),
-                uid
-            )
-            val roomRepo = RoomMasroufiRepository(
-                dao = db.masroufiDao(),
-                cloudWriteThrough = null,
-                userIdProvider = { uid }
-            )
-            roomRepo.upsertTransaction(
+            facade.upsertTransaction(
                 TransactionItem(id = "tx_room_only", type = "expense", amount = 90.0, desc = "RoomRow", isoDate = "2026-11-21"),
                 uid
             )
-
-            DataSourceConfigStore.refreshActiveMode(context, uid, isRoomHealthy = true)
-            val router = SwitchingMasroufiRepository(
-                firestoreFallback = firestoreFake,
-                roomRepositoryProvider = { roomRepo }
-            )
-
-            // Before import completes -> legacy Firestore active
-            assertEquals(
-                listOf("tx_cloud_only"),
-                router.observeTransactions(uid).first().map { it.id }
-            )
-
-            // Mark import completed -> flips reactively to Room primary
-            DataSourceConfigStore.markRoomImportCompleted(context, uid)
             assertEquals(
                 listOf("tx_room_only"),
-                router.observeTransactions(uid).first().map { it.id }
+                facade.observeTransactions(uid).first().map { it.id }
             )
 
-            // Engage Firestore fallback kill switch -> immediately back to legacy Firestore
+            // Even if legacy kill switch preference is toggled, app stays strictly ROOM_PRIMARY
             DataSourceConfigStore.setFirestoreKillSwitchEnabled(context, enabled = true, currentUserId = uid)
-            assertEquals(
-                listOf("tx_cloud_only"),
-                router.observeTransactions(uid).first().map { it.id }
-            )
-
-            // Disengage kill switch -> back to Room primary
-            DataSourceConfigStore.setFirestoreKillSwitchEnabled(context, enabled = false, currentUserId = uid)
+            assertEquals(ActiveDataSourceMode.ROOM_PRIMARY, DataSourceConfigStore.activeMode.value)
             assertEquals(
                 listOf("tx_room_only"),
-                router.observeTransactions(uid).first().map { it.id }
+                facade.observeTransactions(uid).first().map { it.id }
             )
+
+            assertEquals(1, db.masroufiDao().countTransactions(uid))
         }
-
-    private class InMemoryFakeDataSource(private val defaultUid: String) : MasroufiDataSource {
-        var failAllWrites = false
-        val profile = MutableStateFlow<UserProfile?>(null)
-        val transactions = MutableStateFlow<List<TransactionItem>>(emptyList())
-        val accounts = MutableStateFlow<List<AccountItem>>(emptyList())
-        val envelopes = MutableStateFlow<List<EnvelopeConfig>>(emptyList())
-        val items = MutableStateFlow<List<FinancialItem>>(emptyList())
-
-        override fun requireUserId(explicitUserId: String?): String = explicitUserId ?: defaultUid
-        override fun observeProfile(userId: String): Flow<UserProfile?> = profile
-        override fun observeTransactions(userId: String, minIsoDate: String?): Flow<List<TransactionItem>> = transactions
-        override fun observeAccounts(userId: String): Flow<List<AccountItem>> = accounts
-        override fun observeEnvelopes(userId: String): Flow<List<EnvelopeConfig>> = envelopes
-        override fun observeFinancialItems(userId: String): Flow<List<FinancialItem>> = items
-
-        private fun checkWriteAllowed() {
-            if (failAllWrites) throw IOException("Simulated cloud offline failure")
-        }
-
-        override suspend fun saveProfile(profile: UserProfile, userId: String) {
-            checkWriteAllowed()
-            this.profile.value = profile
-        }
-
-        override suspend fun upsertTransaction(tx: TransactionItem, userId: String): String {
-            checkWriteAllowed()
-            val id = tx.id.ifBlank { "tx_fake" }
-            transactions.value = transactions.value.filterNot { it.id == id } + tx.copy(id = id)
-            return id
-        }
-
-        override suspend fun getTransactionById(targetUserId: String, txId: String): TransactionItem? =
-            transactions.value.find { it.id == txId }
-
-        override suspend fun deleteTransaction(txId: String, userId: String) {
-            checkWriteAllowed()
-            transactions.value = transactions.value.filterNot { it.id == txId }
-        }
-
-        override suspend fun upsertAccount(account: AccountItem, userId: String): String {
-            checkWriteAllowed()
-            accounts.value = accounts.value.filterNot { it.id == account.id } + account
-            return account.id
-        }
-
-        override suspend fun deleteAccount(accId: String, userId: String) {
-            checkWriteAllowed()
-            accounts.value = accounts.value.filterNot { it.id == accId }
-        }
-
-        override suspend fun upsertEnvelope(envelope: EnvelopeConfig, userId: String): String {
-            checkWriteAllowed()
-            envelopes.value = envelopes.value.filterNot { it.id == envelope.id } + envelope
-            return envelope.id
-        }
-
-        override suspend fun upsertEnvelopesAtomically(envelopes: List<EnvelopeConfig>, userId: String) {
-            checkWriteAllowed()
-            this.envelopes.value = envelopes
-        }
-
-        override suspend fun deleteEnvelope(envId: String, userId: String) {
-            checkWriteAllowed()
-            envelopes.value = envelopes.value.filterNot { it.id == envId }
-        }
-
-        override suspend fun upsertFinancialItem(item: FinancialItem, userId: String): String {
-            checkWriteAllowed()
-            items.value = items.value.filterNot { it.id == item.id } + item
-            return item.id
-        }
-
-        override suspend fun upsertItemAndTransactionAtomically(item: FinancialItem, tx: TransactionItem, userId: String) {
-            checkWriteAllowed()
-            upsertFinancialItem(item, userId)
-            upsertTransaction(tx, userId)
-        }
-
-        override suspend fun deleteFinancialItem(itemId: String, userId: String) {
-            checkWriteAllowed()
-            items.value = items.value.filterNot { it.id == itemId }
-        }
-
-        override suspend fun ensureSeeded(userId: String) {
-            checkWriteAllowed()
-        }
-
-        override suspend fun loadDemoData(
-            existingAccounts: List<AccountItem>,
-            existingEnvelopes: List<EnvelopeConfig>,
-            existingItems: List<FinancialItem>,
-            existingTransactions: List<TransactionItem>,
-            userId: String
-        ) {
-            checkWriteAllowed()
-        }
-
-        override suspend fun resetToCleanAccount(
-            existingTxIds: List<String>,
-            existingItemIdsToClear: List<String>,
-            existingAccounts: List<AccountItem>,
-            userId: String
-        ) {
-            checkWriteAllowed()
-        }
-
-        override suspend fun restoreFullBackupAtomically(
-            profile: UserProfile?,
-            customPrefsItem: FinancialItem?,
-            accounts: List<AccountItem>,
-            envelopes: List<EnvelopeConfig>,
-            financialItems: List<FinancialItem>,
-            transactions: List<TransactionItem>,
-            staleTxIdsToDelete: List<String>,
-            staleItemIdsToDelete: List<String>,
-            staleAccountIdsToDelete: List<String>,
-            staleEnvelopeIdsToDelete: List<String>,
-            onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit,
-            userId: String
-        ) {
-            checkWriteAllowed()
-            onChunkProgress(1, 1)
-        }
-    }
 }

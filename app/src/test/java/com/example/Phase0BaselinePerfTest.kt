@@ -73,7 +73,6 @@ class Phase0BaselinePerfTest {
         val dao = db.masroufiDao()
         val repo = RoomMasroufiRepository(
             dao = dao,
-            cloudWriteThrough = null,
             userIdProvider = { testUserId }
         )
 

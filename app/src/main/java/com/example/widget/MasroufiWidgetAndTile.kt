@@ -38,7 +38,6 @@ import com.example.security.AppSecurityManager
 import com.example.ui.DashboardState
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
-import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -335,37 +334,24 @@ object MasroufiWidgetStore {
                 .apply()
         }
 
-        // Persist directly to encrypted Room (when ROOM_PRIMARY) or legacy Firestore fallback
+        // Persist strictly to encrypted Room (single local-first source of truth)
         runCatching {
             val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
                 ?.takeIf { it.isNotBlank() }
                 ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
-            val dbId = appCtx.getString(R.string.firestore_database_id)
-            val firestoreRepo = if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
-                runCatching { MasroufiRepository(FirebaseFirestore.getInstance(dbId)) }.getOrNull()
-            } else {
-                null
-            }
             CoroutineScope(Dispatchers.IO).launch {
-                val roomRepo = if (com.example.MasroufiApplication.isSqlCipherNativeLoaded &&
-                    com.example.data.DataSourceConfigStore.isRoomImportCompleted(appCtx, uid) &&
-                    !com.example.data.DataSourceConfigStore.isFirestoreKillSwitchEnabled(appCtx)
-                ) {
-                    com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)?.let { roomDb ->
-                        com.example.data.local.RoomMasroufiRepository(
-                            dao = roomDb.masroufiDao(),
-                            cloudWriteThrough = firestoreRepo,
-                            userIdProvider = { uid }
-                        )
-                    }
-                } else {
-                    null
-                }
-                val targetRepo = roomRepo ?: firestoreRepo
-                if (targetRepo != null) {
-                    createdTxs.forEach { tx ->
-                        runCatching { targetRepo.upsertTransaction(tx, uid) }
-                    }
+                val roomDb = com.example.data.local.MasroufiDatabaseProvider.getOpenInstanceOrNull()
+                    ?: if (com.example.MasroufiApplication.isSqlCipherNativeLoaded) {
+                        com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)
+                    } else null
+                if (roomDb == null) return@launch
+                val roomRepo = com.example.data.local.RoomMasroufiRepository(
+                    dao = roomDb.masroufiDao(),
+                    remoteMirror = com.example.data.local.NoOpRemoteMirror,
+                    userIdProvider = { uid }
+                )
+                createdTxs.forEach { tx ->
+                    runCatching { roomRepo.upsertTransaction(tx, uid) }
                 }
             }
         }
@@ -426,37 +412,24 @@ object MasroufiWidgetStore {
                 .apply()
         }
 
-        // Delete from encrypted Room (when ROOM_PRIMARY) or legacy Firestore fallback
+        // Delete strictly from encrypted Room (single local-first source of truth)
         runCatching {
             val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
                 ?.takeIf { it.isNotBlank() }
                 ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
-            val dbId = appCtx.getString(R.string.firestore_database_id)
-            val firestoreRepo = if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
-                runCatching { MasroufiRepository(FirebaseFirestore.getInstance(dbId)) }.getOrNull()
-            } else {
-                null
-            }
             CoroutineScope(Dispatchers.IO).launch {
-                val roomRepo = if (com.example.MasroufiApplication.isSqlCipherNativeLoaded &&
-                    com.example.data.DataSourceConfigStore.isRoomImportCompleted(appCtx, uid) &&
-                    !com.example.data.DataSourceConfigStore.isFirestoreKillSwitchEnabled(appCtx)
-                ) {
-                    com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)?.let { roomDb ->
-                        com.example.data.local.RoomMasroufiRepository(
-                            dao = roomDb.masroufiDao(),
-                            cloudWriteThrough = firestoreRepo,
-                            userIdProvider = { uid }
-                        )
-                    }
-                } else {
-                    null
-                }
-                val targetRepo = roomRepo ?: firestoreRepo
-                if (targetRepo != null) {
-                    createdTxs.forEach { tx ->
-                        runCatching { targetRepo.deleteTransaction(tx.id, uid) }
-                    }
+                val roomDb = com.example.data.local.MasroufiDatabaseProvider.getOpenInstanceOrNull()
+                    ?: if (com.example.MasroufiApplication.isSqlCipherNativeLoaded) {
+                        com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)
+                    } else null
+                if (roomDb == null) return@launch
+                val roomRepo = com.example.data.local.RoomMasroufiRepository(
+                    dao = roomDb.masroufiDao(),
+                    remoteMirror = com.example.data.local.NoOpRemoteMirror,
+                    userIdProvider = { uid }
+                )
+                createdTxs.forEach { tx ->
+                    runCatching { roomRepo.deleteTransaction(tx.id, uid) }
                 }
             }
         }
