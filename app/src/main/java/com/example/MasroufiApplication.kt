@@ -2,16 +2,18 @@ package com.example
 
 import android.app.Application
 import com.example.security.AppSecurityManager
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 
 /**
  * Custom Application entry point ensuring SQLCipher native libraries are loaded
- * before any local encrypted Room database access occurs.
+ * before any local encrypted Room database access occurs, and initializing PDFBox resources.
  */
 class MasroufiApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
         ensureSqlCipherLoaded()
+        runCatching { PDFBoxResourceLoader.init(applicationContext) }
     }
 
     companion object {

@@ -705,6 +705,8 @@ class MasroufiViewModel(
 
     // Instant optimistic local overrides so UI never lags or reverts on rapid clicks (and works in local mode)
     private val isLocalOnlyUser = currentUserId == LOCAL_DEVICE_USER_ID
+    private val _isBulkImporting = MutableStateFlow(false)
+    val isBulkImporting: StateFlow<Boolean> = _isBulkImporting.asStateFlow()
     private val _optimisticProfile = MutableStateFlow<UserProfile?>(null)
     private val _optimisticCustomPrefs = MutableStateFlow<CustomizationPrefs?>(null)
     private val _localTransactions = MutableStateFlow<List<TransactionItem>?>(null)
@@ -1640,6 +1642,77 @@ class MasroufiViewModel(
             }
         }
         return createdTxs
+    }
+
+    /**
+     * Bulk bank statement importer (CSV / PDF).
+     * Writes directly through [MasroufiDataSource.upsertTransaction] in chunks of 25
+     * with deterministic IDs (`tx_imp_<hash>`) and historical statement dates — never calling
+     * `recordQuickCaptureTransactions` — while holding [isBulkImporting] true so the widget
+     * and notification snapshot is recomputed once at the end.
+     */
+    fun importStatementTransactions(
+        transactions: List<TransactionItem>,
+        onChunkProgress: (completed: Int, total: Int) -> Unit = { _, _ -> },
+        onComplete: (importedCount: Int) -> Unit = {}
+    ) {
+        val validTxs = transactions
+            .filter { it.amount > 0.0 && PayCycleEngine.isValidIsoDate(it.isoDate) }
+            .map { tx ->
+                tx.copy(
+                    userId = currentUserId,
+                    amount = PayCycleEngine.roundMoney(tx.amount)
+                )
+            }
+        if (validTxs.isEmpty()) {
+            onComplete(0)
+            return
+        }
+
+        val total = validTxs.size
+        var learnedAny = false
+        validTxs.forEach { tx ->
+            if (tx.type == "expense" && tx.desc.isNotBlank() && tx.envelopeKey.isNotBlank()) {
+                PayCycleEngine.learnCategoryForDescription(tx.desc, tx.envelopeKey)
+                learnedAny = true
+            }
+        }
+        if (learnedAny) {
+            persistLearnedCategories()
+        }
+
+        if (isLocalOnlyUser) {
+            _isBulkImporting.value = true
+            try {
+                val incomingIds = validTxs.mapTo(HashSet()) { it.id }
+                val existing = (_localTransactions.value ?: uiState.value.allTransactions)
+                    .filterNot { it.id in incomingIds }
+                _localTransactions.value = validTxs + existing
+                onChunkProgress(total, total)
+            } finally {
+                _isBulkImporting.value = false
+            }
+            onComplete(total)
+            return
+        }
+
+        safeLaunch("importStatementTransactions") {
+            _isBulkImporting.value = true
+            var completed = 0
+            try {
+                val chunks = validTxs.chunked(com.masroufi.importer.domain.ImporterConstants.IMPORT_CHUNK_SIZE)
+                for (chunk in chunks) {
+                    for (tx in chunk) {
+                        repository.upsertTransaction(tx, currentUserId)
+                        completed++
+                    }
+                    onChunkProgress(completed, total)
+                }
+            } finally {
+                _isBulkImporting.value = false
+            }
+            onComplete(completed)
+        }
     }
 
     fun deleteTransactionsBatch(txs: List<TransactionItem>) {

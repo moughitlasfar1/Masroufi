@@ -219,4 +219,51 @@ class SecurityAuditHardeningTest {
         assertFalse("Public lock-screen text must not contain amounts", pubText.contains("186"))
         assertFalse("Public lock-screen text must not contain merchant", pubText.contains("Inwi"))
     }
+
+    @Test
+    fun `S11 importer enforces receipt cache confinement, cleanup, BiDi stripping, 15MB cap, and encrypted mappings`() {
+        // 1. Confined temp file inside cache/receipts/ & immediate cleanup
+        val tempFile = com.masroufi.importer.data.ReceiptFileHelper.createConfinedTempFile(
+            context = context,
+            prefix = "../escape_attempt_",
+            extension = ".jpg"
+        )
+        val receiptsDirCanonical = com.masroufi.importer.data.ReceiptFileHelper.receiptsDir(context).canonicalPath
+        assertTrue(
+            "Temp receipt file must stay strictly inside cache/receipts/",
+            tempFile.canonicalPath.startsWith(receiptsDirCanonical + java.io.File.separator)
+        )
+        tempFile.writeText("temp")
+        assertTrue(tempFile.exists())
+        com.masroufi.importer.data.ReceiptFileHelper.deleteQuietly(tempFile)
+        assertFalse("Temp receipt image must be deleted immediately after OCR", tempFile.exists())
+
+        // 2. BiDi & ISO control characters stripped from imported bank labels
+        val poisoned = "PAIEMENT\u0000\u0007\u202E MARJANE\n\t" + "A".repeat(200)
+        val clean = com.masroufi.importer.domain.ImporterConstants.sanitizeLabel(poisoned)
+        assertFalse(clean.any { Character.isISOControl(it) })
+        assertFalse(clean.contains('\u202E'))
+        assertTrue(clean.length <= com.masroufi.importer.domain.ImporterConstants.MAX_LABEL_LENGTH)
+
+        // 3. Oversized CSV payload rejected before parsing
+        val oversized = ByteArray(com.masroufi.importer.domain.ImporterConstants.MAX_IMPORT_FILE_BYTES + 1)
+        val decodeAttempt = runCatching {
+            com.masroufi.importer.domain.CsvStatementParser.decodeBytes(oversized)
+        }
+        assertTrue("Files over 15 MB must be rejected", decodeAttempt.isFailure)
+
+        // 4. Per-bank CSV column mappings stored encrypted in SecureStore (no plaintext in prefs)
+        val mapping = com.masroufi.importer.domain.CsvColumnMapping(
+            bankProfile = com.masroufi.importer.domain.BankProfile.BCP,
+            delimiter = ';',
+            dateCol = 0,
+            labelCol = 2,
+            debitCol = 3,
+            creditCol = 4
+        )
+        assertTrue(com.masroufi.importer.data.ImporterMappingStore.saveMapping(context, mapping))
+        val secureBacking = context.getSharedPreferences("masroufi_secure_kv_v1", Context.MODE_PRIVATE)
+        val rawStored = secureBacking.getString("importer_csv_mappings_v1", "").orEmpty()
+        assertFalse("Mapping JSON must not be stored in plaintext", rawStored.contains("SPLIT_DEBIT_CREDIT"))
+    }
 }

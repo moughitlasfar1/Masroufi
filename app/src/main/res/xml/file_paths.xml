@@ -4,4 +4,8 @@
     <cache-path
         name="shared_cards"
         path="shared_cards/" />
+    <!-- Strictly scoped cache directory for temporary receipt OCR images (deleted immediately after scan) -->
+    <cache-path
+        name="receipts"
+        path="receipts/" />
 </paths>

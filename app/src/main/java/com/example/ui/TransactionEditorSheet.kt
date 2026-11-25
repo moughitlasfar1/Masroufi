@@ -73,6 +73,8 @@ import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressivePillChip
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
+import com.masroufi.importer.domain.ImporterStrings
+import com.masroufi.importer.presentation.ScanReceiptActionChip
 import java.util.Calendar
 import java.util.TimeZone
 
@@ -164,6 +166,9 @@ fun TransactionEditorSheet(
     var smartDefaultHint by remember { mutableStateOf<String?>(null) }
     var duplicateWarningTx by remember { mutableStateOf<TransactionItem?>(null) }
     var prefilledShortcut by remember { mutableStateOf<TimeAwareShortcut?>(null) }
+    var receiptScanNotice by remember { mutableStateOf<String?>(null) }
+    var receiptScanIsWarning by remember { mutableStateOf(false) }
+    val importerStrings = remember(lang) { ImporterStrings.forLang(lang) }
 
     val baseCurrencyCode = PayCycleEngine.normalizeCurrencyCode(cur)
     var entryCurrency by remember { mutableStateOf(baseCurrencyCode) }
@@ -391,6 +396,90 @@ fun TransactionEditorSheet(
                                 textAlign = TextAlign.Center
                             )
                         }
+                    }
+                }
+            }
+
+            if (txType == "expense") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ScanReceiptActionChip(
+                        lang = lang,
+                        onReceiptScanned = { parsed ->
+                            val foundAmount = parsed.totalAmountMad
+                            if (foundAmount != null && foundAmount > 0.0) {
+                                amountText = if (foundAmount % 1.0 == 0.0) {
+                                    foundAmount.toInt().toString()
+                                } else {
+                                    String.format(java.util.Locale.US, "%.2f", foundAmount)
+                                }
+                            }
+                            if (!parsed.isoDate.isNullOrBlank()) {
+                                isoDate = parsed.isoDate
+                            }
+                            if (!parsed.merchantName.isNullOrBlank()) {
+                                desc = parsed.merchantName
+                                val smartGuess = PayCycleEngine.inferSmartDefaults(
+                                    description = parsed.merchantName,
+                                    allTransactions = state.allTransactions,
+                                    envelopes = state.envelopes.map { it.config },
+                                    accounts = state.accounts.map { it.account },
+                                    lang = lang
+                                )
+                                selectedEnvelopeKey = smartGuess.envelopeKey
+                                customCategory = smartGuess.categoryName
+                            }
+                            // Always expand advanced fields so the user reviews merchant, date & category before saving
+                            showAdvancedFields = true
+                            duplicateWarningTx = null
+                            when {
+                                parsed.arabicWeakHint -> {
+                                    receiptScanNotice = importerStrings.receiptArabicHint
+                                    receiptScanIsWarning = true
+                                }
+                                foundAmount == null -> {
+                                    receiptScanNotice = importerStrings.receiptNoAmountFound
+                                    receiptScanIsWarning = true
+                                }
+                                else -> {
+                                    receiptScanNotice = importerStrings.receiptScannedBanner
+                                    receiptScanIsWarning = false
+                                }
+                            }
+                        },
+                        onScanError = { errMsg ->
+                            receiptScanNotice = errMsg
+                            receiptScanIsWarning = true
+                        }
+                    )
+                }
+
+                receiptScanNotice?.let { notice ->
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (receiptScanIsWarning) {
+                            AccentAmber.copy(alpha = 0.16f)
+                        } else {
+                            AccentEmerald.copy(alpha = 0.16f)
+                        },
+                        border = BorderStroke(
+                            1.dp,
+                            if (receiptScanIsWarning) AccentAmber.copy(alpha = 0.45f) else AccentEmerald.copy(alpha = 0.45f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("tx_receipt_scan_notice")
+                    ) {
+                        Text(
+                            text = notice,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
                     }
                 }
             }

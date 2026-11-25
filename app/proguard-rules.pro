@@ -66,3 +66,17 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
+
+# PDFBox-Android (on-device bank statement PDF text extraction)
+-keep class com.tom_roush.pdfbox.** { *; }
+-keep class com.tom_roush.fontbox.** { *; }
+-dontwarn com.tom_roush.pdfbox.**
+-dontwarn com.tom_roush.fontbox.**
+-dontwarn org.bouncycastle.**
+-dontwarn java.awt.**
+-dontwarn javax.imageio.**
+
+# Bundled ML Kit Latin Text Recognition (on-device receipt & scanned PDF OCR)
+-keep class com.google.mlkit.vision.text.** { *; }
+-dontwarn com.google.mlkit.vision.text.**
+

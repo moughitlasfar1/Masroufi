@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Swipe
@@ -99,7 +100,8 @@ fun HistoryScreen(
     onClearClipboard: () -> Unit = {},
     hasRollbackSnapshot: Boolean = false,
     onRollbackRestore: () -> Unit = {},
-    onAddFirstTransaction: () -> Unit = {}
+    onAddFirstTransaction: () -> Unit = {},
+    onOpenStatementImport: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
@@ -171,6 +173,38 @@ fun HistoryScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        val importBtnLabel = remember(lang) {
+                            com.masroufi.importer.domain.ImporterStrings.forLang(lang).importStatementBtn
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)),
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable { onOpenStatementImport() }
+                                .testTag("history_import_statement_btn")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileUpload,
+                                    contentDescription = importBtnLabel,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = importBtnLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
                         Surface(
                             shape = CircleShape,
                             color = if (searchExpanded || hasActiveFilter) {

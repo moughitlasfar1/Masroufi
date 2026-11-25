@@ -205,6 +205,8 @@ import com.masroufi.credit.domain.CreditCalculator
 import com.masroufi.credit.domain.CreditStrings
 import com.masroufi.credit.presentation.CreditSimulatorScreen
 import com.masroufi.credit.presentation.CreditSimulatorViewModel
+import com.masroufi.importer.domain.ImporterStrings
+import com.masroufi.importer.presentation.StatementImportFlowSheet
 
 internal val MAIN_TAB_KEYS = listOf("vue", "semaine", "categories", "historique")
 
@@ -228,6 +230,7 @@ sealed interface ActiveSheet {
     data object RestoreBackup : ActiveSheet
     data object SplitBill : ActiveSheet
     data object BankDetections : ActiveSheet
+    data object StatementImport : ActiveSheet
 }
 
 /**
@@ -658,8 +661,12 @@ fun MainFeatureScreen(
         )
     }
 
+    val isBulkImporting by viewModel.isBulkImporting.collectAsStateWithLifecycle()
+
     // Sync Home-Screen Widget (full WidgetSnapshot), Quick Settings Tiles & WorkManager Smart Notifications whenever DashboardState updates
+    // Suppressed while a bulk statement import is writing chunks so the snapshot recomputes cleanly once at the end.
     LaunchedEffect(
+        isBulkImporting,
         state.cycleTransactions,
         state.safeToSpendToday,
         state.customPrefs.currencySymbol,
@@ -674,8 +681,10 @@ fun MainFeatureScreen(
         state.presets,
         state.weekDaysSpend
     ) {
-        MasroufiWidgetStore.saveFullSnapshot(context, state)
-        MasroufiNotificationManager.syncStateAndScheduleWork(context, state)
+        if (!isBulkImporting) {
+            MasroufiWidgetStore.saveFullSnapshot(context, state)
+            MasroufiNotificationManager.syncStateAndScheduleWork(context, state)
+        }
     }
 
     // Phase 4: Migrate saved last tab ("mois" -> Insights / Month), or jump to widget EXTRA_TARGET_TAB
@@ -1701,6 +1710,9 @@ fun MainFeatureScreen(
                                                 existingTx = null,
                                                 initialType = "expense"
                                             )
+                                        },
+                                        onOpenStatementImport = {
+                                            activeSheet = ActiveSheet.StatementImport
                                         }
                                     )
                                 }
@@ -1712,6 +1724,27 @@ fun MainFeatureScreen(
 
             when (val sheet = activeSheet) {
                 ActiveSheet.None -> Unit
+
+                ActiveSheet.StatementImport -> StatementImportFlowSheet(
+                    state = state,
+                    onImportTransactions = { txs, onProgress, onDone ->
+                        viewModel.importStatementTransactions(
+                            transactions = txs,
+                            onChunkProgress = onProgress,
+                            onComplete = { count ->
+                                onDone(count)
+                                if (count > 0) {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            ImporterStrings.forLang(state.profile.language).importSuccessFormat(count)
+                                        )
+                                    }
+                                }
+                            }
+                        )
+                    },
+                    onDismiss = { activeSheet = ActiveSheet.None }
+                )
 
                 ActiveSheet.QuickPresets -> QuickPresetPickerSheet(
                     state = state,
