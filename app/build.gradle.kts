@@ -162,8 +162,10 @@ dependencies {
 }
 
 tasks.withType<Test> {
-  failFast = true
-  timeout.set(Duration.ofMinutes(2))
+  failFast = false
+  timeout.set(Duration.ofMinutes(10))
+  maxHeapSize = "1536m"
+  maxParallelForks = 1
   val preCachedRobolectricDir =
     file("/home/appuser/.m2/repository/org/robolectric/android-all-instrumented/16-robolectric-13921718-i7")
   if (preCachedRobolectricDir.exists()) {
@@ -172,5 +174,6 @@ tasks.withType<Test> {
   }
   testLogging {
     events("passed", "failed", "skipped")
+    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
   }
 }

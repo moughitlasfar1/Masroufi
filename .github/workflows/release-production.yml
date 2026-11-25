@@ -66,6 +66,9 @@ jobs:
           if [ -n "$SDK_DIR" ]; then
             mkdir -p "$SDK_DIR/licenses"
             printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n84831b9409646a918e30573bab4c9c91346d8abd\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" >> "$SDK_DIR/licenses/android-sdk-license"
+            if [ -x "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" ]; then
+              yes | "$SDK_DIR/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+            fi
           fi
           if [ ! -f ".env" ] && [ -f ".env.example" ]; then
             cp .env.example .env
@@ -85,7 +88,8 @@ jobs:
               echo "NOTICE: GOOGLE_SERVICES_JSON secret did not match package com.aistudio.masroufi.kxmpzq; keeping repository app/google-services.json."
             fi
           fi
-          gradle :app:bundleRelease :app:assembleRelease --stacktrace --no-daemon
+          gradle :app:bundleRelease :app:assembleRelease --stacktrace --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
 
       - name: Upload Signed Production AAB (Private Artifact Only — Google Play)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

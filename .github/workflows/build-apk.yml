@@ -73,7 +73,7 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare Firebase configuration and build Debug APK
+      - name: Prepare Android SDK licenses and Firebase configuration
         env:
           GOOGLE_SERVICES_JSON_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON }}
         run: |
@@ -107,7 +107,25 @@ jobs:
             echo "NOTICE: Removing malformed app/google-services.json so MissingGoogleServicesStrategy.WARN applies."
             rm -f app/google-services.json
           fi
-          gradle :app:assembleDebug :app:testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Build Debug APK
+        run: |
+          gradle :app:assembleDebug --stacktrace --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
+
+      - name: Run Unit and Security Tests
+        run: |
+          gradle :app:testDebugUnitTest --stacktrace --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
+
+      - name: Upload Unit Test Report on Failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/testDebugUnitTest/
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Verify debug APK
         run: |
