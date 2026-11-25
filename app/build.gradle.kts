@@ -14,7 +14,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.masroufi.kxmpzq"
+    applicationId = "com.masroufi.app"
     minSdk = 24
     targetSdk = 36
     versionCode = 7
@@ -67,8 +67,10 @@ android {
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
   sourceSets {
+    getByName("debug").assets.srcDir("$projectDir/schemas")
     getByName("test").assets.srcDir("$projectDir/schemas")
     getByName("test").resources.srcDir("$projectDir/schemas")
+    getByName("androidTest").assets.srcDir("$projectDir/schemas")
   }
   dependenciesInfo {
     includeInApk = false
@@ -89,6 +91,23 @@ secrets {
 }
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+
+val googleServicesText =
+  providers.fileContents(layout.projectDirectory.file("google-services.json")).asText.orNull
+val hasMatchingGoogleServicesClient =
+  googleServicesText?.contains("\"com.masroufi.app\"") == true
+
+if (!hasMatchingGoogleServicesClient) {
+  logger.warn(
+    "WARNING: app/google-services.json does not yet contain a client for 'com.masroufi.app'. " +
+      "Skipping process*GoogleServices tasks until an updated google-services.json is downloaded from Firebase Console."
+  )
+  tasks.configureEach {
+    if (name.startsWith("process") && name.endsWith("GoogleServices")) {
+      enabled = false
+    }
+  }
+}
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
@@ -154,6 +173,7 @@ dependencies {
   androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
+  androidTestImplementation(libs.androidx.room.testing)
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
