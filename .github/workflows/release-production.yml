@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag to publish (e.g. v1.2.0). Leave blank to build artifacts only.'
+        description: 'Release tag to publish (e.g. v1.2.1). Leave blank to build artifacts only.'
         required: false
-        default: 'v1.2.0'
+        default: 'v1.2.1'
         type: string
 
 # S11: Default read-only workflow permissions; require manual approval via production environment
@@ -115,7 +115,7 @@ jobs:
             TAG_NAME="$INPUT_TAG"
           fi
           if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "ERROR: Invalid release tag '$TAG_NAME'. Expected format vX.Y.Z (e.g. v1.2.0)."
+            echo "ERROR: Invalid release tag '$TAG_NAME'. Expected format vX.Y.Z (e.g. v1.2.1)."
             exit 1
           fi
           if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then

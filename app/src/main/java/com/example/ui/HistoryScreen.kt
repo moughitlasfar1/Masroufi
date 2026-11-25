@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
@@ -49,10 +50,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -125,6 +128,10 @@ fun HistoryScreen(
         state.filterState.selectedCategoryKey != "all" ||
         state.filterState.selectedAccountId != "all"
     var searchExpanded by remember { mutableStateOf(hasActiveFilter) }
+    // Tesler's Law single-open accordion: day groups start collapsed with live count + net badges,
+    // and auto-expand automatically when a search or filter is active.
+    var expandedDayGroupKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val haptics = LocalHapticFeedback.current
 
     val todayIso = remember { PayCycleEngine.todayIso() }
     val groupedByDay = remember(state.filteredHistory) {
@@ -409,66 +416,108 @@ fun HistoryScreen(
                 val upcomingExpenses = state.upcomingTransactions.filter { it.type == "expense" }.sumOf { it.amount }
                 val isDark = state.profile.isDarkTheme
                 val expColor = semanticExpenseColor(isDark)
+                val isUpcomingExpanded = hasActiveFilter || expandedDayGroupKey == "__upcoming__"
                 item(key = "upcoming_header") {
+                    val chevronRot by animateFloatAsState(
+                        targetValue = if (isUpcomingExpanded) 180f else 0f,
+                        label = "upcoming_chevron"
+                    )
                     ExpressiveGlassSurface(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(18.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        accentBorderColor = AccentAmber,
+                        accentBorderColor = if (isUpcomingExpanded) AccentAmber else AccentAmber.copy(alpha = 0.45f),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                expandedDayGroupKey = if (expandedDayGroupKey == "__upcoming__") null else "__upcoming__"
+                            }
                             .testTag("history_upcoming_header")
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = strings.upcomingGroupTitle,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = AccentAmber
-                            )
-                            Text(
-                                text = if (hide) "•••• $cur" else "-${PayCycleEngine.formatDh(upcomingExpenses)} $cur",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = expColor,
-                                modifier = Modifier.testTag("history_upcoming_total")
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = strings.upcomingGroupTitle,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = AccentAmber
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = AccentAmber.copy(alpha = 0.16f)
+                                ) {
+                                    Text(
+                                        text = "${state.upcomingTransactions.size} op.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = AccentAmber,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = if (hide) "•••• $cur" else "-${PayCycleEngine.formatDh(upcomingExpenses)} $cur",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = expColor,
+                                    modifier = Modifier.testTag("history_upcoming_total")
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ExpandMore,
+                                    contentDescription = strings.upcomingGroupTitle,
+                                    tint = AccentAmber,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .rotate(chevronRot)
+                                )
+                            }
                         }
                     }
                 }
-                items(state.upcomingTransactions, key = { "upcoming_${it.id}" }) { tx ->
-                    val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
-                    SwipeableTransactionRow(
-                        tx = tx,
-                        accountName = accountName,
-                        currencySymbol = cur,
-                        hideAmounts = hide,
-                        lang = lang,
-                        todayIso = todayIso,
-                        envelopes = state.envelopes.map { it.config },
-                        isDarkTheme = state.profile.isDarkTheme,
-                        deleteLabel = strings.deleteBtn,
-                        duplicateLabel = when (lang) {
-                            "ar" -> "تكرار"
-                            "darija" -> "عاودها"
-                            "en" -> "Duplicate"
-                            else -> "Dupliquer"
-                        },
-                        onEditTransaction = { onEditTransaction(tx) },
-                        onDuplicateTransaction = {
-                            dismissSwipeHint()
-                            onDuplicateTransaction(tx)
-                        },
-                        onDeleteTransaction = {
-                            dismissSwipeHint()
-                            onDeleteTransaction(tx)
-                        }
-                    )
+                if (isUpcomingExpanded) {
+                    items(state.upcomingTransactions, key = { "upcoming_${it.id}" }) { tx ->
+                        val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
+                        SwipeableTransactionRow(
+                            tx = tx,
+                            accountName = accountName,
+                            currencySymbol = cur,
+                            hideAmounts = hide,
+                            lang = lang,
+                            todayIso = todayIso,
+                            envelopes = state.envelopes.map { it.config },
+                            isDarkTheme = state.profile.isDarkTheme,
+                            deleteLabel = strings.deleteBtn,
+                            duplicateLabel = when (lang) {
+                                "ar" -> "تكرار"
+                                "darija" -> "عاودها"
+                                "en" -> "Duplicate"
+                                else -> "Dupliquer"
+                            },
+                            onEditTransaction = { onEditTransaction(tx) },
+                            onDuplicateTransaction = {
+                                dismissSwipeHint()
+                                onDuplicateTransaction(tx)
+                            },
+                            onDeleteTransaction = {
+                                dismissSwipeHint()
+                                onDeleteTransaction(tx)
+                            }
+                        )
+                    }
                 }
             }
 
@@ -479,28 +528,66 @@ fun HistoryScreen(
                 val isDark = state.profile.isDarkTheme
                 val incColor = semanticIncomeColor(isDark)
                 val expColor = semanticExpenseColor(isDark)
+                val isDayExpanded = hasActiveFilter || expandedDayGroupKey == dayIso
                 item(key = "day_header_$dayIso") {
+                    val chevronRot by animateFloatAsState(
+                        targetValue = if (isDayExpanded) 180f else 0f,
+                        label = "day_chevron_$dayIso"
+                    )
                     ExpressiveGlassSurface(
-                        shape = RoundedCornerShape(16.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                        accentBorderColor = MaterialTheme.colorScheme.primary,
+                        shape = RoundedCornerShape(18.dp),
+                        containerColor = if (isDayExpanded) {
+                            MaterialTheme.colorScheme.surfaceContainerHigh
+                        } else {
+                            MaterialTheme.colorScheme.surfaceContainer
+                        },
+                        accentBorderColor = if (isDayExpanded) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                expandedDayGroupKey = if (expandedDayGroupKey == dayIso) null else dayIso
+                            }
                             .testTag("history_day_header_$dayIso")
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = PayCycleEngine.formatFriendlyDate(dayIso, lang, todayIso),
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = PayCycleEngine.formatFriendlyDate(dayIso, lang, todayIso),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isDayExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                ) {
+                                    Text(
+                                        text = "${dayTxs.size} op.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
                             val totalLabel = if (hide) {
                                 "•••• $cur"
                             } else if (dayExpenses > 0 && dayIncomes == 0.0) {
@@ -510,45 +597,60 @@ fun HistoryScreen(
                             } else {
                                 "-${PayCycleEngine.formatDh(abs(dayNet))} $cur"
                             }
-                            Text(
-                                text = totalLabel,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (dayNet > 0 && dayExpenses == 0.0) incColor else expColor,
-                                modifier = Modifier.testTag("history_day_total_$dayIso")
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = totalLabel,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (dayNet > 0 && dayExpenses == 0.0) incColor else expColor,
+                                    modifier = Modifier.testTag("history_day_total_$dayIso")
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.ExpandMore,
+                                    contentDescription = PayCycleEngine.formatFriendlyDate(dayIso, lang, todayIso),
+                                    tint = if (isDayExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .rotate(chevronRot)
+                                )
+                            }
                         }
                     }
                 }
 
-                items(dayTxs, key = { it.id }) { tx ->
-                    val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
-                    SwipeableTransactionRow(
-                        tx = tx,
-                        accountName = accountName,
-                        currencySymbol = cur,
-                        hideAmounts = hide,
-                        lang = lang,
-                        todayIso = todayIso,
-                        envelopes = state.envelopes.map { it.config },
-                        isDarkTheme = state.profile.isDarkTheme,
-                        deleteLabel = strings.deleteBtn,
-                        duplicateLabel = when (lang) {
-                            "ar" -> "تكرار"
-                            "darija" -> "عاودها"
-                            "en" -> "Duplicate"
-                            else -> "Dupliquer"
-                        },
-                        onEditTransaction = { onEditTransaction(tx) },
-                        onDuplicateTransaction = {
-                            dismissSwipeHint()
-                            onDuplicateTransaction(tx)
-                        },
-                        onDeleteTransaction = {
-                            dismissSwipeHint()
-                            onDeleteTransaction(tx)
-                        }
-                    )
+                if (isDayExpanded) {
+                    items(dayTxs, key = { it.id }) { tx ->
+                        val accountName = state.accounts.find { it.account.id == tx.accountId }?.account?.name ?: "Cash"
+                        SwipeableTransactionRow(
+                            tx = tx,
+                            accountName = accountName,
+                            currencySymbol = cur,
+                            hideAmounts = hide,
+                            lang = lang,
+                            todayIso = todayIso,
+                            envelopes = state.envelopes.map { it.config },
+                            isDarkTheme = state.profile.isDarkTheme,
+                            deleteLabel = strings.deleteBtn,
+                            duplicateLabel = when (lang) {
+                                "ar" -> "تكرار"
+                                "darija" -> "عاودها"
+                                "en" -> "Duplicate"
+                                else -> "Dupliquer"
+                            },
+                            onEditTransaction = { onEditTransaction(tx) },
+                            onDuplicateTransaction = {
+                                dismissSwipeHint()
+                                onDuplicateTransaction(tx)
+                            },
+                            onDeleteTransaction = {
+                                dismissSwipeHint()
+                                onDeleteTransaction(tx)
+                            }
+                        )
+                    }
                 }
             }
 

@@ -1,10 +1,15 @@
 package com.example.ui.theme
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -36,11 +41,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.contentColorFor
+import androidx.compose.ui.draw.rotate
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -854,3 +863,145 @@ fun ExpressiveGlassBottomDock(
         }
     }
 }
+
+/**
+ * Tesler's Law Single-Open Accordion Glass Card.
+ * Keeps screens calm and breathable by collapsing secondary complexity behind a scannable
+ * header with an icon badge, concise subtitle, live summary pill, and smooth spring reveal.
+ */
+@Composable
+fun ExpressiveAccordionCard(
+    title: String,
+    isExpanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    summaryBadge: String? = null,
+    summaryBadgeColor: Color = MaterialTheme.colorScheme.primary,
+    icon: ImageVector? = null,
+    accentColor: Color = MaterialTheme.colorScheme.primary,
+    headerTestTag: String? = null,
+    expandContentDescription: String = title,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    val haptics = LocalHapticFeedback.current
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (isExpanded) 180f else 0f,
+        animationSpec = ExpressiveMotion.snappySpring(),
+        label = "accordion_chevron_$title"
+    )
+    val rimColor by animateColorAsState(
+        targetValue = if (isExpanded) accentColor else Color.Transparent,
+        animationSpec = ExpressiveMotion.snappySpring(),
+        label = "accordion_rim_$title"
+    )
+
+    ExpressiveGlassCard(
+        tier = if (isExpanded) CardTier.GLASS else CardTier.STANDARD,
+        cornerRadius = MasroufiTokens.CornerRadius.card,
+        accentRimColor = rimColor,
+        contentPadding = PaddingValues(0.dp),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(MasroufiTokens.CornerRadius.card))
+                .clickable {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    onToggle()
+                }
+                .then(if (headerTestTag != null) Modifier.testTag(headerTestTag) else Modifier)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (icon != null) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(accentColor.copy(alpha = if (isExpanded) 0.22f else 0.13f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = accentColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            if (!summaryBadge.isNullOrBlank()) {
+                Surface(
+                    shape = CircleShape,
+                    color = summaryBadgeColor.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, summaryBadgeColor.copy(alpha = 0.28f))
+                ) {
+                    Text(
+                        text = summaryBadge,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = summaryBadgeColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
+                }
+            }
+
+            Icon(
+                imageVector = Icons.Default.ExpandMore,
+                contentDescription = expandContentDescription,
+                tint = if (isExpanded) accentColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(22.dp)
+                    .rotate(chevronRotation)
+            )
+        }
+
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = expandVertically(animationSpec = ExpressiveMotion.snappySpring()) + fadeIn(),
+            exit = shrinkVertically(animationSpec = ExpressiveMotion.snappySpring()) + fadeOut()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                content()
+            }
+        }
+    }
+}
+

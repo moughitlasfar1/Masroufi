@@ -1,6 +1,11 @@
 package com.example.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -27,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -37,13 +43,13 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Event
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Handshake
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PieChart
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Smartphone
@@ -53,6 +59,7 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,10 +72,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -92,9 +101,11 @@ import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.AccentViolet
+import com.example.ui.theme.ExpressiveAccordionCard
 import com.example.ui.theme.ExpressiveAnimatedProgressBar
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
+import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.ExpressiveSectionHeader
 import com.example.ui.theme.VyxelPillDark
 import com.example.ui.theme.distinctAccountColor
@@ -143,7 +154,10 @@ fun MonthScreen(
     )
 
     var headerDragAccumulator by remember { mutableFloatStateOf(0f) }
-    var monthMoreExpanded by remember { mutableStateOf(false) }
+    var expandedMonthSection by rememberSaveable { mutableStateOf<String?>(null) }
+    fun toggleMonthSection(key: String) {
+        expandedMonthSection = if (expandedMonthSection == key) null else key
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -305,38 +319,36 @@ fun MonthScreen(
             }
         }
 
-        // 2. Advanced Analytics Card (Month-over-Month Comparison — hidden until a previous cycle has transactions)
+        // 2. Advanced Analytics Accordion (Month-over-Month Comparison)
         if (state.previousCycleExpenses > 0.0) {
             item(key = "month_comparison_card") {
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    accentRimColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("advanced_analytics_card")
+                val isDark = state.profile.isDarkTheme
+                val incColor = semanticIncomeColor(isDark)
+                val expColor = semanticExpenseColor(isDark)
+                val projectedDelta = state.totalAvailableBudget - state.spendProjection.projectedTotal
+                val momDiffPct = (((state.cycleExpenses - state.previousCycleExpenses) / state.previousCycleExpenses) * 100.0).safeRoundToInt()
+                val momBadge = "${if (momDiffPct > 0) "+" else ""}$momDiffPct%"
+                ExpressiveAccordionCard(
+                    title = when (state.profile.language) {
+                        "darija" -> "مقارنة الشهر"
+                        "ar" -> "مقارنة الأشهر"
+                        "en" -> "Month Comparison"
+                        else -> "Comparaison Mensuelle"
+                    },
+                    subtitle = if (projectedDelta >= 0) {
+                        "Projection : +${fmt(projectedDelta)} $cur"
+                    } else {
+                        "Projection : -${fmt(abs(projectedDelta))} $cur"
+                    },
+                    summaryBadge = momBadge,
+                    summaryBadgeColor = if (momDiffPct <= 0) incColor else expColor,
+                    icon = Icons.Default.Analytics,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    isExpanded = expandedMonthSection == "mom_comparison",
+                    onToggle = { toggleMonthSection("mom_comparison") },
+                    headerTestTag = "accordion_month_comparison",
+                    modifier = Modifier.testTag("advanced_analytics_card")
                 ) {
-                    val isDark = state.profile.isDarkTheme
-                    val incColor = semanticIncomeColor(isDark)
-                    val expColor = semanticExpenseColor(isDark)
-                    val projectedDelta = state.totalAvailableBudget - state.spendProjection.projectedTotal
-                    ExpressiveSectionHeader(
-                        title = when (state.profile.language) {
-                            "darija" -> "مقارنة الشهر"
-                            "ar" -> "مقارنة الأشهر"
-                            "en" -> "Month Comparison"
-                            else -> "Comparaison Mensuelle"
-                        },
-                        subtitle = if (projectedDelta >= 0) {
-                            "Projection : +${fmt(projectedDelta)} $cur"
-                        } else {
-                            "Projection : -${fmt(abs(projectedDelta))} $cur"
-                        },
-                        icon = Icons.Default.Analytics,
-                        accentColor = MaterialTheme.colorScheme.primary
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
                     state.envelopes.forEach { env ->
                         val curSpent = env.spent
                         val prevSpent = env.previousSpent
@@ -353,7 +365,7 @@ fun MonthScreen(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 2.dp)
                         ) {
                             Row(
                                 modifier = Modifier
@@ -389,34 +401,39 @@ fun MonthScreen(
             }
         }
 
-        // Smart Insights & Recurring Subscription Detector (max 2 insights)
+        // 3. Smart Insights & Recurring Subscription Detector Accordion
         if (moreFeaturesEnabled && (state.smartInsights.isNotEmpty() || state.detectedSubscriptions.isNotEmpty())) {
             item(key = "insights_smart_assistant") {
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    accentRimColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("smart_assistant_card")
+                val totalSignals = state.smartInsights.size + state.detectedSubscriptions.size
+                ExpressiveAccordionCard(
+                    title = when (lang) {
+                        "darija" -> "المستشار الذكي"
+                        "ar" -> "المساعد الذكي"
+                        "en" -> "Smart Insights"
+                        else -> "Assistant Intelligent"
+                    },
+                    subtitle = state.smartInsights.firstOrNull()?.title ?: when (lang) {
+                        "ar" -> "اشتراكات متكررة مكتشفة"
+                        "darija" -> "اشتراكات كتعاود"
+                        "en" -> "Recurring charges detected"
+                        else -> "Abonnements détectés"
+                    },
+                    summaryBadge = "$totalSignals",
+                    summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                    icon = Icons.Default.AutoAwesome,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    isExpanded = expandedMonthSection == "smart_assistant",
+                    onToggle = { toggleMonthSection("smart_assistant") },
+                    headerTestTag = "accordion_month_insights",
+                    modifier = Modifier.testTag("smart_assistant_card")
                 ) {
-                    ExpressiveSectionHeader(
-                        title = when (lang) {
-                            "darija" -> "المستشار الذكي"
-                            "ar" -> "المساعد الذكي"
-                            "en" -> "Smart Insights"
-                            else -> "Assistant Intelligent"
-                        },
-                        icon = Icons.Default.AutoAwesome,
-                        accentColor = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
                     state.smartInsights.forEach { insight ->
                         ExpressiveGlassSurface(
                             shape = RoundedCornerShape(18.dp),
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 2.dp)
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
                                 Text(
@@ -436,7 +453,6 @@ fun MonthScreen(
                     }
 
                     if (state.detectedSubscriptions.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(8.dp))
                         ExpressiveGlassSurface(
                             shape = RoundedCornerShape(18.dp),
                             containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
@@ -518,185 +534,126 @@ fun MonthScreen(
             }
         }
 
-        // Phase 4: Expandable "Plus" section for Bilan du mois, What-If Simulator, and Seasonal Planners
-        item(key = "month_more_toggle") {
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                onClick = { monthMoreExpanded = !monthMoreExpanded },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("month_more_section_toggle")
+        // 4. Monthly Review Accordion (Bilan du mois)
+        item(key = "insights_monthly_review") {
+            val vsLastMonthDiff = if (state.previousCycleExpenses > 0.0) {
+                (((state.cycleExpenses - state.previousCycleExpenses) / state.previousCycleExpenses) * 100.0).safeRoundToInt()
+            } else 0
+            val vsLastMonthText = if (state.previousCycleExpenses > 0.0) {
+                val sign = if (vsLastMonthDiff > 0) "+" else ""
+                "$sign$vsLastMonthDiff% ${strings.vsLastMonthSuffix}"
+            } else {
+                strings.firstTrackedCycleLabel
+            }
+            val topCatName = state.topEnvelopeStatus?.config?.localizedName(lang) ?: "—"
+            val topCatPct = state.topEnvelopeStatus?.usagePercent ?: 0
+            val biggestDayLabel = if (state.biggestSpendingDayIso.isNotBlank()) {
+                "${PayCycleEngine.formatFriendlyDate(state.biggestSpendingDayIso, lang)} (${fmt(state.biggestSpendingDayAmount)} $cur)"
+            } else "—"
+
+            ExpressiveAccordionCard(
+                title = strings.monthlyReviewTitle,
+                subtitle = vsLastMonthText,
+                summaryBadge = "$pct%",
+                summaryBadgeColor = if (isOver) semanticExpenseColor(state.profile.isDarkTheme) else MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.Lightbulb,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedMonthSection == "monthly_review",
+                onToggle = { toggleMonthSection("monthly_review") },
+                headerTestTag = "accordion_month_review",
+                modifier = Modifier.testTag("monthly_recap_card")
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "${strings.moreSectionLabel} (${strings.monthlyReviewTitle}, ${strings.whatIfTitle}, ${strings.seasonalTitle})",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
+                        text = if (state.remainingBudget >= 0) {
+                            "${strings.remainingLabel} ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j)"
+                        } else {
+                            "${strings.overrunLabel} ${fmt(-state.remainingBudget)} $cur"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f)
                     )
-                    Icon(
-                        imageVector = if (monthMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = strings.moreSectionLabel,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-
-        if (monthMoreExpanded) {
-            item(key = "insights_monthly_review") {
-                val vsLastMonthDiff = if (state.previousCycleExpenses > 0.0) {
-                    (((state.cycleExpenses - state.previousCycleExpenses) / state.previousCycleExpenses) * 100.0).safeRoundToInt()
-                } else 0
-                val vsLastMonthText = if (state.previousCycleExpenses > 0.0) {
-                    val sign = if (vsLastMonthDiff > 0) "+" else ""
-                    "$sign$vsLastMonthDiff% ${strings.vsLastMonthSuffix}"
-                } else {
-                    strings.firstTrackedCycleLabel
-                }
-                val topCatName = state.topEnvelopeStatus?.config?.localizedName(lang) ?: "—"
-                val topCatPct = state.topEnvelopeStatus?.usagePercent ?: 0
-                val biggestDayLabel = if (state.biggestSpendingDayIso.isNotBlank()) {
-                    "${PayCycleEngine.formatFriendlyDate(state.biggestSpendingDayIso, lang)} (${fmt(state.biggestSpendingDayAmount)} $cur)"
-                } else "—"
-
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    accentRimColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("monthly_recap_card")
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                    FilledTonalButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            val sharePayload = buildString {
+                                appendLine("📊 ${strings.monthlyReviewTitle} (${state.activeWindow.cycleKey})")
+                                appendLine("• ${strings.budgetLabel} : $pct% (•••• $cur)")
+                                appendLine("• ${strings.topCategoryPrefix} $topCatName ($topCatPct%)")
+                                appendLine("• ${strings.biggestDayPrefix} ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
+                                appendLine("• $vsLastMonthText")
+                            }
+                            onShareText(sharePayload)
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("btn_share_monthly_recap")
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(RoundedCornerShape(13.dp))
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lightbulb,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = "${strings.monthlyReviewTitle} • $vsLastMonthText",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Text(
-                                    text = if (state.remainingBudget >= 0) {
-                                        "${strings.remainingLabel} ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j)"
-                                    } else {
-                                        "${strings.overrunLabel} ${fmt(-state.remainingBudget)} $cur"
-                                    },
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                        FilledTonalButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                val sharePayload = buildString {
-                                    appendLine("📊 ${strings.monthlyReviewTitle} (${state.activeWindow.cycleKey})")
-                                    appendLine("• ${strings.budgetLabel} : $pct% (•••• $cur)")
-                                    appendLine("• ${strings.topCategoryPrefix} $topCatName ($topCatPct%)")
-                                    appendLine("• ${strings.biggestDayPrefix} ${state.biggestSpendingDayIso.ifBlank { "—" }} (•••• $cur)")
-                                    appendLine("• $vsLastMonthText")
-                                }
-                                onShareText(sharePayload)
-                            },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("btn_share_monthly_recap")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = strings.shareReviewDesc,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(strings.shareBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    ExpressiveGlassSurface(
-                        shape = RoundedCornerShape(16.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "${strings.topCategoryPrefix} $topCatName",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "${strings.biggestDayPrefix} $biggestDayLabel",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Text(
-                                text = vsLastMonthText,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = strings.shareReviewDesc,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(strings.shareBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-            }
-        }
 
-        // 3. "What-If" Savings Simulator Card (inside "Plus")
-        if (monthMoreExpanded && moreFeaturesEnabled) {
-            item(key = "what_if_card") {
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    accentRimColor = MaterialTheme.colorScheme.primary,
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    ExpressiveSectionHeader(
-                        title = strings.whatIfTitle,
-                        subtitle = strings.whatIfSub,
-                        icon = Icons.Default.Tune,
-                        accentColor = MaterialTheme.colorScheme.primary
-                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "${strings.topCategoryPrefix} $topCatName",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "${strings.biggestDayPrefix} $biggestDayLabel",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = vsLastMonthText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
+        // 5. "What-If" Savings Simulator Accordion
+        if (moreFeaturesEnabled) {
+            item(key = "what_if_card") {
+                ExpressiveAccordionCard(
+                    title = strings.whatIfTitle,
+                    subtitle = strings.whatIfSub,
+                    summaryBadge = "+${fmt(yearlySaved)} $cur",
+                    summaryBadgeColor = semanticIncomeColor(state.profile.isDarkTheme),
+                    icon = Icons.Default.Tune,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    isExpanded = expandedMonthSection == "what_if",
+                    onToggle = { toggleMonthSection("what_if") },
+                    headerTestTag = "accordion_month_what_if"
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -718,8 +675,6 @@ fun MonthScreen(
                             )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(8.dp))
 
                     Slider(
                         value = state.whatIfState.cutPercentage.toFloat().coerceIn(5f, 70f),
@@ -763,33 +718,35 @@ fun MonthScreen(
                 }
             }
 
-            // 4. Seasonal & Yearly Planners (Phase 5: only when moreFeaturesEnabled is on)
+            // 6. Seasonal & Yearly Planners Accordion
             item(key = "seasonal_card") {
                 val seasonalTemplates = remember { PayCycleEngine.moroccanSeasonalTemplates() }
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    accentRimColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("seasonal_envelopes_card")
+                ExpressiveAccordionCard(
+                    title = strings.seasonalTitle,
+                    subtitle = strings.seasonalSub,
+                    summaryBadge = "${state.seasonals.size}",
+                    summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                    icon = Icons.Default.Event,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    isExpanded = expandedMonthSection == "seasonal",
+                    onToggle = { toggleMonthSection("seasonal") },
+                    headerTestTag = "accordion_month_seasonal",
+                    modifier = Modifier.testTag("seasonal_envelopes_card")
                 ) {
-                    ExpressiveSectionHeader(
-                        title = strings.seasonalTitle,
-                        subtitle = strings.seasonalSub,
-                        icon = Icons.Default.Event,
-                        accentColor = MaterialTheme.colorScheme.primary,
-                        trailingContent = {
-                            FilledTonalButton(
-                                onClick = { onOpenNewSeasonal(null) },
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                                modifier = Modifier.testTag("btn_add_seasonal")
-                            ) {
-                                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        FilledTonalButton(
+                            onClick = { onOpenNewSeasonal(null) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("btn_add_seasonal")
+                        ) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(strings.seasonalTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
+                    }
 
                     Row(
                         modifier = Modifier
@@ -822,8 +779,6 @@ fun MonthScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-
                     state.seasonals.forEach { item ->
                         val prog = if (item.amount > 0) (item.secondaryAmount / item.amount).toFloat().safeFraction() else 0f
                         val countdown = PayCycleEngine.computeSeasonalCountdown(
@@ -837,7 +792,7 @@ fun MonthScreen(
                             onClick = { onOpenNewSeasonal(item) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 5.dp)
+                                .padding(vertical = 3.dp)
                                 .testTag("seasonal_item_${item.id}")
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
@@ -974,85 +929,367 @@ fun BudgetAndDaretScreen(
     val haptics = LocalHapticFeedback.current
     val lang = state.profile.language
     var editPresetsMode by remember { mutableStateOf(false) }
-    var planMoreExpanded by remember { mutableStateOf(false) }
+    var expandedPlanSection by rememberSaveable { mutableStateOf<String?>(null) }
+    var expandedEnvelopeKey by rememberSaveable { mutableStateOf<String?>(null) }
+    fun togglePlanSection(key: String) {
+        expandedPlanSection = if (expandedPlanSection == key) null else key
+    }
     fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
+    val cycleUsagePct = if (state.totalAvailableBudget > 0) {
+        ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).safeRoundToInt()
+    } else 0
+    val isDark = state.profile.isDarkTheme
+    val incColor = semanticIncomeColor(isDark)
+    val expColor = semanticExpenseColor(isDark)
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .testTag("budget_screen"),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // 0A. Accounts & Balances Card (shows both Total des comptes and Solde du cycle, plus Épargne du cycle)
-        item(key = "plan_accounts") {
+        // 0. Always-Visible Compact Cycle & Liquidity Strip (Tesler's Law: scannable KPIs without clutter)
+        item(key = "plan_summary_strip") {
             ExpressiveGlassCard(
-                cornerRadius = 28.dp,
+                cornerRadius = 24.dp,
+                accentRimColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("plan_accounts_card")
+                    .testTag("plan_summary_strip")
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = strings.accountsTitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "${strings.totalAccountsLabel}: ${fmt(state.totalNetWorth)} $cur",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "${strings.cycleBalanceLabel}: ${fmt(state.remainingBudget)} $cur",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        if (state.cycleSavings > 0.0) {
+                    ExpressiveGlassSurface(
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        onClick = { togglePlanSection("accounts") },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
                             Text(
-                                text = "${strings.cycleSavingsLabel}: +${fmt(state.cycleSavings)} $cur",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = semanticIncomeColor(state.profile.isDarkTheme)
+                                text = strings.totalAccountsLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${fmt(state.totalNetWorth)} $cur",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(
-                            onClick = onOpenTransferModal,
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("btn_transfer_accounts")
+
+                    ExpressiveGlassSurface(
+                        shape = RoundedCornerShape(16.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        onClick = { togglePlanSection("envelopes") },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.SwapHoriz,
-                                contentDescription = strings.transferAction,
-                                modifier = Modifier.size(16.dp)
+                            Text(
+                                text = strings.cycleBalanceLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(text = strings.transferAction, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        FilledTonalButton(
-                            onClick = { onOpenAccountModal(null) },
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                            modifier = Modifier.testTag("btn_add_account")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = strings.accountsTitle,
-                                modifier = Modifier.size(16.dp)
+                            Text(
+                                text = "${fmt(state.remainingBudget)} $cur",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (state.remainingBudget >= 0) MaterialTheme.colorScheme.primary else expColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 }
+                if (state.cycleSavings > 0.0) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "${strings.cycleSavingsLabel}: +${fmt(state.cycleSavings)} $cur",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = incColor
+                    )
+                }
+            }
+        }
 
-                Spacer(modifier = Modifier.height(12.dp))
+        // 1. Categories & Envelopes Accordion (with nested Tap-to-Expand per Category!)
+        item(key = "plan_envelopes") {
+            ExpressiveAccordionCard(
+                title = strings.envelopesTitle,
+                subtitle = strings.envelopesSub,
+                summaryBadge = "${state.envelopes.size} • $cycleUsagePct%",
+                summaryBadgeColor = if (cycleUsagePct >= 90) expColor else MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.PieChart,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedPlanSection == "envelopes",
+                onToggle = { togglePlanSection("envelopes") },
+                headerTestTag = "accordion_plan_envelopes"
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    FilledTonalButton(
+                        onClick = onOpenCustomizeEnvelopes,
+                        modifier = Modifier.testTag("btn_customize_envelopes")
+                    ) {
+                        Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(text = strings.editEnvelopesBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                CategoryDonutChart(
+                    envelopes = state.envelopes,
+                    totalSpent = state.cycleExpenses,
+                    lang = state.profile.language,
+                    currencySymbol = cur,
+                    hideAmounts = hide,
+                    isDarkTheme = isDark
+                )
+
+                val daysLeft = state.activeWindow.daysRemaining.coerceAtLeast(1)
+                state.envelopes.forEach { envStatus ->
+                    val envLabel = envStatus.config.localizedName(state.profile.language)
+                    val catVisual = com.example.ui.theme.categoryVisualStyle(
+                        "${envStatus.config.key} $envLabel",
+                        isDark
+                    )
+                    val envColor = catVisual.foreground
+                    val activeAccent = if (envStatus.isOver90Percent) expColor else envColor
+                    val isEnvOpen = expandedEnvelopeKey == envStatus.config.key
+                    val envChevron by animateFloatAsState(
+                        targetValue = if (isEnvOpen) 180f else 0f,
+                        animationSpec = ExpressiveMotion.snappySpring(),
+                        label = "env_chevron_${envStatus.config.key}"
+                    )
+                    val envRemaining = max(0.0, envStatus.totalAvailable - envStatus.spent)
+                    val envDailyPace = envRemaining / daysLeft.toDouble()
+
+                    ExpressiveGlassSurface(
+                        shape = RoundedCornerShape(20.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        accentBorderColor = if (isEnvOpen) activeAccent else Color.Transparent,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            expandedEnvelopeKey = if (isEnvOpen) null else envStatus.config.key
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp)
+                            .testTag("envelope_accordion_${envStatus.config.key}")
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(34.dp)
+                                            .clip(RoundedCornerShape(11.dp))
+                                            .background(catVisual.container),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = catVisual.icon,
+                                            contentDescription = null,
+                                            tint = envColor,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = envLabel,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "-${fmt(envStatus.spent)} $cur",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (envStatus.spent > 0) expColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = activeAccent.copy(alpha = 0.14f)
+                                    ) {
+                                        Text(
+                                            text = if (envStatus.config.hasCap) "${envStatus.usagePercent}%" else strings.noCap,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = activeAccent,
+                                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = Icons.Default.ExpandMore,
+                                        contentDescription = envLabel,
+                                        tint = if (isEnvOpen) activeAccent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .rotate(envChevron)
+                                    )
+                                }
+                            }
+
+                            if (envStatus.config.hasCap) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                ExpressiveAnimatedProgressBar(
+                                    progress = (envStatus.usagePercent / 100f).safeFraction(),
+                                    color = activeAccent,
+                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    height = 6.dp
+                                )
+                            }
+
+                            AnimatedVisibility(
+                                visible = isEnvOpen,
+                                enter = expandVertically(animationSpec = ExpressiveMotion.snappySpring()) + fadeIn(),
+                                exit = shrinkVertically(animationSpec = ExpressiveMotion.snappySpring()) + fadeOut()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
+                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                            Text(
+                                                text = if (envStatus.config.hasCap) {
+                                                    "${strings.budgetLabel}: ${fmt(envStatus.totalAvailable)} $cur (${envStatus.config.percentage.safeRoundToInt()}%)"
+                                                } else {
+                                                    strings.noCap
+                                                },
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (envStatus.config.hasCap) {
+                                                Text(
+                                                    text = "${strings.remainingLabel}: ${fmt(envRemaining)} $cur • ${fmt(envDailyPace)} $cur/j",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (envStatus.isOver90Percent) expColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            if (envStatus.rolloverAmount > 0) {
+                                                Text(
+                                                    text = strings.rolloverBadge.replace("{amt}", fmt(envStatus.rolloverAmount)),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = incColor,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                        FilledTonalButton(
+                                            onClick = onOpenCustomizeEnvelopes,
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                            modifier = Modifier.testTag("btn_edit_env_${envStatus.config.key}")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Edit,
+                                                contentDescription = strings.editBtn,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(strings.editBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Accounts & Balances Accordion
+        item(key = "plan_accounts") {
+            ExpressiveAccordionCard(
+                title = strings.accountsTitle,
+                subtitle = "${state.accounts.size} • ${strings.transferAction}",
+                summaryBadge = "${fmt(state.totalNetWorth)} $cur",
+                summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.AccountBalanceWallet,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedPlanSection == "accounts",
+                onToggle = { togglePlanSection("accounts") },
+                headerTestTag = "accordion_plan_accounts",
+                modifier = Modifier.testTag("plan_accounts_card")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = onOpenTransferModal,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("btn_transfer_accounts")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = strings.transferAction,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = strings.transferAction, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                    FilledTonalButton(
+                        onClick = { onOpenAccountModal(null) },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("btn_add_account")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = strings.accountsTitle,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
 
                 Row(
                     modifier = Modifier
@@ -1068,15 +1305,15 @@ fun BudgetAndDaretScreen(
                         }
                         val accent = distinctAccountColor(
                             accWithBal.account.kind,
-                            state.profile.isDarkTheme
+                            isDark
                         )
                         Surface(
                             shape = RoundedCornerShape(24.dp),
-                            color = if (state.profile.isDarkTheme) Color(0xFF14171E) else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            color = if (isDark) Color(0xFF14171E) else MaterialTheme.colorScheme.surfaceContainerHigh,
                             contentColor = MaterialTheme.colorScheme.onSurface,
                             border = BorderStroke(
                                 1.dp,
-                                if (state.profile.isDarkTheme) Color(0xFF232834) else MaterialTheme.colorScheme.outlineVariant
+                                if (isDark) Color(0xFF232834) else MaterialTheme.colorScheme.outlineVariant
                             ),
                             modifier = Modifier
                                 .width(140.dp)
@@ -1116,7 +1353,7 @@ fun BudgetAndDaretScreen(
                                 )
                                 Surface(
                                     shape = CircleShape,
-                                    color = if (state.profile.isDarkTheme) VyxelPillDark else MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    color = if (isDark) VyxelPillDark else MaterialTheme.colorScheme.surfaceContainerHighest,
                                     contentColor = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
@@ -1141,115 +1378,130 @@ fun BudgetAndDaretScreen(
             }
         }
 
-        // 0A-bis. Dedicated Moroccan Credit Simulator Tool Card
-        item(key = "plan_credit_simulator") {
+        // 3. Moroccan Financial Tools Accordion (Credit Simulator, Annual Bills / Vignette, Zakat & Hawl)
+        item(key = "plan_moroccan_tools") {
             val creditStrings = remember(lang) {
                 com.masroufi.credit.domain.CreditStrings.forLang(lang)
             }
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpenCreditSimulator() }
-                    .testTag("tools_credit_simulator_card")
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Calculate,
-                            contentDescription = creditStrings.toolCardTitle,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = creditStrings.toolCardTitle,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                            ) {
-                                Text(
-                                    text = if (savedCreditsCount > 0) {
-                                        "$savedCreditsCount"
-                                    } else {
-                                        "BCP"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        Text(
-                            text = creditStrings.toolCardSubtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = onOpenCreditSimulator,
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
-                        modifier = Modifier.testTag("tools_credit_simulator_open_button")
-                    ) {
-                        Text(
-                            text = creditStrings.toolCardCta,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-
-        // 0A-ter. Step 1 & Step 5: Annual Bills Reserve & Zakat Tracker (isolated com.masroufi.fiscal)
-        item(key = "plan_fiscal_tools") {
             val fiscalStrings = remember(lang) {
                 com.masroufi.fiscal.domain.FiscalStrings.forLang(lang)
             }
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
+            val activeToolsCount = savedCreditsCount + activeAnnualBillsCount
+            ExpressiveAccordionCard(
+                title = when (lang) {
+                    "darija" -> "أدوات مالية د المغرب"
+                    "ar" -> "أدوات مالية مغربية"
+                    "en" -> "Morocco Finance Tools"
+                    else -> "Outils Maroc"
+                },
+                subtitle = "BCP • Vignette • Zakat",
+                summaryBadge = if (activeToolsCount > 0) "$activeToolsCount" else "3",
+                summaryBadgeColor = AccentEmerald,
+                icon = Icons.Default.Calculate,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedPlanSection == "moroccan_tools",
+                onToggle = { togglePlanSection("moroccan_tools") },
+                headerTestTag = "accordion_plan_tools"
+            ) {
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    onClick = { onOpenCreditSimulator() },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onOpenAnnualBills() }
-                        .testTag("tools_annual_bills_card")
+                        .testTag("tools_credit_simulator_card")
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(50.dp)
-                                .clip(RoundedCornerShape(16.dp))
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Calculate,
+                                contentDescription = creditStrings.toolCardTitle,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(
+                                    text = creditStrings.toolCardTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                ) {
+                                    Text(
+                                        text = if (savedCreditsCount > 0) "$savedCreditsCount" else "BCP",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = creditStrings.toolCardSubtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = onOpenCreditSimulator,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("tools_credit_simulator_open_button")
+                        ) {
+                            Text(
+                                text = creditStrings.toolCardCta,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    onClick = { onOpenAnnualBills() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("tools_annual_bills_card")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(MaterialTheme.colorScheme.secondaryContainer),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1257,12 +1509,12 @@ fun BudgetAndDaretScreen(
                                 imageVector = Icons.Default.Event,
                                 contentDescription = fiscalStrings.annualBillsCardTitle,
                                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.size(25.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                         Column(
                             modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1270,7 +1522,7 @@ fun BudgetAndDaretScreen(
                             ) {
                                 Text(
                                     text = fiscalStrings.annualBillsCardTitle,
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
@@ -1286,7 +1538,7 @@ fun BudgetAndDaretScreen(
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = AccentEmerald,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                         )
                                     }
                                 }
@@ -1301,34 +1553,37 @@ fun BudgetAndDaretScreen(
                         }
                         FilledTonalButton(
                             onClick = onOpenAnnualBills,
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier.testTag("tools_annual_bills_open_button")
                         ) {
                             Text(
                                 text = fiscalStrings.annualBillsCardCta,
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
                 }
 
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
+                ExpressiveGlassSurface(
+                    shape = RoundedCornerShape(20.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    onClick = { onOpenZakatTracker() },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onOpenZakatTracker() }
                         .testTag("tools_zakat_card")
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(50.dp)
-                                .clip(RoundedCornerShape(16.dp))
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(14.dp))
                                 .background(AccentEmerald.copy(alpha = 0.16f)),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1336,16 +1591,16 @@ fun BudgetAndDaretScreen(
                                 imageVector = Icons.Default.Savings,
                                 contentDescription = fiscalStrings.zakatCardTitle,
                                 tint = AccentEmerald,
-                                modifier = Modifier.size(25.dp)
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                         Column(
                             modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text(
                                 text = fiscalStrings.zakatCardTitle,
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
@@ -1361,12 +1616,12 @@ fun BudgetAndDaretScreen(
                         }
                         FilledTonalButton(
                             onClick = onOpenZakatTracker,
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                             modifier = Modifier.testTag("tools_zakat_open_button")
                         ) {
                             Text(
                                 text = fiscalStrings.zakatCardCta,
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -1375,361 +1630,33 @@ fun BudgetAndDaretScreen(
             }
         }
 
-        // 0B. 1-Tap Quick Presets Card (moved from Home in Phase 2)
-        item(key = "plan_presets") {
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("plan_presets_card")
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = strings.quickPresetsTitle,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Surface(
-                            shape = CircleShape,
-                            color = if (editPresetsMode) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { editPresetsMode = !editPresetsMode }
-                        ) {
-                            Text(
-                                text = if (editPresetsMode) strings.doneBtn else strings.editBtn,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (editPresetsMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                .clickable { onAddPresetModal(null) }
-                        ) {
-                            Text(
-                                text = strings.addPresetBtn,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    state.presets.forEach { preset ->
-                        ExpressiveGlassSurface(
-                            shape = CircleShape,
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            onClick = {
-                                if (editPresetsMode) {
-                                    onAddPresetModal(preset)
-                                } else {
-                                    onQuickPresetTap(preset)
-                                }
-                            },
-                            modifier = Modifier.testTag("preset_${preset.id}")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                if (editPresetsMode) {
-                                    Icon(
-                                        imageVector = Icons.Default.Edit,
-                                        contentDescription = "Edit preset",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                }
-                                Text(
-                                    text = preset.name,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Surface(
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer
-                                ) {
-                                    Text(
-                                        text = "-${fmt(preset.amount)} $cur",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = semanticExpenseColor(state.profile.isDarkTheme),
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                    )
-                                }
-                                if (editPresetsMode) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Delete preset",
-                                        tint = AccentCoral,
-                                        modifier = Modifier
-                                            .size(16.dp)
-                                            .clickable { onDeletePreset(preset.id) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 1. Category Donut Chart + Customizable Envelopes
-        item(key = "plan_envelopes") {
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                accentRimColor = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = strings.envelopesTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = strings.envelopesSub,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    FilledTonalButton(
-                        onClick = onOpenCustomizeEnvelopes,
-                        modifier = Modifier.testTag("btn_customize_envelopes")
-                    ) {
-                        Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = strings.editEnvelopesBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                CategoryDonutChart(
-                    envelopes = state.envelopes,
-                    totalSpent = state.cycleExpenses,
-                    lang = state.profile.language,
-                    currencySymbol = cur,
-                    hideAmounts = hide,
-                    isDarkTheme = state.profile.isDarkTheme
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                val isDark = state.profile.isDarkTheme
-                val expColor = semanticExpenseColor(isDark)
-                state.envelopes.forEach { envStatus ->
-                    val envLabel = envStatus.config.localizedName(state.profile.language)
-                    val catVisual = com.example.ui.theme.categoryVisualStyle(
-                        "${envStatus.config.key} $envLabel",
-                        isDark
-                    )
-                    val envColor = catVisual.foreground
-                    val activeAccent = if (envStatus.isOver90Percent) expColor else envColor
-                    ExpressiveGlassSurface(
-                        shape = RoundedCornerShape(22.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        onClick = { onOpenCustomizeEnvelopes() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 5.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(30.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(catVisual.container),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = catVisual.icon,
-                                            contentDescription = null,
-                                            tint = envColor,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                    Text(
-                                        text = envLabel,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                Surface(
-                                    shape = CircleShape,
-                                    color = envColor.copy(alpha = 0.14f)
-                                ) {
-                                    Text(
-                                        text = if (envStatus.config.hasCap) {
-                                            "${fmt(envStatus.totalAvailable)} $cur (${envStatus.config.percentage.safeRoundToInt()}%)"
-                                        } else {
-                                            strings.noCap
-                                        },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = envColor,
-                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-                                    )
-                                }
-                            }
-
-                            if (envStatus.rolloverAmount > 0) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = strings.rolloverBadge.replace("{amt}", fmt(envStatus.rolloverAmount)),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = semanticIncomeColor(isDark)
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "-${fmt(envStatus.spent)} $cur",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (envStatus.spent > 0) expColor else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (envStatus.config.hasCap) {
-                                    Text(
-                                        text = "${envStatus.usagePercent}%",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = activeAccent
-                                    )
-                                }
-                            }
-
-                            if (envStatus.config.hasCap) {
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                ExpressiveAnimatedProgressBar(
-                                    progress = (envStatus.usagePercent / 100f).safeFraction(),
-                                    color = activeAccent,
-                                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                    height = 10.dp
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Phase 4: Expandable "Plus" section for Reminders, Goals & Bills, Daret, and Sellef
-        item(key = "plan_more_toggle") {
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                onClick = { planMoreExpanded = !planMoreExpanded },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("plan_more_section_toggle")
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "${strings.moreSectionLabel} (${strings.goalsTitle}, ${strings.daretTitle}, ${strings.debtsTitle})",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        imageVector = if (planMoreExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = strings.moreSectionLabel,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-
-        // Smart Reminders Card (inside "Plus")
-        if (planMoreExpanded && state.smartReminders.isNotEmpty()) {
+        // 4. Smart Reminders Accordion (shown when due/upcoming reminders exist)
+        if (state.smartReminders.isNotEmpty()) {
             item(key = "plan_smart_reminders") {
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("smart_reminders_card")
+                ExpressiveAccordionCard(
+                    title = when (lang) {
+                        "darija" -> "تذكيرات الفواتير"
+                        "ar" -> "تذكيرات الفواتير"
+                        "en" -> "Bill Reminders"
+                        else -> "Rappels & Échéances"
+                    },
+                    subtitle = state.smartReminders.firstOrNull()?.title,
+                    summaryBadge = "${state.smartReminders.size}",
+                    summaryBadgeColor = AccentAmber,
+                    icon = Icons.Default.NotificationsActive,
+                    accentColor = AccentAmber,
+                    isExpanded = expandedPlanSection == "reminders",
+                    onToggle = { togglePlanSection("reminders") },
+                    headerTestTag = "accordion_plan_reminders",
+                    modifier = Modifier.testTag("smart_reminders_card")
                 ) {
-                    ExpressiveSectionHeader(
-                        title = when (lang) {
-                            "darija" -> "تذكيرات الفواتير"
-                            "ar" -> "تذكيرات الفواتير"
-                            "en" -> "Bill Reminders"
-                            else -> "Rappels & Échéances"
-                        },
-                        icon = Icons.Default.NotificationsActive,
-                        accentColor = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
                     state.smartReminders.take(5).forEach { rem ->
                         ExpressiveGlassSurface(
                             shape = RoundedCornerShape(16.dp),
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp)
+                                .padding(vertical = 2.dp)
                         ) {
                             Row(
                                 modifier = Modifier
@@ -1763,46 +1690,46 @@ fun BudgetAndDaretScreen(
             }
         }
 
-        // 2. Savings Goals & Recurring Bills Management (inside "Plus")
-        if (planMoreExpanded) {
-            item(key = "plan_goals_and_bills") {
+        // 5. Savings Goals & Recurring Bills Accordion
+        item(key = "plan_goals_and_bills") {
             val billTemplates = remember { PayCycleEngine.moroccanBillTemplates() }
-            ExpressiveGlassCard(
-                cornerRadius = 28.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("goals_and_bills_card")
+            ExpressiveAccordionCard(
+                title = "${strings.goalsTitle} & ${strings.billsTitle}",
+                subtitle = "${state.goals.size} ${strings.goalsTitle} · ${state.bills.size} ${strings.billsTitle}",
+                summaryBadge = "${state.goals.size + state.bills.size}",
+                summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.Savings,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedPlanSection == "goals_bills",
+                onToggle = { togglePlanSection("goals_bills") },
+                headerTestTag = "accordion_plan_goals_bills",
+                modifier = Modifier.testTag("goals_and_bills_card")
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(imageVector = Icons.Default.Savings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text(text = strings.goalsTitle, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    FilledTonalButton(
+                        onClick = { onOpenNewGoal(null) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(strings.addGoalBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = { onOpenNewGoal(null) }) {
-                            Text(strings.addGoalBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                        FilledTonalButton(
-                            onClick = { onOpenNewBill(null) },
-                            modifier = Modifier.testTag("btn_open_new_bill")
-                        ) {
-                            Text(strings.addBillBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
+                    FilledTonalButton(
+                        onClick = { onOpenNewBill(null) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("btn_open_new_bill")
+                    ) {
+                        Text(strings.addBillBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-
-                Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
                     text = strings.moroccoTemplatesTitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1833,12 +1760,6 @@ fun BudgetAndDaretScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                val isDark = state.profile.isDarkTheme
-                val incColor = semanticIncomeColor(isDark)
-                val expColor = semanticExpenseColor(isDark)
-
                 // Recurring Bills List
                 state.bills.forEach { bill ->
                     val isPaid = PayCycleEngine.isBillPaidInCycle(bill, state.activeWindow.cycleKey)
@@ -1848,7 +1769,7 @@ fun BudgetAndDaretScreen(
                         onClick = { onOpenNewBill(bill) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                            .padding(vertical = 2.dp)
                     ) {
                         Row(
                             modifier = Modifier
@@ -1902,7 +1823,7 @@ fun BudgetAndDaretScreen(
                         onClick = { onOpenNewGoal(goal) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 5.dp)
+                            .padding(vertical = 3.dp)
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Row(
@@ -1950,35 +1871,155 @@ fun BudgetAndDaretScreen(
                     }
                 }
             }
+        }
+
+        // 6. 1-Tap Quick Presets Accordion
+        item(key = "plan_presets") {
+            ExpressiveAccordionCard(
+                title = strings.quickPresetsTitle,
+                subtitle = when (lang) {
+                    "darija" -> "مصاريف سريعة بضغطة وحدة"
+                    "ar" -> "مصاريف سريعة بضغطة واحدة"
+                    "en" -> "1-tap frequent expenses"
+                    else -> "Dépenses fréquentes en 1 tap"
+                },
+                summaryBadge = "${state.presets.size}",
+                summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.Bolt,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedPlanSection == "presets",
+                onToggle = { togglePlanSection("presets") },
+                headerTestTag = "accordion_plan_presets",
+                modifier = Modifier.testTag("plan_presets_card")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = if (editPresetsMode) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { editPresetsMode = !editPresetsMode }
+                    ) {
+                        Text(
+                            text = if (editPresetsMode) strings.doneBtn else strings.editBtn,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (editPresetsMode) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { onAddPresetModal(null) }
+                    ) {
+                        Text(
+                            text = strings.addPresetBtn,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    state.presets.forEach { preset ->
+                        ExpressiveGlassSurface(
+                            shape = CircleShape,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            onClick = {
+                                if (editPresetsMode) {
+                                    onAddPresetModal(preset)
+                                } else {
+                                    onQuickPresetTap(preset)
+                                }
+                            },
+                            modifier = Modifier.testTag("preset_${preset.id}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (editPresetsMode) {
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit preset",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                Text(
+                                    text = preset.name,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.primaryContainer
+                                ) {
+                                    Text(
+                                        text = "-${fmt(preset.amount)} $cur",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = expColor,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    )
+                                }
+                                if (editPresetsMode) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Delete preset",
+                                        tint = AccentCoral,
+                                        modifier = Modifier
+                                            .size(16.dp)
+                                            .clickable { onDeletePreset(preset.id) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        // Phase 5: Daret & Sellef (inside "Plus" when `moreFeaturesEnabled` is true)
-        if (planMoreExpanded && moreFeaturesEnabled) {
-            // 3. Moroccan Daret/Jam3iya Tracker Card
+        // 7 & 8. Moroccan Daret & Sellef Accordions (shown when `moreFeaturesEnabled` is true)
+        if (moreFeaturesEnabled) {
             item(key = "plan_daret") {
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("daret_tracker_card")
+                ExpressiveAccordionCard(
+                    title = strings.daretTitle,
+                    subtitle = strings.daretSub,
+                    summaryBadge = "${state.darets.size}",
+                    summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                    icon = Icons.Default.Groups,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    isExpanded = expandedPlanSection == "daret",
+                    onToggle = { togglePlanSection("daret") },
+                    headerTestTag = "accordion_plan_daret",
+                    modifier = Modifier.testTag("daret_tracker_card")
                 ) {
-                    ExpressiveSectionHeader(
-                        title = strings.daretTitle,
-                        subtitle = strings.daretSub,
-                        icon = Icons.Default.Groups,
-                        accentColor = MaterialTheme.colorScheme.primary,
-                        trailingContent = {
-                            FilledTonalButton(
-                                onClick = { onOpenNewDaret(null) },
-                                modifier = Modifier.testTag("btn_add_daret")
-                            ) {
-                                Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        FilledTonalButton(
+                            onClick = { onOpenNewDaret(null) },
+                            modifier = Modifier.testTag("btn_add_daret")
+                        ) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(strings.daretTitle, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
+                    }
 
                     state.darets.forEach { daret ->
                         val totalMembers = daret.secondaryAmount.safeRoundToInt().coerceAtLeast(1)
@@ -1994,7 +2035,7 @@ fun BudgetAndDaretScreen(
                             onClick = { onOpenNewDaret(daret) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 5.dp)
+                                .padding(vertical = 3.dp)
                                 .testTag("daret_item_${daret.id}")
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {
@@ -2164,55 +2205,51 @@ fun BudgetAndDaretScreen(
                 }
             }
 
-            // 4. Sellef Tracker (Crédits & Dettes)
             item(key = "plan_sellef") {
-                val isDark = state.profile.isDarkTheme
-                val incColor = semanticIncomeColor(isDark)
-                val expColor = semanticExpenseColor(isDark)
-                ExpressiveGlassCard(
-                    cornerRadius = 28.dp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("sellef_tracker_card")
+                ExpressiveAccordionCard(
+                    title = strings.debtsTitle,
+                    subtitle = "${strings.debtsLent} / ${strings.debtsBorrowed}",
+                    summaryBadge = "${state.debts.size}",
+                    summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                    icon = Icons.Default.Handshake,
+                    accentColor = MaterialTheme.colorScheme.primary,
+                    isExpanded = expandedPlanSection == "sellef",
+                    onToggle = { togglePlanSection("sellef") },
+                    headerTestTag = "accordion_plan_sellef",
+                    modifier = Modifier.testTag("sellef_tracker_card")
                 ) {
-                    ExpressiveSectionHeader(
-                        title = strings.debtsTitle,
-                        subtitle = strings.debtsLent + " / " + strings.debtsBorrowed,
-                        icon = Icons.Default.Handshake,
-                        accentColor = MaterialTheme.colorScheme.primary,
-                        trailingContent = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                FilledTonalButton(
-                                    onClick = onOpenSplitBillModal,
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                    modifier = Modifier.testTag("btn_open_split_bill")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.CallSplit,
-                                        contentDescription = strings.splitBillDesc,
-                                        modifier = Modifier.size(15.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(strings.splitBillBtnLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                                FilledTonalButton(
-                                    onClick = { onOpenNewDebt(null) },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                                    modifier = Modifier.testTag("btn_add_sellef")
-                                ) {
-                                    Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                                }
-                            }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilledTonalButton(
+                            onClick = onOpenSplitBillModal,
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("btn_open_split_bill")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.CallSplit,
+                                contentDescription = strings.splitBillDesc,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(strings.splitBillBtnLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
+                        FilledTonalButton(
+                            onClick = { onOpenNewDebt(null) },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("btn_add_sellef")
+                        ) {
+                            Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
+                    }
 
                     state.debts.forEach { debt ->
                         val isLent = debt.dateOrCycle != "borrowed"
                         val remDebt = max(0.0, debt.amount - debt.secondaryAmount)
                         val prog = if (debt.amount > 0) (debt.secondaryAmount / debt.amount).toFloat().safeFraction() else 0f
-                        val amtSign = if (isLent) "+" else "-"
                         val amtColor = if (isLent) incColor else expColor
                         ExpressiveGlassSurface(
                             shape = RoundedCornerShape(20.dp),
@@ -2220,7 +2257,7 @@ fun BudgetAndDaretScreen(
                             onClick = { onOpenNewDebt(debt) },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 5.dp)
+                                .padding(vertical = 3.dp)
                                 .testTag("sellef_item_${debt.id}")
                         ) {
                             Column(modifier = Modifier.padding(14.dp)) {

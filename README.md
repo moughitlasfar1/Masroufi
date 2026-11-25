@@ -1,4 +1,4 @@
-# Masroufi (`v1.2.0`)
+# Masroufi (`v1.2.1`)
 
 **Masroufi** is a fast, offline-first, privacy-focused personal finance, pay-cycle budgeting, Moroccan fiscal planning, and credit simulation Android app built with Kotlin and Jetpack Compose (Material 3 Expressive). Designed for everyday use in Morocco, it supports **Français**, **العربية** (full RTL), **الدارجة المغربية**, and **English** with Moroccan Dirham (`DH` / `MAD`) formatting.
 
@@ -9,11 +9,11 @@
 ### Pay-Cycle Budgeting & Daily Guidance
 - **Pay-Cycle Safe-to-Spend (*Reste à dépenser aujourd'hui*)**: Computes your daily safe spending allowance around custom salary days (`1..28`), factoring in recurring bills, rollover envelopes, and remaining days in the cycle.
 - **Live Purchase Impact Preview**: Shows how a prospective expense affects your daily allowance, envelope limits, and projected cycle end date before saving.
-- **4 Focused Navigation Tabs**:
-  - **Accueil**: Safe-to-spend hero card, live cycle progress, quick presets, pending bank alerts, and recent transactions.
-  - **Analyses**: Weekly bar chart, monthly category breakdown, unified pace projection, and "What-If" simulators.
-  - **Plan**: Multi-account balances (`Total des comptes`, `Solde du cycle`, `Épargne du cycle`), **Simulateur de Crédit**, **Annual Bills Reserve (Vignette)**, **Zakat & Hawl Tracker**, category envelopes, recurring bills, savings goals, and Moroccan social finance tools (*Daret*, *Sellef* with WhatsApp share cards).
-  - **Activité**: Friendly date grouping, swipe actions, search/filtering, and encrypted backup/export tools.
+- **4 Focused Navigation Tabs (Tesler's Law Accordion UI)**:
+  - **Accueil**: Safe-to-spend hero card & 3 live KPIs immediately visible, with collapsible weekly preview and recent operations.
+  - **Analyses**: Weekly & monthly cycle hero cards with single-open accordion analytics, comparisons, What-If simulator, and seasonal planners.
+  - **Plan**: Compact net-liquidity summary strip plus single-open tap-to-expand categories for **Enveloppes** (with nested per-category expansion), **Comptes**, **Outils Maroc** (Crédit, Vignette, Zakat), **Objectifs & Factures**, **Raccourcis**, **Daret**, and **Sellef**.
+  - **Activité**: Tap-to-expand day groups (auto-expanding during search), swipe actions, Bank Statement Importer (**CSV & PDF** for BCP, CIH, Attijariwafa, BMCE, CFG/SG), and on-device **Receipt OCR Scanner** in Add Expense.
 
 ### Fast Capture, Hardware Shortcuts & Smart Detection
 - **5-Second Expense Entry**: Translucent overlay with large numeric keypad, 1-tap Voice switch, time-aware shortcuts, top recent category chips, and automatic category learning.
@@ -101,5 +101,5 @@ Signed, R8-minified production builds (**AAB & APK**) are automated via `.github
    - `STORE_PASSWORD`
    - `KEY_PASSWORD`
    - `GOOGLE_SERVICES_JSON`
-2. Trigger via a version tag push (e.g., `v1.2.0`) or manual `workflow_dispatch` in GitHub Actions.
+2. Trigger via a version tag push (e.g., `v1.2.1`) or manual `workflow_dispatch` in GitHub Actions.
 3. Both the signed **APK** and **AAB** are published to the GitHub Release and uploaded as workflow artifacts.

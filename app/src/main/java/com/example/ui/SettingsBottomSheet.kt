@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
@@ -33,6 +34,8 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -55,6 +58,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,10 +70,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.data.CustomizationPrefs
 import com.example.domain.AppStrings
+import com.example.domain.PayCycleEngine
 import com.example.domain.Translations
 import com.example.notifications.MasroufiNotificationManager
 import com.example.security.AppSecurityManager
@@ -77,6 +84,7 @@ import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.BackgroundWallpaperLayer
 import com.example.ui.theme.BackgroundWallpaperManager
+import com.example.ui.theme.ExpressiveAccordionCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.MasroufiPalettes
 
@@ -129,12 +137,28 @@ fun SettingsBottomSheet(
         mutableStateOf(uiPrefs.getBoolean("applock_hint_dismissed", false))
     }
 
+    val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    var expandedSettingsSection by rememberSaveable { mutableStateOf<String?>(null) }
+    fun toggleSettingsSection(key: String) {
+        expandedSettingsSection = if (expandedSettingsSection == key) null else key
+    }
+
     var notifyBills by remember { mutableStateOf(MasroufiNotificationManager.isNotifyBillsEnabled(context)) }
     var notifyDaret by remember { mutableStateOf(MasroufiNotificationManager.isNotifyDaretEnabled(context)) }
     var notifyBudget80 by remember { mutableStateOf(MasroufiNotificationManager.isNotifyBudget80Enabled(context)) }
     var notifyEvening by remember { mutableStateOf(MasroufiNotificationManager.isNotifyEveningEnabled(context)) }
+    var eveningReminderTime by remember { mutableStateOf(MasroufiNotificationManager.getEveningReminderTime(context)) }
     var smartSuggestionsEnabled by remember { mutableStateOf(MasroufiNotificationManager.isSmartSuggestionsEnabled(context)) }
     var notifFeedback by remember { mutableStateOf<String?>(null) }
+
+    var quickAddAliasEnabled by remember {
+        mutableStateOf(
+            com.example.notifications.QuickAddLauncherAliasManager.isQuickAddAliasEnabled(context)
+        )
+    }
+    val pendingDetectionsCount = remember {
+        com.example.notifications.BankDetectionStore.loadPendingItems(context).size
+    }
 
     var backupPassword by remember { mutableStateOf("") }
     var showResetConfirmationDialog by remember { mutableStateOf(false) }
@@ -245,24 +269,19 @@ fun SettingsBottomSheet(
                 }
             }
 
-            // SECTION 1: BUDGET
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("settings_section_budget")
+            // SECTION 1: BUDGET (Single-open Tesler's Law Accordion)
+            ExpressiveAccordionCard(
+                title = strings.settingsSecBudget,
+                subtitle = "${strings.salaryLabel} • ${strings.payCycleDayLabel}",
+                summaryBadge = "${PayCycleEngine.formatAmountOrMask(state.profile.baseBudget, state.hideAmounts)} $cur • J${state.profile.payCycleDay}",
+                summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.AccountBalanceWallet,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedSettingsSection == "budget",
+                onToggle = { toggleSettingsSection("budget") },
+                headerTestTag = "accordion_settings_budget",
+                modifier = Modifier.testTag("settings_section_budget")
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = strings.settingsSecBudget,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
 
                     OutlinedTextField(
                         value = budgetText,
@@ -334,38 +353,26 @@ fun SettingsBottomSheet(
                             Text(strings.saveBtn, fontWeight = FontWeight.ExtraBold)
                         }
                     }
-                }
             }
 
-            // SECTION 2: APPARENCE (Instant save: Light/Dark, 3 Palettes, Currency, Language, More features)
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("settings_section_appearance")
+            // SECTION 2: APPARENCE (Single-open Accordion)
+            ExpressiveAccordionCard(
+                title = strings.settingsSecAppearance,
+                subtitle = when (lang) {
+                    "ar" -> "المظهر، الألوان، اللغة والعملة"
+                    "darija" -> "الثيم، الألوان، اللغة والعملة"
+                    "en" -> "Theme, palette, language & currency"
+                    else -> "Thème, couleurs, langue & devise"
+                },
+                summaryBadge = "${lang.uppercase()} • $cur",
+                summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.Palette,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedSettingsSection == "appearance",
+                onToggle = { toggleSettingsSection("appearance") },
+                headerTestTag = "accordion_settings_appearance",
+                modifier = Modifier.testTag("settings_section_appearance")
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Palette,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = strings.settingsSecAppearance,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
 
                     // 3-Way Theme Mode Selector: Device (Auto) / Light / Dark (Instant save)
                     val activeThemeMode = state.customPrefs.normalizedThemeMode()
@@ -505,39 +512,26 @@ fun SettingsBottomSheet(
                             modifier = Modifier.testTag("settings_more_features_switch")
                         )
                     }
-                }
             }
 
-            // SECTION 3: SÉCURITÉ
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                accentBorderColor = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("security_privacy_card")
+            // SECTION 3: SÉCURITÉ (Single-open Accordion)
+            ExpressiveAccordionCard(
+                title = strings.settingsSecSecurity,
+                subtitle = when (lang) {
+                    "ar" -> "قفل التطبيق، البصمة وحماية الشاشة"
+                    "darija" -> "PIN، البصمة وحماية السكرين"
+                    "en" -> "App lock, biometrics & screen shield"
+                    else -> "PIN, biométrie & confidentialité"
+                },
+                summaryBadge = if (appLockEnabled) "PIN ✓" else "Standard",
+                summaryBadgeColor = if (appLockEnabled) AccentEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                icon = Icons.Default.Shield,
+                accentColor = if (appLockEnabled) AccentEmerald else MaterialTheme.colorScheme.primary,
+                isExpanded = expandedSettingsSection == "security",
+                onToggle = { toggleSettingsSection("security") },
+                headerTestTag = "accordion_settings_security",
+                modifier = Modifier.testTag("security_privacy_card")
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Shield,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = strings.settingsSecSecurity,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
 
                     if (!appLockEnabled && !appLockHintDismissed) {
                         Surface(
@@ -831,28 +825,26 @@ fun SettingsBottomSheet(
                             modifier = Modifier.testTag("settings_firestore_kill_switch")
                         )
                     }
-                }
             }
 
-            // SECTION 3B: WIDGETS & TUILES RAPIDES (Phase 3)
+            // SECTION 3B: WIDGETS, TUILES & RACCOURCIS (Single-open Accordion)
             var tileFeedback by remember { mutableStateOf<String?>(null) }
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("settings_widgets_tiles_card")
+            ExpressiveAccordionCard(
+                title = strings.settingsTilesAndWidgetsSection,
+                subtitle = "Masroufi + • Ok Google • SMS",
+                summaryBadge = when {
+                    pendingDetectionsCount > 0 -> "$pendingDetectionsCount SMS"
+                    quickAddAliasEnabled -> "Masroufi +"
+                    else -> "4"
+                },
+                summaryBadgeColor = if (pendingDetectionsCount > 0) AccentEmerald else MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.Widgets,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedSettingsSection == "shortcuts",
+                onToggle = { toggleSettingsSection("shortcuts") },
+                headerTestTag = "accordion_settings_shortcuts",
+                modifier = Modifier.testTag("settings_widgets_tiles_card")
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = strings.settingsTilesAndWidgetsSection,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
 
                     Row(
                         modifier = Modifier
@@ -939,11 +931,6 @@ fun SettingsBottomSheet(
                     }
 
                     // Double-tap Power / Side Button -> Add Expense ("Masroufi +" launcher alias)
-                    var quickAddAliasEnabled by remember {
-                        mutableStateOf(
-                            com.example.notifications.QuickAddLauncherAliasManager.isQuickAddAliasEnabled(context)
-                        )
-                    }
                     Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -1140,9 +1127,6 @@ fun SettingsBottomSheet(
                     }
 
                     // Phase 10: Bank Notification Auto-Detection entry
-                    val pendingDetectionsCount = remember {
-                        com.example.notifications.BankDetectionStore.loadPendingItems(context).size
-                    }
                     FilledTonalButton(
                         onClick = {
                             onDismiss()
@@ -1162,7 +1146,6 @@ fun SettingsBottomSheet(
                             fontWeight = FontWeight.ExtraBold
                         )
                     }
-                }
             }
 
             // SECTION 3C: PHASE 9 — OPTIONAL QUICK-CAPTURE NOTIFICATION (Off by default)
@@ -1197,23 +1180,23 @@ fun SettingsBottomSheet(
                 }
             }
 
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("settings_quick_capture_notif_card")
+            ExpressiveAccordionCard(
+                title = strings.quickCaptureNotifToggleLabel,
+                subtitle = when (lang) {
+                    "ar" -> "تسجيل مصروف سريع من شريط الإشعارات"
+                    "darija" -> "تسجيل سريع من نوتيفيكاسيون"
+                    "en" -> "Log expenses from notification shade"
+                    else -> "Saisie directe depuis la barre de notif"
+                },
+                summaryBadge = if (qcNotifEnabled) "ON" else "OFF",
+                summaryBadgeColor = if (qcNotifEnabled) AccentEmerald else MaterialTheme.colorScheme.onSurfaceVariant,
+                icon = Icons.Default.Bolt,
+                accentColor = if (qcNotifEnabled) AccentEmerald else MaterialTheme.colorScheme.primary,
+                isExpanded = expandedSettingsSection == "quick_capture",
+                onToggle = { toggleSettingsSection("quick_capture") },
+                headerTestTag = "accordion_settings_quick_capture",
+                modifier = Modifier.testTag("settings_quick_capture_notif_card")
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = strings.quickCaptureNotifToggleLabel,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1343,38 +1326,31 @@ fun SettingsBottomSheet(
                             }
                         }
                     }
-                }
             }
 
-            // SECTION 4: ALERTES (Instant save)
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("settings_notifications_card")
+            // SECTION 4: ALERTES (Single-open Accordion)
+            val alertsBadge = when {
+                notifyEvening -> String.format(java.util.Locale.US, "%02d:%02d", eveningReminderTime.first, eveningReminderTime.second)
+                notifyBills || notifyBudget80 -> "ON"
+                else -> "OFF"
+            }
+            ExpressiveAccordionCard(
+                title = strings.settingsSecAlerts,
+                subtitle = when (lang) {
+                    "ar" -> "الفواتير، 80% من الميزانية والتذكير المسائي"
+                    "darija" -> "الفواتير، 80% و تذكير العشية"
+                    "en" -> "Bills, 80% threshold & evening digest"
+                    else -> "Factures, seuil 80% & rappel du soir"
+                },
+                summaryBadge = alertsBadge,
+                summaryBadgeColor = if (alertsBadge != "OFF") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                icon = Icons.Default.NotificationsActive,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedSettingsSection == "alerts",
+                onToggle = { toggleSettingsSection("alerts") },
+                headerTestTag = "accordion_settings_alerts",
+                modifier = Modifier.testTag("settings_notifications_card")
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsActive,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = strings.settingsSecAlerts,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1462,10 +1438,6 @@ fun SettingsBottomSheet(
                             },
                             modifier = Modifier.testTag("settings_notify_budget80_switch")
                         )
-                    }
-
-                    var eveningReminderTime by remember {
-                        mutableStateOf(MasroufiNotificationManager.getEveningReminderTime(context))
                     }
 
                     Row(
@@ -1574,27 +1546,21 @@ fun SettingsBottomSheet(
                             color = MaterialTheme.colorScheme.primary
                         )
                     }
-                }
             }
 
-            // SECTION 5: DONNÉES (Backup, Restore, CSV, Reset with confirmation dialog)
-            ExpressiveGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("settings_section_data")
+            // SECTION 5: DONNÉES (Single-open Accordion)
+            ExpressiveAccordionCard(
+                title = strings.settingsSecData,
+                subtitle = "AES-256 JSON • CSV",
+                summaryBadge = "${state.allTransactions.size} op.",
+                summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                icon = Icons.Default.Storage,
+                accentColor = MaterialTheme.colorScheme.primary,
+                isExpanded = expandedSettingsSection == "data",
+                onToggle = { toggleSettingsSection("data") },
+                headerTestTag = "accordion_settings_data",
+                modifier = Modifier.testTag("settings_section_data")
             ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = strings.settingsSecData,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
 
                     val backupPwdValid = backupPassword.trim().length >= AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH
                     OutlinedTextField(
@@ -1685,7 +1651,6 @@ fun SettingsBottomSheet(
                     ) {
                         Text(strings.cleanAccountBtn, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
-                }
             }
 
             FilledTonalButton(
@@ -1701,6 +1666,16 @@ fun SettingsBottomSheet(
             ) {
                 Text(strings.signOutLabel, fontWeight = FontWeight.Bold)
             }
+
+            Text(
+                text = "Masroufi v${BuildConfig.VERSION_NAME}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("settings_version_label")
+            )
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
