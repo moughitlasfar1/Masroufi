@@ -39,6 +39,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1292,13 +1293,34 @@ class NotificationActionReceiver : BroadcastReceiver() {
         if (action == ACTION_BANK_CONFIRM) {
             val itemId = intent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
             val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 4500)
-            if (itemId.isNotBlank()) {
-                val pendingItem = BankDetectionStore.findPendingItemById(appCtx, itemId)
-                if (pendingItem != null) {
-                    BankDetectionStore.confirmDetectedItem(appCtx, pendingItem, isAutoConfirmed = false)
+            if (itemId.isBlank()) {
+                runCatching { NotificationManagerCompat.from(appCtx).cancel(notifId) }
+                return
+            }
+            val pendingResult = goAsync()
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    withTimeout(8_000L) {
+                        val pendingItem = BankDetectionStore.findPendingItemById(appCtx, itemId)
+                        if (pendingItem != null) {
+                            val created = BankDetectionStore.confirmDetectedItem(
+                                appCtx,
+                                pendingItem,
+                                isAutoConfirmed = false
+                            )
+                            com.example.widget.MasroufiWidgetStore.persistQuickCaptureTransactionsToRoom(
+                                appCtx = appCtx,
+                                createdTxs = created
+                            )
+                        }
+                        runCatching { NotificationManagerCompat.from(appCtx).cancel(notifId) }
+                    }
+                } catch (_: Throwable) {
+                    runCatching { NotificationManagerCompat.from(appCtx).cancel(notifId) }
+                } finally {
+                    pendingResult.finish()
                 }
             }
-            runCatching { NotificationManagerCompat.from(appCtx).cancel(notifId) }
             return
         }
 

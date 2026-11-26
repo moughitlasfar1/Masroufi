@@ -99,8 +99,16 @@ object BankMessageParser {
     private val STANDALONE_OTP_DIGITS_REGEX = Regex("""(?<![\p{L}\d])\d{4,8}(?![\p{L}\d])""")
     private val CODE_WORD_REGEX = Regex("""(?<![\p{L}\d])(?:code|pin|كود|رمز)(?![\p{L}\d])""", RegexOption.IGNORE_CASE)
     private val VALIDATION_VERB_REGEX = Regex(
-        """(?<![\p{L}\d])(?:valider|confirmer|confirm|validate|validation|authentifier|تأكيد|لتأكيد|للتحقق)(?![\p{L}\d])""",
+        """(?<![\p{L}\d])(?:valider|confirmer|confirm|validate|authentifier|لتأكيد|للتحقق)(?![\p{L}\d])""",
         RegexOption.IGNORE_CASE
+    )
+    private val OTP_DATE_MASK_REGEX = Regex("""\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\b""")
+    private val OTP_TIME_MASK_REGEX = Regex("""\b\d{1,2}:\d{2}(?::\d{2})?\b""")
+    private val OTP_CARD_SUFFIX_MASK_REGEX = Regex(
+        """(?i)(?:\*{2,}\s*|x{2,}\s*|(?:carte|card)\s*(?:n°|num|no)?\s*[:#-]?\s*)\d{4}\b"""
+    )
+    private val OTP_AMOUNT_CURRENCY_MASK_REGEX = Regex(
+        """(?i)(?<!\d)\d{1,3}(?:[ .,]\d{3})*(?:[.,]\d{1,2})?\s*(?:mad|dhs?|dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])"""
     )
 
     private val BALANCE_OR_LIMIT_LABEL_REGEX = Regex(
@@ -123,26 +131,32 @@ object BankMessageParser {
 
     private val DEBIT_KEYWORDS = listOf(
         // French
-        "paiement tpe", "paiement e-commerce", "paiement ecommerce", "achat carte", "achat tpe",
+        "paiement tpe", "paiement par carte", "paiement e-commerce", "paiement ecommerce",
+        "paiement sans contact", "achat carte", "achat tpe", "achat en ligne",
         "virement émis", "virement emis", "virement effectué", "virement effectue",
-        "opération carte", "operation carte", "règlement", "reglement", "transaction",
+        "opération carte", "operation carte", "retrait carte", "facture payée", "facture payee",
+        "règlement", "reglement", "transaction", "autorisation", "opération", "operation",
         "paiement", "achat", "retrait", "prélèvement", "prelevement",
-        "débit", "debit", "payé", "paye", "facture", "tpe", "carte bancaire", "e-commerce",
+        "prélevé", "preleve", "prélevée", "prelevee",
+        "débité", "debite", "débitée", "debitee", "débit", "debit",
+        "payé", "paye", "facture", "tpe", "carte bancaire", "e-commerce",
         // English
         "payment", "purchase", "withdrawal", "debited", "spent", "charged", "pos purchase",
         // Arabic
-        "خصم", "أداء", "شراء", "سحب", "دفعة", "اقتطاع", "عملية أداء", "عملية سحب", "تحويل صادر"
+        "تم خصم", "تم اقتطاع", "تم سحب", "عملية شراء", "عملية دفع", "عملية أداء", "عملية سحب",
+        "أداء بالبطاقة", "خصم", "أداء", "شراء", "سحب", "دفعة", "دفع", "اقتطاع", "تحويل صادر"
     )
 
     private val CREDIT_KEYWORDS = listOf(
         // French
         "vous avez reçu un virement", "vous avez recu un virement",
         "virement reçu", "virement recu", "virement en votre faveur",
-        "remboursement", "crédité", "credite", "crédit", "credit", "dépôt", "depot", "versement",
+        "remboursement", "crédité", "credite", "créditée", "creditee",
+        "crédit", "credit", "dépôt", "depot", "versement", "salaire", "encaissement",
         // English
         "transfer received", "deposit", "credited", "refund", "incoming transfer", "salary",
         // Arabic
-        "تحويل وارد", "إيداع", "توصلتم", "تحويل لصالحكم", "تم إيداع", "استلام تحويل", "استرجاع"
+        "تحويل وارد", "إيداع", "توصلتم", "تحويل لصالحكم", "تم تحويل لحسابكم", "تم إيداع", "استلام تحويل", "استرجاع"
     )
 
     private val REFUND_KEYWORDS = listOf("remboursement", "refund", "استرجاع")
@@ -157,38 +171,56 @@ object BankMessageParser {
         BankTemplate(
             id = "cih",
             bankName = "CIH Bank",
-            packageHints = listOf("com.cih.cihmobile", "ma.cih"),
+            packageHints = listOf("com.b3g.cih.online", "com.b3g.cih", "com.cih.cihmobile", "ma.cih"),
             senderKeywords = listOf("cih bank", "cih mobile", "cih")
         ),
         BankTemplate(
             id = "attijari",
             bankName = "Attijariwafa Bank",
-            packageHints = listOf("ma.attijariwafabank", "com.attijari", "ma.wafacash"),
+            packageHints = listOf(
+                "com.attijariwafabank.attijarimobile",
+                "com.attijariwafabank",
+                "ma.attijariwafabank",
+                "com.attijari",
+                "ma.wafacash"
+            ),
             senderKeywords = listOf("attijariwafa", "attijari mobile", "attijari", "lbankalik", "l'bankalik", "wafacash")
         ),
         BankTemplate(
             id = "bp",
             bankName = "Banque Populaire",
-            packageHints = listOf("com.bcp.pocketbank", "ma.gbp", "ma.banquepopulaire", "com.gbp"),
+            packageHints = listOf("ma.gbp.pocketbank", "ma.gbp", "com.bcp.pocketbank", "ma.banquepopulaire", "com.gbp"),
             senderKeywords = listOf("pocket bank", "banque populaire", "chaabi net", "a.b.c.p", "chaabi", "bcp")
         ),
         BankTemplate(
             id = "boa",
             bankName = "Bank of Africa / BMCE",
-            packageHints = listOf("com.bmce.agencedirecte", "ma.bankofafrica", "com.bmce"),
+            packageHints = listOf("com.bmce.bmcedirect", "ma.bankofafrica", "com.bmce.agencedirecte", "com.bmce"),
             senderKeywords = listOf("bank of africa", "bmce direct", "bmce")
         ),
         BankTemplate(
             id = "cfg",
             bankName = "CFG Bank",
-            packageHints = listOf("com.cfgbank.mobile", "ma.cfgbank"),
+            packageHints = listOf("com.cfgbank.app", "com.cfgbank.mobile", "ma.cfgbank"),
             senderKeywords = listOf("cfg bank")
         ),
         BankTemplate(
             id = "barid",
             bankName = "Al Barid Bank",
-            packageHints = listOf("ma.baridbank.mobile", "ma.baridbank"),
+            packageHints = listOf("ma.abb.baridbankmobile", "ma.abb", "ma.baridbank.mobile", "ma.baridbank", "com.baridbank"),
             senderKeywords = listOf("barid bank", "al barid", "بريد بنك")
+        ),
+        BankTemplate(
+            id = "cdm",
+            bankName = "Crédit du Maroc",
+            packageHints = listOf("ma.cdm.mycdm", "ma.cdm", "com.cdm"),
+            senderKeywords = listOf("crédit du maroc", "credit du maroc", "mycdm", "cdm")
+        ),
+        BankTemplate(
+            id = "sgma",
+            bankName = "Société Générale Maroc / Saham Bank",
+            packageHints = listOf("com.sgma.sgmaroc", "com.sgma", "ma.sgmaroc", "com.socgen", "ma.sahambank"),
+            senderKeywords = listOf("société générale", "societe generale", "sg maroc", "sgma", "saham bank")
         ),
         BankTemplate(
             id = "generic",
@@ -238,7 +270,15 @@ object BankMessageParser {
         if (OTP_WORD_REGEX.containsMatchIn(norm)) return true
         if (OTP_DISCARD_PHRASES.any { phrase -> norm.contains(phrase) }) return true
 
-        val hasStandaloneOtpDigits = STANDALONE_OTP_DIGITS_REGEX.containsMatchIn(norm)
+        // Mask dates (e.g. 26/11/2026), times, masked card suffixes (****4582 / carte 4582),
+        // and currency amounts (e.g. 1500 MAD) so they are never mistaken for 4-8 digit OTP codes.
+        val otpScanText = norm
+            .let { OTP_DATE_MASK_REGEX.replace(it, " ") }
+            .let { OTP_TIME_MASK_REGEX.replace(it, " ") }
+            .let { OTP_CARD_SUFFIX_MASK_REGEX.replace(it, " ") }
+            .let { OTP_AMOUNT_CURRENCY_MASK_REGEX.replace(it, " ") }
+
+        val hasStandaloneOtpDigits = STANDALONE_OTP_DIGITS_REGEX.containsMatchIn(otpScanText)
         if (hasStandaloneOtpDigits && THREE_DS_REGEX.containsMatchIn(norm)) {
             return true
         }
@@ -249,7 +289,7 @@ object BankMessageParser {
             return true
         }
         val hasCurrency = Regex(
-            """(?<![\p{L}\d])(?:mad|dhs?|dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])""",
+            """(?<![\p{L}])(?:mad|dhs?|dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])""",
             RegexOption.IGNORE_CASE
         ).containsMatchIn(norm)
         if (hasCodeWord && hasStandaloneOtpDigits && !hasCurrency) {
@@ -306,11 +346,12 @@ object BankMessageParser {
         keywordPositions: List<Int> = emptyList()
     ): AmountCandidate? {
         val numPattern = """(\d{1,3}(?:[ .,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)"""
-        val curPattern = """(?<![\p{L}\d])(MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])"""
+        val afterCurPattern = """(?<![\p{L}])(MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])"""
+        val beforeCurPattern = """(?<![\p{L}\d])(MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}])"""
 
         val candidates = mutableListOf<AmountCandidate>()
 
-        val afterRegex = Regex("""(?<!\d)$numPattern\s*$curPattern""", RegexOption.IGNORE_CASE)
+        val afterRegex = Regex("""(?<!\d)$numPattern\s*$afterCurPattern""", RegexOption.IGNORE_CASE)
         for (match in afterRegex.findAll(normalizedText)) {
             val amt = parseNormalizedAmountToken(match.groupValues[1]) ?: continue
             if (amt.isPositive) {
@@ -325,7 +366,7 @@ object BankMessageParser {
             }
         }
 
-        val beforeRegex = Regex("""$curPattern\s*:?\s*$numPattern(?!\d)""", RegexOption.IGNORE_CASE)
+        val beforeRegex = Regex("""$beforeCurPattern\s*:?\s*$numPattern(?!\d)""", RegexOption.IGNORE_CASE)
         for (match in beforeRegex.findAll(normalizedText)) {
             val amt = parseNormalizedAmountToken(match.groupValues[2]) ?: continue
             if (amt.isPositive) {
@@ -346,10 +387,10 @@ object BankMessageParser {
         if (candidates.isEmpty()) return null
 
         val nonBalanceCandidates = candidates.filter { cand ->
-            val windowStart = (cand.startIndex - 30).coerceAtLeast(0)
+            val windowStart = (cand.startIndex - 65).coerceAtLeast(0)
             val rawPrefix = normalizedText.substring(windowStart, cand.startIndex)
-            // Stop lookbehind at sentence/clause boundaries (newline, semicolon, or period followed by space)
-            val boundaryIdx = Regex("""[\n;]|\.\s+""").findAll(rawPrefix).lastOrNull()?.range?.last
+            // Stop lookbehind at sentence/clause boundaries (newline, semicolon, period+space, or dash separator)
+            val boundaryIdx = Regex("""[\n;]|\.\s+|\s+-\s+""").findAll(rawPrefix).lastOrNull()?.range?.last
             val clausePrefix = if (boundaryIdx != null) rawPrefix.substring(boundaryIdx + 1) else rawPrefix
             val lastBalanceMatch = BALANCE_OR_LIMIT_LABEL_REGEX.findAll(clausePrefix).lastOrNull()
             if (lastBalanceMatch == null) {
@@ -415,7 +456,7 @@ object BankMessageParser {
      */
     fun extractMerchant(normalizedText: String): String {
         val stopLookahead =
-            """(?=\s+(?:le\s+\d|du\s+\d|on\s+\d|في\s+\d|بتاريخ|carte\b|card\b|solde\b|balance\b|disponible\b|الرصيد|رصيد|\d{2}[/-]\d{2}|\d{2}:\d{2})|$)"""
+            """(?=[.,;\n]|\s+(?:le\s+\d|du\s+\d|on\s+\d|في\s+\d|بتاريخ|carte\b|card\b|solde\b|balance\b|disponible\b|الرصيد|رصيد|\d{2}[/-]\d{2}|\d{2}:\d{2})|$)"""
 
         // 1. Labeled merchant fields ("Commerçant: MARJANE", "Merchant: CARREFOUR")
         val labeledRegex = Regex(
@@ -452,7 +493,7 @@ object BankMessageParser {
 
     private fun cleanMerchantCandidate(raw: String): String {
         return raw
-            .replace(Regex("""(?<![\p{L}\d])(?:MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""(?<![\p{L}])(?:MAD|DHS?|Dirhams?|درهم|دراهم|د\.م\.?)(?![\p{L}\d])""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""\*+\d{2,4}"""), "")
             .replace(Regex("""\b\d+(?:[.,]\d{1,2})?\b"""), "")
             .replace(Regex("""\s+"""), " ")

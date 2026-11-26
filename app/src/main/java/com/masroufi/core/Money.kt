@@ -276,7 +276,7 @@ object MoneyParser {
     const val DEFAULT_MAX_ABS_CENTIMES: Long = 10_000_000_000L
 
     private val CURRENCY_TOKEN_REGEX = Regex(
-        """(?i)(?<![\p{L}\d])(?:mad|dhs?|dirhams?|درهم|دراهم)(?![\p{L}\d])|د\.م\.?"""
+        """(?i)(?<![\p{L}])(?:mad|dhs?|dirhams?|درهم|دراهم)(?![\p{L}])\.?|د\.م\.?"""
     )
     private val VALID_CANONICAL_DECIMAL_REGEX = Regex("""^\d+(?:\.\d+)?$""")
 

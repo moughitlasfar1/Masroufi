@@ -567,6 +567,7 @@ fun MainFeatureScreen(
     // Phase 1: Open encrypted SQLCipher Room DB as the single local-first source of truth
     // and atomically adopt any local_device_user records when signed in with Google.
     LaunchedEffect(currentUserId) {
+        MasroufiWidgetStore.setActiveUserId(context, currentUserId)
         if (!MasroufiApplication.isSqlCipherNativeLoaded) {
             DataSourceConfigStore.refreshActiveMode(context, currentUserId, isRoomHealthy = false)
             return@LaunchedEffect
@@ -715,6 +716,8 @@ fun MainFeatureScreen(
             }
             if (event == Lifecycle.Event.ON_RESUME) {
                 com.example.notifications.BankDetectionStore.loadPendingItems(context)
+                com.example.notifications.BankDetectionStore.scheduleListenerHealthWorker(context)
+                com.example.notifications.BankDetectionStore.requestListenerRebindIfNeeded(context)
                 val pendingQuickTxs = MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context)
                 if (pendingQuickTxs.isNotEmpty()) {
                     val existingIds = viewModel.uiState.value.allTransactions.map { it.id }.toSet()
@@ -726,6 +729,7 @@ fun MainFeatureScreen(
                             category = tx.category,
                             envelopeKey = tx.envelopeKey,
                             accountId = tx.accountId,
+                            toAccountId = tx.toAccountId,
                             desc = tx.desc,
                             isoDate = tx.isoDate
                         )

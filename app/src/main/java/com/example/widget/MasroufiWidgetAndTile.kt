@@ -63,12 +63,51 @@ object MasroufiWidgetStore {
     private const val KEY_FULL_SNAPSHOT_JSON = "full_widget_snapshot_json"
     private const val KEY_PENDING_QUICK_TXS_JSON = "pending_quick_capture_txs_json"
     private const val KEY_STYLE_PREFIX = "widget_style_"
+    private const val KEY_ACTIVE_USER_ID = "active_user_id"
 
     private const val SECURE_KEY_SNAPSHOT = "widget_full_snapshot_v1"
     private const val SECURE_KEY_PENDING_TXS = "widget_pending_quick_txs_v1"
     private val widgetQueueLock = Any()
 
     private val DS_SNAPSHOT_KEY = stringPreferencesKey("full_widget_snapshot_json")
+
+    fun setActiveUserId(context: Context, userId: String) {
+        val clean = userId.trim()
+        if (clean.isEmpty()) return
+        context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_ACTIVE_USER_ID, clean)
+            .apply()
+    }
+
+    fun resolveActiveUserId(context: Context): String {
+        val appCtx = context.applicationContext
+        runCatching { com.example.ensureFirebaseInitialized(appCtx) }
+        val firebaseUid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
+            ?.takeIf { it.isNotBlank() }
+        if (firebaseUid != null) return firebaseUid
+        val storedUid = runCatching {
+            appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(KEY_ACTIVE_USER_ID, null)
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+        return storedUid ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+    }
+
+    private fun readSafeLegacyFloatMoney(
+        prefs: android.content.SharedPreferences,
+        key: String
+    ): Money {
+        val raw = runCatching { prefs.all[key] }.getOrNull() ?: return Money.ZERO
+        return when (raw) {
+            is Float -> if (raw.isFinite()) runCatching { Money.fromLegacyDoubleDh(raw.toDouble()) }.getOrDefault(Money.ZERO) else Money.ZERO
+            is Double -> if (raw.isFinite()) runCatching { Money.fromLegacyDoubleDh(raw) }.getOrDefault(Money.ZERO) else Money.ZERO
+            is Long -> runCatching { Money.fromDh(raw) }.getOrDefault(Money.ZERO)
+            is Int -> runCatching { Money.fromDh(raw.toLong()) }.getOrDefault(Money.ZERO)
+            is String -> Money.fromDhString(raw) ?: Money.ZERO
+            else -> Money.ZERO
+        }
+    }
 
     fun saveFullSnapshot(
         context: Context,
@@ -159,8 +198,8 @@ object MasroufiWidgetStore {
 
         val resolved = baseSnapshot ?: WidgetSnapshot(
             snapshotDateIso = nowIso,
-            todaySpend = Money.fromLegacyDoubleDh(prefs.getFloat(KEY_TODAY_SPEND, 0f).toDouble()),
-            safeToSpendToday = Money.fromLegacyDoubleDh(prefs.getFloat(KEY_SAFE_TODAY, 0f).toDouble()),
+            todaySpend = readSafeLegacyFloatMoney(prefs, KEY_TODAY_SPEND),
+            safeToSpendToday = readSafeLegacyFloatMoney(prefs, KEY_SAFE_TODAY),
             currencySymbol = prefs.getString(KEY_CURRENCY, "DH").orEmpty().ifBlank { "DH" },
             hideAmounts = prefs.getBoolean(KEY_HIDE_AMOUNTS, false),
             appLockEnabled = AppSecurityManager.isAppLockEnabled(appCtx),
@@ -228,7 +267,7 @@ object MasroufiWidgetStore {
         val todayIso = PayCycleEngine.todayIso()
         val txIsoDate = overrideIsoDate?.takeIf { PayCycleEngine.isValidIsoDate(it) } ?: todayIso
         val baseMs = System.currentTimeMillis()
-        val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull().orEmpty().ifBlank { "local_device_user" }
+        val uid = resolveActiveUserId(appCtx)
 
         var learnedAny = false
         val createdTxs = items.mapIndexedNotNull { idx, item ->
@@ -339,28 +378,36 @@ object MasroufiWidgetStore {
 
         // Persist strictly to encrypted Room (single local-first source of truth)
         runCatching {
-            val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
             CoroutineScope(Dispatchers.IO).launch {
-                val roomDb = com.example.data.local.MasroufiDatabaseProvider.getOpenInstanceOrNull()
-                    ?: if (com.example.MasroufiApplication.isSqlCipherNativeLoaded) {
-                        com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)
-                    } else null
-                if (roomDb == null) return@launch
-                val roomRepo = com.example.data.local.RoomMasroufiRepository(
-                    dao = roomDb.masroufiDao(),
-                    remoteMirror = com.example.data.local.NoOpRemoteMirror,
-                    userIdProvider = { uid }
-                )
-                createdTxs.forEach { tx ->
-                    runCatching { roomRepo.upsertTransaction(tx, uid) }
-                }
+                persistQuickCaptureTransactionsToRoom(appCtx, createdTxs, uid)
             }
         }
 
         WidgetRefreshWorker.enqueueImmediate(appCtx)
         return createdTxs
+    }
+
+    internal suspend fun persistQuickCaptureTransactionsToRoom(
+        appCtx: Context,
+        createdTxs: List<TransactionItem>,
+        uid: String = resolveActiveUserId(appCtx)
+    ) {
+        if (createdTxs.isEmpty()) return
+        runCatching {
+            val roomDb = com.example.data.local.MasroufiDatabaseProvider.getOpenInstanceOrNull()
+                ?: if (com.example.MasroufiApplication.isSqlCipherNativeLoaded) {
+                    com.example.data.local.MasroufiDatabaseProvider.getOrOpen(appCtx)
+                } else null
+            if (roomDb == null) return
+            val roomRepo = com.example.data.local.RoomMasroufiRepository(
+                dao = roomDb.masroufiDao(),
+                remoteMirror = com.example.data.local.NoOpRemoteMirror,
+                userIdProvider = { uid }
+            )
+            createdTxs.forEach { tx ->
+                runCatching { roomRepo.upsertTransaction(tx, uid) }
+            }
+        }
     }
 
     /**
@@ -415,9 +462,7 @@ object MasroufiWidgetStore {
 
         // Delete strictly from encrypted Room (single local-first source of truth)
         runCatching {
-            val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+            val uid = resolveActiveUserId(appCtx)
             CoroutineScope(Dispatchers.IO).launch {
                 val roomDb = com.example.data.local.MasroufiDatabaseProvider.getOpenInstanceOrNull()
                     ?: if (com.example.MasroufiApplication.isSqlCipherNativeLoaded) {

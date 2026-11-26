@@ -55,6 +55,7 @@
 }
 -keep class com.example.notifications.MasroufiNotificationWorker { *; }
 -keep class com.example.notifications.EveningReminderWorker { *; }
+-keep class com.example.notifications.BankListenerHealthWorker { *; }
 
 # R8 Full Mode fix: versionedparcelable consumer rule omits <init>()
 -keep class * implements androidx.versionedparcelable.VersionedParcelable {

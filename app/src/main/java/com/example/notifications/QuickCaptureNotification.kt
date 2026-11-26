@@ -389,6 +389,8 @@ class QuickCaptureBootReceiver : BroadcastReceiver() {
             if (MasroufiNotificationManager.isEveningReminderEnabled(context)) {
                 MasroufiNotificationManager.scheduleNextEveningReminder(context)
             }
+            BankDetectionStore.scheduleListenerHealthWorker(context)
+            BankDetectionStore.requestListenerRebindIfNeeded(context)
         }
     }
 }

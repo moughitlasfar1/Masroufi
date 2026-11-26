@@ -40,6 +40,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.BankMessageParser
@@ -112,6 +116,22 @@ fun BankDetectionReviewSheet(
 
     val listenerHealth by MasroufiDetectionLog.healthFlow.collectAsState()
     val diagnosticEntries by MasroufiDetectionLog.entriesFlow.collectAsState()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isListenerGranted = ManualSetup.isNotificationListenerGranted(context)
+                allowlistPackages = BankDetectionStore.getAllowedPackages(context)
+                BankDetectionStore.requestListenerRebindIfNeeded(context)
+                onRefreshPending()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val candidateApps: List<AllowlistAppOption> = remember(showAllowlistPicker, allowlistPackages) {
         if (showAllowlistPicker) BankDetectionStore.getCandidateApps(context) else emptyList()

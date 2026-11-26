@@ -29,8 +29,11 @@ import com.example.security.SecureStore
 import com.example.widget.MasroufiWidgetStore
 import com.masroufi.core.Money
 import java.math.BigDecimal
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -168,18 +171,41 @@ object BankDetectionStore {
     val pendingItemsFlow: StateFlow<List<DetectedBankTransaction>> = _pendingItemsFlow.asStateFlow()
 
     val KNOWN_BANK_APPS: List<Pair<String, String>> = listOf(
-        "com.cih.cihmobile" to "CIH Mobile",
-        "ma.attijariwafabank.lbankalik" to "Attijari Mobile / L'bankalik",
-        "com.bcp.pocketbank" to "Pocket Bank (Banque Populaire)",
-        "com.bmce.agencedirecte" to "BMCE / Bank of Africa",
-        "com.cfgbank.mobile" to "CFG Bank",
-        "ma.baridbank.mobile" to "Barid Bank Mobile"
+        "com.b3g.cih.online" to "CIH Mobile",
+        "com.attijariwafabank.attijarimobile" to "Attijari Mobile",
+        "ma.attijariwafabank.lbankalik" to "L'bankalik (Attijari)",
+        "ma.gbp.pocketbank" to "Pocket Bank (Banque Populaire)",
+        "com.bmce.bmcedirect" to "BMCE Direct / Bank of Africa",
+        "com.cfgbank.app" to "CFG Bank",
+        "ma.abb.baridbankmobile" to "Barid Bank Mobile",
+        "ma.cdm.mycdm" to "Crédit du Maroc (MyCDM)",
+        "com.sgma.sgmaroc" to "Société Générale Maroc"
+    )
+
+    /**
+     * Safeguard: Maps legacy/older bank package IDs stored by earlier versions of Masroufi to their
+     * real Play Store counterparts so existing users are never silently blocked after updating.
+     */
+    val LEGACY_TO_REAL_BANK_PACKAGE_MAP: Map<String, List<String>> = mapOf(
+        "com.cih.cihmobile" to listOf("com.b3g.cih.online"),
+        "com.bcp.pocketbank" to listOf("ma.gbp.pocketbank"),
+        "ma.attijariwafabank.lbankalik" to listOf(
+            "com.attijariwafabank.attijarimobile",
+            "ma.attijariwafabank.attijarimobile"
+        ),
+        "com.bmce.agencedirecte" to listOf("com.bmce.bmcedirect", "ma.bankofafrica.bmcedirect"),
+        "com.cfgbank.mobile" to listOf("com.cfgbank.app"),
+        "ma.baridbank.mobile" to listOf("ma.abb.baridbankmobile")
     )
 
     val KNOWN_SMS_APPS: List<Pair<String, String>> = listOf(
         "com.google.android.apps.messaging" to "Google Messages (SMS)",
         "com.samsung.android.messaging" to "Samsung Messages (SMS)",
-        "com.android.mms" to "Messages SMS"
+        "com.android.mms" to "Messages SMS",
+        "com.huawei.messaging" to "Huawei Messages (SMS)",
+        "com.oneplus.mms" to "OnePlus Messages (SMS)",
+        "com.coloros.mms" to "OPPO / ColorOS Messages (SMS)",
+        "com.miui.messaging" to "Xiaomi Messages (SMS)"
     )
 
     val KNOWN_BANK_AND_SMS_APPS: List<Pair<String, String>> = KNOWN_SMS_APPS + KNOWN_BANK_APPS
@@ -187,22 +213,51 @@ object BankDetectionStore {
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    internal fun expandLegacyAllowedPackages(raw: Set<String>): Set<String> {
+        if (raw.isEmpty()) return emptySet()
+        val expanded = LinkedHashSet<String>(raw.size + 4)
+        expanded.addAll(raw)
+        for (pkg in raw) {
+            LEGACY_TO_REAL_BANK_PACKAGE_MAP[pkg]?.let { counterparts ->
+                expanded.addAll(counterparts)
+            }
+        }
+        return expanded
+    }
+
     fun isKnownBankAppPackage(packageName: String): Boolean {
         val pkg = packageName.lowercase(Locale.ROOT)
         return KNOWN_BANK_APPS.any { it.first.equals(pkg, ignoreCase = true) } ||
+            LEGACY_TO_REAL_BANK_PACKAGE_MAP.keys.any { it.equals(pkg, ignoreCase = true) } ||
             BankMessageParser.BANK_TEMPLATES.any { tpl ->
                 tpl.id != "generic" && tpl.packageHints.any { hint -> pkg == hint || pkg.startsWith("$hint.") }
             }
     }
 
     fun getAllowedPackages(context: Context): Set<String> = synchronized(storeLock) {
-        prefs(context).getStringSet(KEY_ALLOWED_PACKAGES, emptySet())?.toSet() ?: emptySet()
+        val stored = prefs(context).getStringSet(KEY_ALLOWED_PACKAGES, emptySet())?.toSet() ?: emptySet()
+        val expanded = expandLegacyAllowedPackages(stored)
+        if (expanded.size != stored.size) {
+            prefs(context).edit().putStringSet(KEY_ALLOWED_PACKAGES, expanded).apply()
+        }
+        expanded
     }
 
     fun setPackageAllowed(context: Context, packageName: String, allowed: Boolean) {
         synchronized(storeLock) {
             val current = prefs(context).getStringSet(KEY_ALLOWED_PACKAGES, emptySet())?.toMutableSet() ?: mutableSetOf()
-            if (allowed) current.add(packageName) else current.remove(packageName)
+            if (allowed) {
+                current.add(packageName)
+                LEGACY_TO_REAL_BANK_PACKAGE_MAP[packageName]?.let { current.addAll(it) }
+            } else {
+                current.remove(packageName)
+                // If disabling a real Play Store package, also clear any legacy alias that maps to it
+                LEGACY_TO_REAL_BANK_PACKAGE_MAP.forEach { (legacyPkg, counterparts) ->
+                    if (packageName in counterparts) {
+                        current.remove(legacyPkg)
+                    }
+                }
+            }
             prefs(context).edit().putStringSet(KEY_ALLOWED_PACKAGES, current).apply()
         }
     }
@@ -234,14 +289,46 @@ object BankDetectionStore {
 
     fun getAutoConfirmMaxAmount(context: Context): Money {
         val p = prefs(context)
-        if (p.contains(KEY_AUTO_CONFIRM_CAP_CENTIMES)) {
-            return Money.fromCentimes(p.getLong(KEY_AUTO_CONFIRM_CAP_CENTIMES, 20_000L))
+        val allEntries = runCatching { p.all }.getOrDefault(emptyMap())
+
+        if (allEntries.containsKey(KEY_AUTO_CONFIRM_CAP_CENTIMES)) {
+            val parsedCentimes = when (val raw = allEntries[KEY_AUTO_CONFIRM_CAP_CENTIMES]) {
+                is Long -> raw
+                is Int -> raw.toLong()
+                is Number -> runCatching { raw.toLong() }.getOrNull()
+                is String -> raw.trim().toLongOrNull()
+                else -> null
+            }
+            if (parsedCentimes != null && parsedCentimes > 0L) {
+                return Money.fromCentimes(parsedCentimes)
+            }
+            // Corrupt/invalid centimes entry — remove and fall through cleanly
+            p.edit().remove(KEY_AUTO_CONFIRM_CAP_CENTIMES).apply()
         }
-        if (p.contains(KEY_AUTO_CONFIRM_CAP)) {
-            return runCatching {
-                Money.fromLegacyDoubleDh(p.getFloat(KEY_AUTO_CONFIRM_CAP, 200f).toDouble())
-            }.getOrDefault(Money.fromDh(200))
+
+        if (allEntries.containsKey(KEY_AUTO_CONFIRM_CAP)) {
+            val migrated = when (val raw = allEntries[KEY_AUTO_CONFIRM_CAP]) {
+                is Float -> if (raw.isFinite() && raw > 0f) {
+                    runCatching { Money.fromLegacyDoubleDh(raw.toDouble()) }.getOrNull()
+                } else null
+                is Double -> if (raw.isFinite() && raw > 0.0) {
+                    runCatching { Money.fromLegacyDoubleDh(raw) }.getOrNull()
+                } else null
+                is Long -> if (raw > 0L) runCatching { Money.fromDh(raw) }.getOrNull() else null
+                is Int -> if (raw > 0) runCatching { Money.fromDh(raw.toLong()) }.getOrNull() else null
+                is String -> Money.fromDhString(raw)?.takeIf { it.isPositive }
+                else -> null
+            }
+            if (migrated != null && migrated.isPositive) {
+                p.edit()
+                    .putLong(KEY_AUTO_CONFIRM_CAP_CENTIMES, migrated.centimes)
+                    .remove(KEY_AUTO_CONFIRM_CAP)
+                    .apply()
+                return migrated
+            }
+            p.edit().remove(KEY_AUTO_CONFIRM_CAP).apply()
         }
+
         return Money.fromDh(200)
     }
 
@@ -402,26 +489,23 @@ object BankDetectionStore {
         return capped
     }
 
-    private fun savePendingItemsLocked(context: Context, items: List<DetectedBankTransaction>) {
+    private fun savePendingItemsLocked(context: Context, items: List<DetectedBankTransaction>): Boolean {
         val capped = items.sortedByDescending { it.createdAtMillis }.take(MAX_PENDING_ITEMS)
         val arr = JSONArray()
         capped.forEach { arr.put(it.toJson()) }
-        SecureStore.putString(context, SECURE_KEY_PENDING, arr.toString())
+        val stored = SecureStore.putString(context, SECURE_KEY_PENDING, arr.toString())
+        if (!stored) return false
         // Ensure legacy plaintext key stays removed
         prefs(context).edit().remove(KEY_PENDING_JSON).apply()
         _pendingItemsFlow.value = capped
         MasroufiWidgetStore.refreshWidgetsAndTiles(context)
+        return true
     }
 
-    /**
-     * D5: Thread-safe 7-day / 500-entry LRU dedupe table stored in [SecureStore].
-     * Returns true if [hash] is new (and records it), false if already seen within 7 days.
-     */
-    private fun tryRecordDedupeHashLocked(
+    private fun loadActiveDedupeHashesLocked(
         context: Context,
-        hash: String,
         nowMillis: Long
-    ): Boolean {
+    ): LinkedHashMap<String, Long> {
         val raw = SecureStore.getString(context, SECURE_KEY_SEEN_HASHES)
         val map = LinkedHashMap<String, Long>()
         if (!raw.isNullOrBlank()) {
@@ -441,17 +525,25 @@ object BankDetectionStore {
         if (prefs(context).contains(KEY_SEEN_HASHES_LEGACY)) {
             prefs(context).edit().remove(KEY_SEEN_HASHES_LEGACY).apply()
         }
+        return map
+    }
 
-        if (map.containsKey(hash)) {
-            return false
-        }
-        map[hash] = nowMillis
+    /**
+     * D5: Thread-safe 7-day / 500-entry LRU dedupe table stored in [SecureStore].
+     */
+    private fun recordDedupeHashLocked(
+        context: Context,
+        existingMap: LinkedHashMap<String, Long>,
+        hash: String,
+        nowMillis: Long
+    ) {
+        existingMap[hash] = nowMillis
 
         // Evict oldest entries by timestamp if over MAX_SEEN_HASHES (500)
-        val trimmed = if (map.size > MAX_SEEN_HASHES) {
-            map.entries.sortedBy { it.value }.takeLast(MAX_SEEN_HASHES)
+        val trimmed = if (existingMap.size > MAX_SEEN_HASHES) {
+            existingMap.entries.sortedBy { it.value }.takeLast(MAX_SEEN_HASHES)
         } else {
-            map.entries.toList()
+            existingMap.entries.toList()
         }
 
         val outObj = JSONObject()
@@ -459,7 +551,6 @@ object BankDetectionStore {
             outObj.put(k, v)
         }
         SecureStore.putString(context, SECURE_KEY_SEEN_HASHES, outObj.toString())
-        return true
     }
 
     /**
@@ -511,20 +602,27 @@ object BankDetectionStore {
     /**
      * D1: Pure helper that splits a notification into individual messages.
      * - If MessagingStyle `messages` are present, returns each message separately (NEVER concatenated!).
-     * - Otherwise falls back to `bigText` else `text`.
+     * - Else if InboxStyle `EXTRA_TEXT_LINES` are present, returns each non-blank line separately.
+     * - Otherwise safely joins non-redundant `bigText`, `text`, and `subText` without losing context.
      */
     fun extractIndividualMessages(
         title: String,
         text: String,
         bigText: String,
         messagingStyleMessages: List<Triple<String, String, Long>>,
-        fallbackPostTimeMillis: Long
+        fallbackPostTimeMillis: Long,
+        subText: String = "",
+        textLines: List<String> = emptyList(),
+        titleBig: String = ""
     ): List<ExtractedNotificationMessage> {
+        val effectiveDefaultTitle = titleBig.trim().ifBlank { title.trim() }
+        val cleanSubText = subText.trim()
+
         if (messagingStyleMessages.isNotEmpty()) {
             return messagingStyleMessages.mapNotNull { (sender, body, ts) ->
                 val cleanBody = body.trim()
                 if (cleanBody.isBlank()) return@mapNotNull null
-                val effectiveTitle = sender.trim().ifBlank { title.trim() }
+                val effectiveTitle = sender.trim().ifBlank { effectiveDefaultTitle }
                 val effectiveTs = if (ts > 0L) ts else fallbackPostTimeMillis
                 ExtractedNotificationMessage(
                     title = effectiveTitle,
@@ -533,12 +631,46 @@ object BankDetectionStore {
                 )
             }.sortedBy { it.timestampMillis }
         }
-        val body = bigText.ifBlank { text }.trim()
-        if (title.isBlank() && body.isBlank()) return emptyList()
+
+        val nonBlankLines = textLines.map { it.trim() }.filter { it.isNotBlank() }
+        if (nonBlankLines.isNotEmpty()) {
+            return nonBlankLines.map { line ->
+                val bodyWithSub = if (cleanSubText.isNotBlank() &&
+                    !line.contains(cleanSubText, ignoreCase = true) &&
+                    !effectiveDefaultTitle.contains(cleanSubText, ignoreCase = true)
+                ) {
+                    "$line\n$cleanSubText"
+                } else {
+                    line
+                }
+                ExtractedNotificationMessage(
+                    title = effectiveDefaultTitle,
+                    body = bodyWithSub,
+                    timestampMillis = fallbackPostTimeMillis
+                )
+            }
+        }
+
+        val bodyParts = mutableListOf<String>()
+        fun appendNonRedundant(candidate: String) {
+            val clean = candidate.trim()
+            if (clean.isBlank()) return
+            if (bodyParts.any { existing -> existing.contains(clean, ignoreCase = true) }) return
+            bodyParts.removeAll { existing -> clean.contains(existing, ignoreCase = true) }
+            bodyParts.add(clean)
+        }
+        appendNonRedundant(bigText)
+        appendNonRedundant(text)
+        if (cleanSubText.isNotBlank() && !effectiveDefaultTitle.contains(cleanSubText, ignoreCase = true)) {
+            appendNonRedundant(cleanSubText)
+        }
+
+        val combinedBody = bodyParts.joinToString("\n").trim()
+        if (effectiveDefaultTitle.isBlank() && combinedBody.isBlank()) return emptyList()
         return listOf(
             ExtractedNotificationMessage(
-                title = title.trim(),
-                body = body,
+                title = effectiveDefaultTitle,
+                body = combinedBody,
                 timestampMillis = fallbackPostTimeMillis
             )
         )
@@ -649,8 +781,9 @@ object BankDetectionStore {
                 return null
             }
 
-            // Atomic dedupe check (7-day / 500-entry LRU)
-            if (!tryRecordDedupeHashLocked(context, parsed.dedupeHash, nowMillis)) {
+            // Atomic dedupe check (7-day / 500-entry LRU) — do not burn hash until persistence succeeds
+            val seenHashes = loadActiveDedupeHashesLocked(context, nowMillis)
+            if (seenHashes.containsKey(parsed.dedupeHash)) {
                 MasroufiDetectionLog.record(sourcePackage, "dedupe", MasroufiDetectionLog.REASON_DUPLICATE, msgLen)
                 return null
             }
@@ -691,11 +824,16 @@ object BankDetectionStore {
                 item.confidence >= 0.80 &&
                 item.amount <= getAutoConfirmMaxAmount(context)
             ) {
+                recordDedupeHashLocked(context, seenHashes, parsed.dedupeHash, nowMillis)
                 shouldAutoConfirm = true
                 detected = item
             } else {
                 val updated = listOf(item) + loadPendingItemsLocked(context, nowMillis)
-                savePendingItemsLocked(context, updated)
+                val persisted = savePendingItemsLocked(context, updated)
+                if (!persisted) {
+                    return null
+                }
+                recordDedupeHashLocked(context, seenHashes, parsed.dedupeHash, nowMillis)
                 detected = item
             }
         }
@@ -807,6 +945,26 @@ object BankDetectionStore {
     }
 
     /**
+     * Requests Android to rebind [BankNotificationListenerService] when notification access is
+     * granted, detection is not paused, and the listener is currently disconnected.
+     */
+    fun requestListenerRebindIfNeeded(context: Context) {
+        val appCtx = context.applicationContext
+        if (ManualSetup.isNotificationListenerGranted(appCtx) &&
+            !isPaused(appCtx) &&
+            !MasroufiDetectionLog.snapshotHealth().isConnected
+        ) {
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    NotificationListenerService.requestRebind(
+                        ComponentName(appCtx, BankNotificationListenerService::class.java)
+                    )
+                }
+            }
+        }
+    }
+
+    /**
      * Phase 10E Step 4: Posts a sample bank notification (and feeds the parser) so the user can test
      * the flow immediately with one tap.
      */
@@ -845,12 +1003,20 @@ object BankDetectionStore {
  */
 class BankNotificationListenerService : NotificationListenerService() {
 
-    private val serviceScope = CoroutineScope(Dispatchers.Default)
+    private val exceptionHandler = CoroutineExceptionHandler { _, _ ->
+        // Keep listener scope alive across any transient background storage/parse failure
+    }
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         MasroufiDetectionLog.markListenerConnected()
         BankDetectionStore.scheduleListenerHealthWorker(applicationContext)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        serviceScope.cancel()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -862,10 +1028,6 @@ class BankNotificationListenerService : NotificationListenerService() {
             return
         }
         val notif = sbn.notification ?: return
-        if ((notif.flags and Notification.FLAG_GROUP_SUMMARY) != 0) {
-            MasroufiDetectionLog.record(pkg, "filter", MasroufiDetectionLog.REASON_GROUP_SUMMARY, 0)
-            return
-        }
 
         val tag = sbn.tag
         if (BankDetectionStore.isPaused(this)) {
@@ -879,8 +1041,13 @@ class BankNotificationListenerService : NotificationListenerService() {
 
         val extras = notif.extras ?: Bundle.EMPTY
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
+        val titleBig = extras.getCharSequence(Notification.EXTRA_TITLE_BIG)?.toString().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
+        val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
+        val textLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+            ?.mapNotNull { it?.toString()?.trim()?.takeIf { s -> s.isNotBlank() } }
+            .orEmpty()
 
         // D1: Extract MessagingStyle messages individually instead of gluing them together
         val messagingTriples = mutableListOf<Triple<String, String, Long>>()
@@ -903,12 +1070,24 @@ class BankNotificationListenerService : NotificationListenerService() {
             }
         }
 
+        // Only drop group summaries when they carry neither MessagingStyle messages nor InboxStyle textLines
+        if ((notif.flags and Notification.FLAG_GROUP_SUMMARY) != 0 &&
+            messagingTriples.isEmpty() &&
+            textLines.isEmpty()
+        ) {
+            MasroufiDetectionLog.record(pkg, "filter", MasroufiDetectionLog.REASON_GROUP_SUMMARY, 0)
+            return
+        }
+
         val extractedMessages = BankDetectionStore.extractIndividualMessages(
             title = title,
             text = text,
             bigText = bigText,
             messagingStyleMessages = messagingTriples,
-            fallbackPostTimeMillis = sbn.postTime.takeIf { it > 0L } ?: System.currentTimeMillis()
+            fallbackPostTimeMillis = sbn.postTime.takeIf { it > 0L } ?: System.currentTimeMillis(),
+            subText = subText,
+            textLines = textLines,
+            titleBig = titleBig
         )
         if (extractedMessages.isEmpty()) {
             MasroufiDetectionLog.record(pkg, "extract", MasroufiDetectionLog.REASON_EMPTY, 0)
@@ -919,25 +1098,28 @@ class BankNotificationListenerService : NotificationListenerService() {
         val isMessagingThread = messagingTriples.isNotEmpty()
 
         serviceScope.launch {
-            if (isMessagingThread) {
-                BankDetectionStore.processMessagingThreadNotification(
-                    context = applicationContext,
-                    sourcePackage = pkg,
-                    conversationKey = conversationKey,
-                    messages = extractedMessages,
-                    notificationTag = tag
-                )
-            } else {
-                val single = extractedMessages.first()
-                BankDetectionStore.processIncomingNotification(
-                    context = applicationContext,
-                    sourcePackage = pkg,
-                    rawTitle = single.title,
-                    rawBody = single.body,
-                    notificationKey = "",
-                    notificationTag = tag,
-                    nowMillis = single.timestampMillis
-                )
+            runCatching {
+                if (isMessagingThread) {
+                    BankDetectionStore.processMessagingThreadNotification(
+                        context = applicationContext,
+                        sourcePackage = pkg,
+                        conversationKey = conversationKey,
+                        messages = extractedMessages,
+                        notificationTag = tag
+                    )
+                } else {
+                    for (msg in extractedMessages) {
+                        BankDetectionStore.processIncomingNotification(
+                            context = applicationContext,
+                            sourcePackage = pkg,
+                            rawTitle = msg.title,
+                            rawBody = msg.body,
+                            notificationKey = "",
+                            notificationTag = tag,
+                            nowMillis = msg.timestampMillis
+                        )
+                    }
+                }
             }
         }
     }
@@ -946,7 +1128,9 @@ class BankNotificationListenerService : NotificationListenerService() {
         super.onListenerDisconnected()
         MasroufiDetectionLog.markListenerDisconnected()
         runCatching {
-            requestRebind(ComponentName(this, BankNotificationListenerService::class.java))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                requestRebind(ComponentName(this, BankNotificationListenerService::class.java))
+            }
         }
     }
 }
@@ -960,19 +1144,7 @@ class BankListenerHealthWorker(
     workerParams: WorkerParameters
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): Result {
-        val ctx = applicationContext
-        if (ManualSetup.isNotificationListenerGranted(ctx) &&
-            !BankDetectionStore.isPaused(ctx) &&
-            !MasroufiDetectionLog.snapshotHealth().isConnected
-        ) {
-            runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                    NotificationListenerService.requestRebind(
-                        ComponentName(ctx, BankNotificationListenerService::class.java)
-                    )
-                }
-            }
-        }
+        BankDetectionStore.requestListenerRebindIfNeeded(applicationContext)
         return Result.success()
     }
 }
@@ -987,9 +1159,39 @@ interface PrivilegedSetup {
 }
 
 object ManualSetup : PrivilegedSetup {
+    internal fun isListenerEnabledInSettingValue(
+        enabledListenersFlat: String?,
+        expectedComponent: ComponentName
+    ): Boolean {
+        if (enabledListenersFlat.isNullOrBlank()) return false
+        val expectedFull = expectedComponent.flattenToString()
+        val expectedShort = expectedComponent.flattenToShortString()
+        val expectedSimpleClass = expectedComponent.className.substringAfterLast('.')
+
+        return enabledListenersFlat.split(':').any { rawEntry ->
+            val entry = rawEntry.trim()
+            if (entry.isEmpty()) return@any false
+            if (entry == expectedFull || entry == expectedShort) return@any true
+            val parsed = ComponentName.unflattenFromString(entry) ?: return@any false
+            if (parsed == expectedComponent) return@any true
+            parsed.packageName == expectedComponent.packageName &&
+                (parsed.className == expectedComponent.className ||
+                    parsed.className.endsWith(".$expectedSimpleClass"))
+        }
+    }
+
     override fun isNotificationListenerGranted(context: Context): Boolean {
         return runCatching {
-            NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+            val expected = ComponentName(context, BankNotificationListenerService::class.java)
+            val flat = Settings.Secure.getString(
+                context.contentResolver,
+                "enabled_notification_listeners"
+            )
+            if (flat != null) {
+                isListenerEnabledInSettingValue(flat, expected)
+            } else {
+                NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+            }
         }.getOrDefault(false)
     }
 
@@ -1045,7 +1247,7 @@ object ShizukuSetup : PrivilegedSetup by ManualSetup {
         val component = ComponentName(context, BankNotificationListenerService::class.java).flattenToString()
         return listOf(
             "cmd appops set $pkg ACCESS_RESTRICTED_SETTINGS allow",
-            "cmd notification allow_listener $pkg/$component"
+            "cmd notification allow_listener $component"
         )
     }
 

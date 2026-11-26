@@ -12,6 +12,33 @@
     <queries>
         <package android:name="com.whatsapp" />
         <package android:name="com.whatsapp.w4b" />
+        <!-- Moroccan bank apps (real Play Store & legacy package IDs) -->
+        <package android:name="com.b3g.cih.online" />
+        <package android:name="com.cih.cihmobile" />
+        <package android:name="ma.gbp.pocketbank" />
+        <package android:name="com.bcp.pocketbank" />
+        <package android:name="com.attijariwafabank.attijarimobile" />
+        <package android:name="ma.attijariwafabank.attijarimobile" />
+        <package android:name="ma.attijariwafabank.lbankalik" />
+        <package android:name="com.bmce.bmcedirect" />
+        <package android:name="ma.bankofafrica.bmcedirect" />
+        <package android:name="com.bmce.agencedirecte" />
+        <package android:name="com.cfgbank.app" />
+        <package android:name="com.cfgbank.mobile" />
+        <package android:name="ma.abb.baridbankmobile" />
+        <package android:name="ma.baridbank.mobile" />
+        <package android:name="ma.cdm.mycdm" />
+        <package android:name="com.cdm.mycdm" />
+        <package android:name="com.sgma.sgmaroc" />
+        <package android:name="ma.sgmaroc.sgmaroc" />
+        <!-- SMS & OEM messaging apps -->
+        <package android:name="com.google.android.apps.messaging" />
+        <package android:name="com.samsung.android.messaging" />
+        <package android:name="com.android.mms" />
+        <package android:name="com.huawei.messaging" />
+        <package android:name="com.oneplus.mms" />
+        <package android:name="com.coloros.mms" />
+        <package android:name="com.miui.messaging" />
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
