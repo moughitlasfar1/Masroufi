@@ -4,6 +4,8 @@ import com.example.data.DefaultCategoryResolver
 import com.example.data.EnvelopeConfig
 import com.example.data.TransactionItem
 import com.example.notifications.MasroufiDetectionLog
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -19,7 +21,7 @@ data class BankTemplate(
 )
 
 data class ParsedBankNotification(
-    val amount: Double,
+    val amount: Money,
     val currency: String,
     val direction: String, // "expense", "income", or "transfer"
     val merchant: String,
@@ -40,7 +42,7 @@ sealed interface BankParseResult {
 }
 
 internal data class AmountCandidate(
-    val amount: Double,
+    val amount: Money,
     val currency: String,
     val startIndex: Int,
     val endIndex: Int
@@ -265,49 +267,33 @@ object BankMessageParser {
         return norm.replace(Regex("""\d"""), "X").take(180)
     }
 
+    private const val MAX_BANK_NOTIFICATION_CENTIMES: Long = 1_000_000_000L // 10,000,000.00 DH
+    private val SINGLE_DOT_THOUSANDS_REGEX = Regex("""^\d{1,3}\.\d{3}$""")
+
     /**
-     * Step 4: Parses formatted number strings such as "1 234,50", "1.234,50", "1,234.50", "250,00", or "85".
+     * Step 4: Parses formatted number strings such as "1 234,50", "1.234,50", "1,234.50", "250,00", or "85"
+     * strictly via [MoneyParser] (pure BigDecimal, zero Double).
      */
-    fun parseNormalizedAmountToken(rawNumberToken: String): Double? {
-        var cleaned = rawNumberToken.trim()
+    fun parseNormalizedAmountToken(rawNumberToken: String): Money? {
+        val compact = rawNumberToken.trim()
             .replace("\u00A0", " ")
             .replace("\u202F", " ")
             .replace(" ", "")
-        if (cleaned.isBlank()) return null
+        if (compact.isBlank()) return null
 
-        val lastComma = cleaned.lastIndexOf(',')
-        val lastDot = cleaned.lastIndexOf('.')
-
-        cleaned = when {
-            lastComma > lastDot && lastDot != -1 -> {
-                cleaned.replace(".", "").replace(",", ".")
-            }
-            lastDot > lastComma && lastComma != -1 -> {
-                cleaned.replace(",", "")
-            }
-            lastComma != -1 -> {
-                val digitsAfter = cleaned.length - lastComma - 1
-                if (digitsAfter in 1..2) {
-                    cleaned.replace(",", ".")
-                } else {
-                    cleaned.replace(",", "")
-                }
-            }
-            lastDot != -1 -> {
-                val digitsAfter = cleaned.length - lastDot - 1
-                val dotCount = cleaned.count { it == '.' }
-                if (dotCount > 1 || digitsAfter == 3) {
-                    cleaned.replace(".", "")
-                } else {
-                    cleaned
-                }
-            }
-            else -> cleaned
+        // Preserve Moroccan bank SMS thousands-dot convention for tokens like "1.250" (no comma, 3 digits after dot)
+        val normalizedToken = if (SINGLE_DOT_THOUSANDS_REGEX.matches(compact) && !compact.startsWith("0")) {
+            compact.replace(".", "")
+        } else {
+            compact
         }
 
-        val value = cleaned.toDoubleOrNull() ?: return null
-        if (!value.isFinite() || value <= 0.0 || value > 10_000_000.0) return null
-        return PayCycleEngine.roundMoney(value)
+        val centimes = MoneyParser.parseMoroccanAmountToCentimes(
+            raw = normalizedToken,
+            maxAbsCentimes = MAX_BANK_NOTIFICATION_CENTIMES
+        ) ?: return null
+        if (centimes <= 0L) return null
+        return Money.fromCentimes(centimes)
     }
 
     /**
@@ -327,7 +313,7 @@ object BankMessageParser {
         val afterRegex = Regex("""(?<!\d)$numPattern\s*$curPattern""", RegexOption.IGNORE_CASE)
         for (match in afterRegex.findAll(normalizedText)) {
             val amt = parseNormalizedAmountToken(match.groupValues[1]) ?: continue
-            if (amt > 0.0) {
+            if (amt.isPositive) {
                 candidates.add(
                     AmountCandidate(
                         amount = amt,
@@ -342,7 +328,7 @@ object BankMessageParser {
         val beforeRegex = Regex("""$curPattern\s*:?\s*$numPattern(?!\d)""", RegexOption.IGNORE_CASE)
         for (match in beforeRegex.findAll(normalizedText)) {
             val amt = parseNormalizedAmountToken(match.groupValues[2]) ?: continue
-            if (amt > 0.0) {
+            if (amt.isPositive) {
                 val alreadyCaptured = candidates.any { abs(it.startIndex - match.range.first) <= 2 }
                 if (!alreadyCaptured) {
                     candidates.add(
@@ -394,7 +380,7 @@ object BankMessageParser {
     /**
      * Public helper: extracts (amount, normalizedCurrency), excluding balance/limit/fee amounts.
      */
-    fun extractAmountAndCurrency(normalizedText: String): Pair<Double, String>? {
+    fun extractAmountAndCurrency(normalizedText: String): Pair<Money, String>? {
         val kwPositions = collectKeywordPositions(normalizedText)
         val best = extractBestAmountCandidate(normalizedText, kwPositions) ?: return null
         return best.amount to best.currency
@@ -586,7 +572,7 @@ object BankMessageParser {
                 PayCycleEngine.getLearnedCategoryForDescription(finalMerchant).orEmpty()
             } else ""
             val voiceGuess = if (learnedEnv.isBlank() && finalMerchant.isNotBlank()) {
-                VoiceDarijaParser.parse("$finalMerchant ${amount.toInt()}", envelopes, language)?.envelopeKey.orEmpty()
+                VoiceDarijaParser.parse("$finalMerchant ${amount.toCanonicalDecimalString()}", envelopes, language)?.envelopeKey.orEmpty()
             } else ""
             when {
                 learnedEnv.isNotBlank() -> learnedEnv
@@ -617,7 +603,7 @@ object BankMessageParser {
         // Uses effectiveIsoDate + full normalized content digest so re-posted identical notifications
         // are always caught even across minute boundaries while distinct thread messages never collide.
         val contentDigest = sha256Short(lower)
-        val dedupeSeed = "${pkgLower}|$direction|$amount|${finalMerchant.lowercase(Locale.ROOT)}|$effectiveIsoDate|$contentDigest"
+        val dedupeSeed = "${pkgLower}|$direction|${amount.toCanonicalDecimalString()}|${finalMerchant.lowercase(Locale.ROOT)}|$effectiveIsoDate|$contentDigest"
         val dedupeHash = sha256Short(dedupeSeed)
 
         return BankParseResult.Parsed(
@@ -674,7 +660,7 @@ object BankMessageParser {
      * (either on the same ISO date or within ±10 minutes of `createdAt`).
      */
     fun findRecentManualMatch(
-        amount: Double,
+        amount: Money,
         direction: String,
         isoDate: String,
         allTransactions: List<TransactionItem>,
@@ -683,7 +669,7 @@ object BankMessageParser {
         val tenMinutesMs = 10 * 60 * 1000L
         return allTransactions.firstOrNull { tx ->
             tx.type == direction &&
-                abs(tx.amount - amount) < 0.01 &&
+                tx.amount == amount &&
                 (
                     (tx.createdAt != null && abs(nowMs - tx.createdAt.toDate().time) <= tenMinutesMs) ||
                         (tx.createdAt == null && tx.isoDate == isoDate)

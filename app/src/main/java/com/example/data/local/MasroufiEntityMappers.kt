@@ -8,6 +8,7 @@ import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.domain.PayCycleEngine
 import com.google.firebase.Timestamp
+import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
 import java.util.Date
 
@@ -33,7 +34,7 @@ internal object MasroufiEntityMappers {
         val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
         return UserProfileEntity(
             userId = uid,
-            baseBudget = baseBudget.coerceIn(0.0, 100_000_000.0),
+            baseBudgetCentimes = baseBudget.coerceIn(Money.ZERO, Money.MAX_STORABLE).centimes,
             payCycleDay = payCycleDay.coerceIn(1, 28),
             rolloverEnabled = rolloverEnabled,
             language = if (language in listOf("fr", "ar", "darija", "en")) language else "fr",
@@ -47,7 +48,7 @@ internal object MasroufiEntityMappers {
     fun UserProfileEntity.toDomain(): UserProfile = UserProfile(
         id = userId,
         userId = userId,
-        baseBudget = baseBudget,
+        baseBudget = Money.fromCentimes(baseBudgetCentimes),
         payCycleDay = payCycleDay.coerceIn(1, 28),
         rolloverEnabled = rolloverEnabled,
         language = language,
@@ -72,7 +73,7 @@ internal object MasroufiEntityMappers {
             name = name.ifBlank { "Compte" }.take(80),
             kind = safeKind,
             currency = "MAD",
-            initialBalance = initialBalance.coerceIn(-100_000_000.0, 100_000_000.0),
+            initialBalanceCentimes = initialBalance.coerceIn(Money.MIN_STORABLE, Money.MAX_STORABLE).centimes,
             colorHex = colorHex.ifBlank { "#10B981" }.take(20),
             isArchived = false,
             sortOrder = sortOrder,
@@ -86,7 +87,7 @@ internal object MasroufiEntityMappers {
         userId = userId,
         name = name,
         kind = kind,
-        initialBalance = initialBalance,
+        initialBalance = Money.fromCentimes(initialBalanceCentimes),
         colorHex = colorHex,
         createdAt = epochMsToTimestamp(createdAtEpochMs),
         updatedAt = epochMsToTimestamp(updatedAtEpochMs)
@@ -120,7 +121,7 @@ internal object MasroufiEntityMappers {
             id = safeId,
             userId = uid,
             type = safeType,
-            amount = amount.coerceIn(0.01, 100_000_000.0),
+            amountCentimes = amount.coerceIn(Money.ONE_CENTIME, Money.MAX_STORABLE).centimes,
             category = normalizedCat,
             envelopeKey = normalizedEnvKey,
             accountId = safeAccountId,
@@ -142,7 +143,7 @@ internal object MasroufiEntityMappers {
             id = id,
             userId = userId,
             type = type,
-            amount = amount,
+            amount = Money.fromCentimes(amountCentimes),
             category = normCat,
             envelopeKey = normEnv,
             accountId = accountId,
@@ -198,14 +199,25 @@ internal object MasroufiEntityMappers {
         val safeId = sanitizeId(id, "item", nowMs)
         val createdMs = timestampToEpochMs(createdAt).takeIf { it > 0L } ?: nowMs
         val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
+        val resolvedSecondaryCentimes = if (safeType == "daret") {
+            0L
+        } else {
+            secondaryAmount.coerceIn(Money.ZERO, Money.MAX_STORABLE).centimes
+        }
+        val resolvedDaretMembers = if (safeType == "daret") {
+            (daretMembers ?: 1).coerceIn(1, 366)
+        } else {
+            null
+        }
         return FinancialItemEntity(
             id = safeId,
             userId = uid,
             itemType = safeType,
             name = name.ifBlank { "Élément" }.take(120),
             subtitle = subtitle.take(250),
-            amount = amount.coerceIn(0.0, 100_000_000.0),
-            secondaryAmount = secondaryAmount.coerceIn(0.0, 100_000_000.0),
+            amountCentimes = amount.coerceIn(Money.ZERO, Money.MAX_STORABLE).centimes,
+            secondaryAmountCentimes = resolvedSecondaryCentimes,
+            daretMembers = resolvedDaretMembers,
             dayOrTurn = dayOrTurn.coerceIn(0, 366),
             extraInt = extraInt.coerceIn(0, 366),
             dateOrCycle = dateOrCycle.take(250),
@@ -220,8 +232,9 @@ internal object MasroufiEntityMappers {
         itemType = itemType,
         name = name,
         subtitle = subtitle,
-        amount = amount,
-        secondaryAmount = secondaryAmount,
+        amount = Money.fromCentimes(amountCentimes),
+        secondaryAmount = if (itemType == "daret") Money.ZERO else Money.fromCentimes(secondaryAmountCentimes),
+        daretMembers = if (itemType == "daret") (daretMembers ?: 1).coerceAtLeast(1) else daretMembers,
         dayOrTurn = dayOrTurn,
         extraInt = extraInt,
         dateOrCycle = dateOrCycle,
@@ -236,16 +249,16 @@ internal object MasroufiEntityMappers {
             id = safeId,
             userId = uid,
             type = type.ifBlank { "CONSOMMATION" },
-            loanAmount = loanAmount.coerceAtLeast(0.0),
-            downPayment = downPayment.coerceAtLeast(0.0),
-            financedPrincipal = financedPrincipal.coerceAtLeast(0.0),
+            loanAmountCentimes = loanAmount.coerceAtLeast(Money.ZERO).centimes,
+            downPaymentCentimes = downPayment.coerceAtLeast(Money.ZERO).centimes,
+            financedPrincipalCentimes = financedPrincipal.coerceAtLeast(Money.ZERO).centimes,
             durationMonths = durationMonths.coerceAtLeast(1),
             deferredMonths = deferredMonths.coerceAtLeast(0),
             annualInterestRateHt = annualInterestRateHt.coerceIn(0.0, 50.0),
             applyInterestTva = applyInterestTva,
             insuranceRate = insuranceRate.coerceIn(0.0, 20.0),
-            monthlyPayment = monthlyPayment.coerceAtLeast(0.0),
-            totalCost = totalCost.coerceAtLeast(0.0),
+            monthlyPaymentCentimes = monthlyPayment.coerceAtLeast(Money.ZERO).centimes,
+            totalCostCentimes = totalCost.coerceAtLeast(Money.ZERO).centimes,
             debtToIncomeRatio = debtToIncomeRatio.coerceAtLeast(0.0),
             maxAllowedDti = maxAllowedDti,
             linkToMonthlyExpenses = linkToMonthlyExpenses,
@@ -257,16 +270,16 @@ internal object MasroufiEntityMappers {
         id = id,
         userId = userId,
         type = type,
-        loanAmount = loanAmount,
-        downPayment = downPayment,
-        financedPrincipal = financedPrincipal,
+        loanAmount = Money.fromCentimes(loanAmountCentimes),
+        downPayment = Money.fromCentimes(downPaymentCentimes),
+        financedPrincipal = Money.fromCentimes(financedPrincipalCentimes),
         durationMonths = durationMonths,
         deferredMonths = deferredMonths,
         annualInterestRateHt = annualInterestRateHt,
         applyInterestTva = applyInterestTva,
         insuranceRate = insuranceRate,
-        monthlyPayment = monthlyPayment,
-        totalCost = totalCost,
+        monthlyPayment = Money.fromCentimes(monthlyPaymentCentimes),
+        totalCost = Money.fromCentimes(totalCostCentimes),
         debtToIncomeRatio = debtToIncomeRatio,
         maxAllowedDti = maxAllowedDti,
         linkToMonthlyExpenses = linkToMonthlyExpenses,

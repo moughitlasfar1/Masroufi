@@ -3,6 +3,7 @@ package com.example
 import com.example.domain.BankMessageParser
 import com.example.domain.BankParseResult
 import com.example.notifications.MasroufiDetectionLog
+import com.masroufi.core.Money
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -13,9 +14,6 @@ import org.junit.Test
 import java.util.Calendar
 import java.util.TimeZone
 
-/**
- * Audit verification tests for BankMessageParser (D1, D2, D3, D4, D7, D11).
- */
 class BankMessageParserAuditTest {
 
     @Test
@@ -28,7 +26,7 @@ class BankMessageParserAuditTest {
         )
         assertTrue(result is BankParseResult.Parsed)
         val parsed = (result as BankParseResult.Parsed).notification
-        assertEquals(120.0, parsed.amount, 0.01)
+        assertEquals(Money.fromDh(120), parsed.amount)
         assertEquals("expense", parsed.direction)
         assertEquals("MARJANE", parsed.merchant)
     }
@@ -54,7 +52,7 @@ class BankMessageParserAuditTest {
             isoDate = "2026-11-15"
         )
         assertNotNull(parsed)
-        assertEquals(85.0, parsed!!.amount, 0.01)
+        assertEquals(Money.fromDh(85), parsed!!.amount)
         assertEquals("", parsed.merchant)
         assertFalse(parsed.merchant.contains("carte", ignoreCase = true))
         assertTrue(parsed.needsReview)
@@ -69,7 +67,7 @@ class BankMessageParserAuditTest {
             isoDate = "2026-11-19"
         )
         assertNotNull(parsed)
-        assertEquals(210.50, parsed!!.amount, 0.01)
+        assertEquals(Money(21050L), parsed!!.amount)
         assertEquals("ACIMA MAARIF", parsed.merchant)
         assertFalse(parsed.needsReview)
     }
@@ -84,7 +82,7 @@ class BankMessageParserAuditTest {
         )
         assertNotNull(outgoing)
         assertEquals("expense", outgoing!!.direction)
-        assertEquals(1500.0, outgoing.amount, 0.01)
+        assertEquals(Money.fromDh(1500), outgoing.amount)
 
         val incoming = BankMessageParser.parse(
             rawTitle = "Banque Populaire",
@@ -94,7 +92,7 @@ class BankMessageParserAuditTest {
         )
         assertNotNull(incoming)
         assertEquals("income", incoming!!.direction)
-        assertEquals(6500.0, incoming.amount, 0.01)
+        assertEquals(Money.fromDh(6500), incoming.amount)
 
         val refund = BankMessageParser.parse(
             rawTitle = "CIH Bank",
@@ -104,7 +102,7 @@ class BankMessageParserAuditTest {
         )
         assertNotNull(refund)
         assertEquals("income", refund!!.direction)
-        assertEquals(149.0, refund.amount, 0.01)
+        assertEquals(Money.fromDh(149), refund.amount)
     }
 
     @Test
@@ -117,7 +115,7 @@ class BankMessageParserAuditTest {
         )
         assertNotNull(parsed)
         assertEquals("transfer", parsed!!.direction)
-        assertEquals(500.0, parsed.amount, 0.01)
+        assertEquals(Money.fromDh(500), parsed.amount)
         assertEquals("Retrait GAB", parsed.merchant)
         assertEquals("bp", parsed.bankTemplateId)
     }
@@ -131,7 +129,7 @@ class BankMessageParserAuditTest {
             isoDate = "2026-11-19"
         )
         assertNotNull("Completed 3D Secure payment with no OTP digits should parse", confirmedPayment)
-        assertEquals(320.0, confirmedPayment!!.amount, 0.01)
+        assertEquals(Money.fromDh(320), confirmedPayment!!.amount)
 
         val otp3ds = BankMessageParser.parseDetailed(
             rawTitle = "CIH Bank",
@@ -161,7 +159,7 @@ class BankMessageParserAuditTest {
             isoDate = "2026-11-19"
         )
         assertNotNull(arDebit)
-        assertEquals(180.50, arDebit!!.amount, 0.01)
+        assertEquals(Money(18050L), arDebit!!.amount)
         assertEquals("expense", arDebit.direction)
 
         val arOtp = BankMessageParser.parse(

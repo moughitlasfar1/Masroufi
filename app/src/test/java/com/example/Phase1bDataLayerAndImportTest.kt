@@ -21,6 +21,7 @@ import com.example.data.local.RemoteMirror
 import com.example.data.local.RoomMasroufiRepository
 import com.example.security.DatabaseKeyManager
 import com.example.security.DbEncryptionHeaderCheck
+import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
 import java.io.File
 import java.io.IOException
@@ -78,7 +79,6 @@ class Phase1bDataLayerAndImportTest {
                 DatabaseKeyManager.verifyDatabaseFileEncrypted(missingFile)
             )
 
-            // 1. Open a real unencrypted SQLite DB via Android framework SQLite -> must be caught!
             val unencryptedDb = MasroufiDatabaseProvider.getOrOpen(
                 context = context,
                 dbName = testDbName,
@@ -86,7 +86,7 @@ class Phase1bDataLayerAndImportTest {
             )
             assertNotNull(unencryptedDb)
             unencryptedDb!!.masroufiDao().upsertProfile(
-                com.example.data.local.UserProfileEntity(userId = "hdr_user", baseBudget = 5000.0)
+                com.example.data.local.UserProfileEntity(userId = "hdr_user", baseBudgetCentimes = 500_000L)
             )
             MasroufiDatabaseProvider.close()
 
@@ -97,12 +97,10 @@ class Phase1bDataLayerAndImportTest {
                 DatabaseKeyManager.verifyDatabaseFileEncrypted(dbFile)
             )
 
-            // 2. Simulated SQLCipher encrypted page-1 (random high-entropy salt + ciphertext, no "SQLite format 3")
             val encryptedFile = File(context.filesDir, "simulated_sqlcipher.db")
             try {
                 val randomPage = ByteArray(4096)
                 SecureRandom().nextBytes(randomPage)
-                // Ensure the random bytes cannot accidentally begin with 'S'
                 randomPage[0] = 0xA7.toByte()
                 encryptedFile.writeBytes(randomPage)
 
@@ -127,8 +125,7 @@ class Phase1bDataLayerAndImportTest {
             val dao = db.masroufiDao()
             val uid = "uid_server_test"
 
-            // Pre-existing sentinel row for another user to verify Room stays untouched
-            dao.upsertProfile(com.example.data.local.UserProfileEntity(userId = "sentinel_user", baseBudget = 9999.0))
+            dao.upsertProfile(com.example.data.local.UserProfileEntity(userId = "sentinel_user", baseBudgetCentimes = 999_900L))
 
             val failingServer = object : FirestoreImportSource {
                 override suspend fun fetchUserSnapshotFromServer(userId: String): FirestoreUserSnapshot {
@@ -150,11 +147,10 @@ class Phase1bDataLayerAndImportTest {
                 assertTrue("Localized error for $lang must not be blank", failed.localizedMessage.isNotBlank())
             }
 
-            // Room untouched, no backup file, import not marked completed; app stays strictly local-first ROOM_PRIMARY
             assertEquals(0, dao.countProfiles(uid))
             assertEquals(0, dao.countTransactions(uid))
             assertNull(dao.getImportMetadata(uid))
-            assertEquals(9999.0, dao.getProfile("sentinel_user")?.baseBudget ?: 0.0, 0.001)
+            assertEquals(999_900L, dao.getProfile("sentinel_user")?.baseBudgetCentimes)
             assertFalse(FirestoreToRoomImporter.preImportBackupFile(context, uid).exists())
             assertFalse(DataSourceConfigStore.isRoomImportCompleted(context, uid))
             assertEquals(
@@ -175,17 +171,17 @@ class Phase1bDataLayerAndImportTest {
             val uid = "uid_server_test"
 
             val sampleSnapshot = FirestoreUserSnapshot(
-                profile = UserProfile(id = uid, userId = uid, baseBudget = 11200.0, payCycleDay = 5, language = "fr"),
+                profile = UserProfile(id = uid, userId = uid, baseBudget = Money.fromDh(11200), payCycleDay = 5, language = "fr"),
                 accounts = listOf(
-                    AccountItem(id = "acc_cash", userId = uid, name = "Cash", kind = "cash", initialBalance = 1200.0),
-                    AccountItem(id = "acc_bank", userId = uid, name = "CIH", kind = "bank", initialBalance = 7500.0)
+                    AccountItem(id = "acc_cash", userId = uid, name = "Cash", kind = "cash", initialBalance = Money.fromDh(1200)),
+                    AccountItem(id = "acc_bank", userId = uid, name = "CIH", kind = "bank", initialBalance = Money.fromDh(7500))
                 ),
                 transactions = listOf(
                     TransactionItem(
                         id = "tx_1",
                         userId = uid,
                         type = "expense",
-                        amount = 345.0,
+                        amount = Money.fromLegacyDoubleDh(19.99),
                         category = "marche",
                         envelopeKey = "marche",
                         accountId = "acc_bank",
@@ -197,17 +193,17 @@ class Phase1bDataLayerAndImportTest {
                     EnvelopeConfig(id = "env_marche", userId = uid, key = "marche", nameFr = "Marché", percentage = 35.0)
                 ),
                 financialItems = listOf(
-                    FinancialItem(id = "bill_1", userId = uid, itemType = "bill", name = "Loyer", amount = 3200.0)
+                    FinancialItem(id = "bill_1", userId = uid, itemType = "bill", name = "Loyer", amount = Money.fromDh(3200))
                 ),
                 credits = listOf(
                     SavedCreditEntity(
                         id = "cred_1",
                         userId = uid,
                         type = "AUTO",
-                        loanAmount = 150000.0,
-                        financedPrincipal = 120000.0,
+                        loanAmount = Money.fromDh(150000),
+                        financedPrincipal = Money.fromDh(120000),
                         durationMonths = 60,
-                        monthlyPayment = 2300.0
+                        monthlyPayment = Money.fromDh(2300)
                     )
                 )
             )
@@ -220,7 +216,6 @@ class Phase1bDataLayerAndImportTest {
                 }
             }
 
-            // Attempt 1: Count verification fails -> must NOT write import metadata or mark completed
             val mismatchResult = FirestoreToRoomImporter.runImport(
                 context = context,
                 userId = uid,
@@ -234,7 +229,6 @@ class Phase1bDataLayerAndImportTest {
             assertNull(dao.getImportMetadata(uid))
             assertFalse(DataSourceConfigStore.isRoomImportCompleted(context, uid))
 
-            // Attempt 2: Resume import cleanly -> counts match -> encrypted .masroufi backup written & marked completed
             val successResult = FirestoreToRoomImporter.runImport(
                 context = context,
                 userId = uid,
@@ -251,8 +245,8 @@ class Phase1bDataLayerAndImportTest {
             assertEquals(1, success.metadata.financialItemCount)
             assertEquals(1, success.metadata.creditCount)
             assertTrue(success.metadata.backupChecksumSha256.length == 64)
+            assertEquals(1999L, dao.getTransactionById(uid, "tx_1")?.amountCentimes)
 
-            // Encrypted .masroufi backup exists and does NOT contain plaintext financial details
             assertTrue(success.encryptedBackupFile.exists())
             val rawBackupText = success.encryptedBackupFile.readText()
             assertFalse(
@@ -262,7 +256,6 @@ class Phase1bDataLayerAndImportTest {
             assertTrue(DataSourceConfigStore.isRoomImportCompleted(context, uid))
             assertEquals(ActiveDataSourceMode.ROOM_PRIMARY, DataSourceConfigStore.activeMode.value)
 
-            // Attempt 3: Idempotency -> must return AlreadyCompleted without fetching server again
             val fetchesBeforeReplay = serverFetchCount
             val idempotentResult = FirestoreToRoomImporter.runImport(
                 context = context,
@@ -299,19 +292,17 @@ class Phase1bDataLayerAndImportTest {
                 userIdProvider = { uid }
             )
 
-            // Post-commit mirror receives committed transaction
             val txId = roomRepo.upsertTransaction(
-                TransactionItem(id = "tx_rm_1", type = "expense", amount = 75.0, desc = "Cafe", isoDate = "2026-11-21"),
+                TransactionItem(id = "tx_rm_1", type = "expense", amount = Money.fromDh(75), desc = "Cafe", isoDate = "2026-11-21"),
                 uid
             )
             assertEquals("tx_rm_1", txId)
             assertEquals(1, roomRepo.observeTransactions(uid).first().size)
             assertEquals(listOf("tx_rm_1"), mirroredIds)
 
-            // Failing RemoteMirror MUST NOT roll back or crash local Room write
             failMirror = true
             val offlineTxId = roomRepo.upsertTransaction(
-                TransactionItem(id = "tx_rm_offline", type = "expense", amount = 120.0, desc = "Taxi", isoDate = "2026-11-21"),
+                TransactionItem(id = "tx_rm_offline", type = "expense", amount = Money.fromDh(120), desc = "Taxi", isoDate = "2026-11-21"),
                 uid
             )
             assertEquals("tx_rm_offline", offlineTxId)
@@ -329,17 +320,15 @@ class Phase1bDataLayerAndImportTest {
                 userIdProvider = { uid }
             )
 
-            // Before DB opens -> returns empty safely without throwing or touching Firestore
             assertEquals(emptyList<TransactionItem>(), facade.observeTransactions(uid).first())
 
-            // Open Room DB -> facade immediately binds reactively
             val db = MasroufiDatabaseProvider.getOrOpen(
                 context = context,
                 dbName = testDbName,
                 customFactory = FrameworkSQLiteOpenHelperFactory()
             )!!
             facade.upsertTransaction(
-                TransactionItem(id = "tx_room_only", type = "expense", amount = 90.0, desc = "RoomRow", isoDate = "2026-11-21"),
+                TransactionItem(id = "tx_room_only", type = "expense", amount = Money.fromDh(90), desc = "RoomRow", isoDate = "2026-11-21"),
                 uid
             )
             assertEquals(
@@ -347,7 +336,6 @@ class Phase1bDataLayerAndImportTest {
                 facade.observeTransactions(uid).first().map { it.id }
             )
 
-            // Even if legacy kill switch preference is toggled, app stays strictly ROOM_PRIMARY
             DataSourceConfigStore.setFirestoreKillSwitchEnabled(context, enabled = true, currentUserId = uid)
             assertEquals(ActiveDataSourceMode.ROOM_PRIMARY, DataSourceConfigStore.activeMode.value)
             assertEquals(

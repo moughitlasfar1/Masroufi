@@ -199,6 +199,8 @@ import com.masroufi.credit.domain.CreditCalculator
 import com.masroufi.credit.domain.CreditStrings
 import com.masroufi.credit.presentation.CreditSimulatorScreen
 import com.masroufi.credit.presentation.CreditSimulatorViewModel
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
 import com.masroufi.importer.domain.ImporterStrings
 import com.masroufi.importer.presentation.StatementImportFlowSheet
 
@@ -488,7 +490,7 @@ fun MainFeatureScreen(
     fun upsertAnnualBillReserve(item: com.masroufi.fiscal.domain.AnnualBillItem) {
         val fStrings = com.masroufi.fiscal.domain.FiscalStrings.forLang(state.profile.language)
         val (curYear, curMonth) = com.masroufi.fiscal.domain.AnnualBillCalculator.currentYearAndMonth()
-        val existingSaved = state.goals.find { it.id == item.linkedGoalId }?.secondaryAmount ?: 0.0
+        val existingSaved = state.goals.find { it.id == item.linkedGoalId }?.secondaryAmount ?: Money.ZERO
         val (goalItem, recurringBillItem) = com.masroufi.fiscal.data.FiscalRepository.buildBackingGoalAndRecurringBill(
             bill = item,
             existingGoalSavedAmount = existingSaved,
@@ -529,7 +531,7 @@ fun MainFeatureScreen(
         if (item.linkedBillId.isNotBlank()) {
             viewModel.deleteFinancialItem(item.linkedBillId)
         }
-        if (logExpense && item.annualAmountMad > 0.0) {
+        if (logExpense && item.annualAmountMad.isPositive) {
             val envKey = if (item.preset == com.masroufi.fiscal.domain.AnnualBillPreset.VIGNETTE ||
                 item.preset == com.masroufi.fiscal.domain.AnnualBillPreset.CAR_INSURANCE
             ) "transport" else "charges"
@@ -925,7 +927,7 @@ fun MainFeatureScreen(
         viewModel.quickAddPreset(preset) { added ->
             scope.launch {
                 val res = snackbarHostState.showSnackbar(
-                    message = "+ ${added.desc} (${if (state.hideAmounts) "••••" else added.amount.toInt().toString()} $cur)",
+                    message = "+ ${added.desc} (${if (state.hideAmounts) "••••" else added.amount.formatDhRounded(useGrouping = false)} $cur)",
                     actionLabel = strings.undoLabel,
                     duration = SnackbarDuration.Short
                 )
@@ -991,8 +993,8 @@ fun MainFeatureScreen(
                                     itemType = "bill",
                                     name = billName,
                                     subtitle = billSub,
-                                    amount = PayCycleEngine.roundMoney(savedResult.monthlyPayment),
-                                    secondaryAmount = 0.0,
+                                    amount = savedResult.monthlyPayment,
+                                    secondaryAmount = Money.ZERO,
                                     dayOrTurn = state.profile.payCycleDay.coerceIn(1, 28),
                                     extraInt = 0,
                                     dateOrCycle = ""
@@ -1027,26 +1029,27 @@ fun MainFeatureScreen(
 
             if (showZakatTracker) {
                 val savingsTotal = remember(state.goals) {
-                    state.goals.sumOf { it.secondaryAmount.coerceAtLeast(0.0) }
+                    state.goals.map { it.secondaryAmount.coerceAtLeast(Money.ZERO) }.sumMoney()
                 }
                 val shortTermBorrowedDebts = remember(state.debts) {
                     state.debts
                         .filter { !it.dateOrCycle.equals("lent", ignoreCase = true) }
-                        .sumOf { (it.amount - it.secondaryAmount).coerceAtLeast(0.0) }
+                        .map { (it.amount - it.secondaryAmount).coerceAtLeast(Money.ZERO) }
+                        .sumMoney()
                 }
                 val linkedZakatBill = remember(annualBillsList, zakatConfig) {
                     annualBillsList.find { it.id == zakatConfig.linkedAnnualBillId && !it.isPaid }
                 }
                 val alreadyReservedZakat = remember(linkedZakatBill, state.goals) {
                     val gid = linkedZakatBill?.linkedGoalId.orEmpty()
-                    if (gid.isBlank()) 0.0 else state.goals.find { it.id == gid }?.secondaryAmount ?: 0.0
+                    if (gid.isBlank()) Money.ZERO else state.goals.find { it.id == gid }?.secondaryAmount ?: Money.ZERO
                 }
                 ExpressiveAmbientBackground(
                     accentPalette = state.customPrefs.accentPalette,
                     isDarkTheme = state.profile.isDarkTheme
                 ) {
                     com.masroufi.fiscal.presentation.ZakatTrackerScreen(
-                        accountsTotalMad = state.totalNetWorth.coerceAtLeast(0.0),
+                        accountsTotalMad = state.totalNetWorth.coerceAtLeast(Money.ZERO),
                         savingsTotalMad = savingsTotal,
                         shortTermDebtsOwedMad = shortTermBorrowedDebts,
                         alreadyReservedMad = alreadyReservedZakat,
@@ -1318,7 +1321,7 @@ fun MainFeatureScreen(
                                             when (reminder.kind) {
                                                 "bill" -> viewModel.payRecurringBill(reminder.item)
                                                 "daret" -> viewModel.payDaretRound(reminder.item)
-                                                "debt" -> viewModel.settleDebt(reminder.item, 100.0)
+                                                "debt" -> viewModel.settleDebt(reminder.item, Money.fromDh(100))
                                             }
                                         },
                                         onToggleHideAmounts = { togglePrivacyMask() },
@@ -1367,7 +1370,7 @@ fun MainFeatureScreen(
                                         onSelectSubTab = { sub -> insightsSubTab = sub },
                                         moreFeaturesEnabled = moreFeaturesEnabled,
                                         onUpdateWhatIf = { key, pct -> viewModel.updateWhatIf(key, pct) },
-                                        onContributeSeasonal = { item -> viewModel.contributeToGoalOrSeasonal(item, 200.0) },
+                                        onContributeSeasonal = { item -> viewModel.contributeToGoalOrSeasonal(item, Money.fromDh(200)) },
                                         onOpenNewSeasonal = { item ->
                                             activeSheet = ActiveSheet.FinancialOrAccountItem(
                                                 itemType = "seasonal",
@@ -1384,7 +1387,7 @@ fun MainFeatureScreen(
                                                     name = tplName,
                                                     subtitle = tplName,
                                                     amount = tplAmount,
-                                                    secondaryAmount = 0.0,
+                                                    secondaryAmount = Money.ZERO,
                                                     dayOrTurn = 1,
                                                     extraInt = 0,
                                                     dateOrCycle = tplIso
@@ -1428,8 +1431,8 @@ fun MainFeatureScreen(
                                             )
                                         },
                                         onSettleDebt = { debt ->
-                                            val rem = (debt.amount - debt.secondaryAmount).coerceAtLeast(0.0)
-                                            if (rem > 0.0) viewModel.settleDebt(debt, rem)
+                                            val rem = (debt.amount - debt.secondaryAmount).coerceAtLeast(Money.ZERO)
+                                            if (rem.isPositive) viewModel.settleDebt(debt, rem)
                                         },
                                         onOpenNewDebt = { item ->
                                             activeSheet = ActiveSheet.FinancialOrAccountItem(
@@ -1437,7 +1440,7 @@ fun MainFeatureScreen(
                                                 existingItem = item
                                             )
                                         },
-                                        onContributeGoal = { goal -> viewModel.contributeToGoalOrSeasonal(goal, 200.0) },
+                                        onContributeGoal = { goal -> viewModel.contributeToGoalOrSeasonal(goal, Money.fromDh(200)) },
                                         onOpenNewGoal = { item ->
                                             activeSheet = ActiveSheet.FinancialOrAccountItem(
                                                 itemType = "goal",
@@ -1455,7 +1458,7 @@ fun MainFeatureScreen(
                                         onPartialRepayDebt = { debt, partAmt ->
                                             viewModel.settleDebt(debt, partAmt)
                                             scope.launch {
-                                                snackbarHostState.showSnackbar("Remboursement partiel +${partAmt.toInt()} $cur enregistré pour ${debt.name}")
+                                                snackbarHostState.showSnackbar("Remboursement partiel +${partAmt.formatDhRounded(useGrouping = false)} $cur enregistré pour ${debt.name}")
                                             }
                                         },
                                         onSendWhatsAppReminder = { msg ->
@@ -1470,7 +1473,7 @@ fun MainFeatureScreen(
                                                     name = tplName,
                                                     subtitle = tplName,
                                                     amount = tplAmt,
-                                                    secondaryAmount = 0.0,
+                                                    secondaryAmount = Money.ZERO,
                                                     dayOrTurn = tplDueDay.coerceIn(1, 31),
                                                     extraInt = 0,
                                                     dateOrCycle = ""
@@ -1504,7 +1507,7 @@ fun MainFeatureScreen(
                                             when (reminder.kind) {
                                                 "bill" -> viewModel.payRecurringBill(reminder.item)
                                                 "daret" -> viewModel.payDaretRound(reminder.item)
-                                                "debt" -> viewModel.settleDebt(reminder.item, 100.0)
+                                                "debt" -> viewModel.settleDebt(reminder.item, Money.fromDh(100))
                                             }
                                         },
                                         savedCreditsCount = creditUiState.savedCredits.size,
@@ -1543,7 +1546,7 @@ fun MainFeatureScreen(
                                             viewModel.duplicateTransaction(tx) { duplicated ->
                                                 scope.launch {
                                                     val res = snackbarHostState.showSnackbar(
-                                                        message = "Dupliqué : ${duplicated.desc} (${if (state.hideAmounts) "••••" else duplicated.amount.toInt().toString()} $cur)",
+                                                        message = "Dupliqué : ${duplicated.desc} (${if (state.hideAmounts) "••••" else duplicated.amount.formatDhRounded(useGrouping = false)} $cur)",
                                                         actionLabel = strings.undoLabel,
                                                         duration = SnackbarDuration.Short
                                                     )
@@ -1705,7 +1708,7 @@ fun MainFeatureScreen(
                         ) { count, share ->
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    "Partagé : $count Sellef créés (${share.toInt()} $cur/pers.) !"
+                                    "Partagé : $count Sellef créés (${share.formatDhRounded(useGrouping = false)} $cur/pers.) !"
                                 )
                             }
                         }

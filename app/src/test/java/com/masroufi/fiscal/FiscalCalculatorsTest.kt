@@ -1,5 +1,6 @@
 package com.masroufi.fiscal
 
+import com.masroufi.core.Money
 import com.masroufi.fiscal.data.FiscalRepository
 import com.masroufi.fiscal.domain.AnnualBillCalculator
 import com.masroufi.fiscal.domain.AnnualBillItem
@@ -33,36 +34,32 @@ class FiscalCalculatorsTest {
         assertTrue(FiscalRates.VIGNETTE_SOURCE_COMMENT.contains("DGI"))
 
         assertEquals(
-            350.0,
+            Money.fromDh(350),
             FiscalRates.vignetteAnnualAmountMad(
                 FiscalRates.HorsepowerBand.UNDER_8_CV,
                 FiscalRates.FuelType.ESSENCE
-            )!!,
-            0.001
+            )
         )
         assertEquals(
-            700.0,
+            Money.fromDh(700),
             FiscalRates.vignetteAnnualAmountMad(
                 FiscalRates.HorsepowerBand.UNDER_8_CV,
                 FiscalRates.FuelType.DIESEL
-            )!!,
-            0.001
+            )
         )
         assertEquals(
-            650.0,
+            Money.fromDh(650),
             FiscalRates.vignetteAnnualAmountMad(
                 FiscalRates.HorsepowerBand.CV_8_TO_10,
                 FiscalRates.FuelType.ESSENCE
-            )!!,
-            0.001
+            )
         )
         assertEquals(
-            1500.0,
+            Money.fromDh(1500),
             FiscalRates.vignetteAnnualAmountMad(
                 FiscalRates.HorsepowerBand.CV_8_TO_10,
                 FiscalRates.FuelType.DIESEL
-            )!!,
-            0.001
+            )
         )
 
         // > 10 CV bands must stay TODO (null) until verified against official DGI tables
@@ -95,19 +92,19 @@ class FiscalCalculatorsTest {
     @Test
     fun `annual bill monthly reserve splits remaining across remaining months accurately`() {
         val breakdown = AnnualBillCalculator.computeBreakdown(
-            annualAmountMad = 1500.0,
-            savedAmountMad = 300.0,
+            annualAmountMad = Money.fromDh(1500),
+            savedAmountMad = Money.fromDh(300),
             dueMonth = 12,
             dueYear = 2026,
             currentYear = 2026,
             currentMonth = 6,
             rollForwardIfPassed = false
         )
-        assertEquals(1500.0, breakdown.annualAmountMad, 0.001)
-        assertEquals(300.0, breakdown.savedAmountMad, 0.001)
-        assertEquals(1200.0, breakdown.remainingToSaveMad, 0.001)
+        assertEquals(Money.fromDh(1500), breakdown.annualAmountMad)
+        assertEquals(Money.fromDh(300), breakdown.savedAmountMad)
+        assertEquals(Money.fromDh(1200), breakdown.remainingToSaveMad)
         assertEquals(6, breakdown.monthsRemaining)
-        assertEquals(200.0, breakdown.monthlyReserveMad, 0.001)
+        assertEquals(Money.fromDh(200), breakdown.monthlyReserveMad)
         assertEquals(0.2f, breakdown.progressFraction, 0.001f)
         assertFalse(breakdown.isDueThisMonth)
         assertFalse(breakdown.isDueDatePassed)
@@ -118,8 +115,8 @@ class FiscalCalculatorsTest {
     @Test
     fun `edge case when due month is this month sets monthsRemaining to 1 and full remaining reserve`() {
         val breakdown = AnnualBillCalculator.computeBreakdown(
-            annualAmountMad = 700.0,
-            savedAmountMad = 250.0,
+            annualAmountMad = Money.fromDh(700),
+            savedAmountMad = Money.fromDh(250),
             dueMonth = 1,
             dueYear = 2026,
             currentYear = 2026,
@@ -127,7 +124,7 @@ class FiscalCalculatorsTest {
             rollForwardIfPassed = false
         )
         assertEquals(1, breakdown.monthsRemaining)
-        assertEquals(450.0, breakdown.monthlyReserveMad, 0.001)
+        assertEquals(Money.fromDh(450), breakdown.monthlyReserveMad)
         assertTrue(breakdown.isDueThisMonth)
         assertFalse(breakdown.isDueDatePassed)
         assertFalse(breakdown.rolledToNextYear)
@@ -135,10 +132,9 @@ class FiscalCalculatorsTest {
 
     @Test
     fun `edge case when due date passed handles both overdue existing bill and next-year rollover`() {
-        // Existing unpaid bill whose due date already passed
         val overdue = AnnualBillCalculator.computeBreakdown(
-            annualAmountMad = 650.0,
-            savedAmountMad = 150.0,
+            annualAmountMad = Money.fromDh(650),
+            savedAmountMad = Money.fromDh(150),
             dueMonth = 1,
             dueYear = 2026,
             currentYear = 2026,
@@ -149,12 +145,11 @@ class FiscalCalculatorsTest {
         assertFalse(overdue.isDueThisMonth)
         assertFalse(overdue.rolledToNextYear)
         assertEquals(1, overdue.monthsRemaining)
-        assertEquals(500.0, overdue.monthlyReserveMad, 0.001)
+        assertEquals(Money.fromDh(500), overdue.monthlyReserveMad)
 
-        // New bill whose chosen due month already passed this year -> rolls forward to next year
         val rolled = AnnualBillCalculator.computeBreakdown(
-            annualAmountMad = 900.0,
-            savedAmountMad = 0.0,
+            annualAmountMad = Money.fromDh(900),
+            savedAmountMad = Money.ZERO,
             dueMonth = 1,
             dueYear = 2026,
             currentYear = 2026,
@@ -164,22 +159,22 @@ class FiscalCalculatorsTest {
         assertTrue(rolled.rolledToNextYear)
         assertFalse(rolled.isDueDatePassed)
         assertEquals(2027, rolled.dueYear)
-        assertEquals(9, rolled.monthsRemaining) // April 2026 -> January 2027 = 9 months
-        assertEquals(100.0, rolled.monthlyReserveMad, 0.001)
+        assertEquals(9, rolled.monthsRemaining)
+        assertEquals(Money.fromDh(100), rolled.monthlyReserveMad)
     }
 
     @Test
     fun `fully funded annual bill reports 0 remaining and 0 monthly reserve`() {
         val funded = AnnualBillCalculator.computeBreakdown(
-            annualAmountMad = 1200.0,
-            savedAmountMad = 1400.0,
+            annualAmountMad = Money.fromDh(1200),
+            savedAmountMad = Money.fromDh(1400),
             dueMonth = 10,
             dueYear = 2026,
             currentYear = 2026,
             currentMonth = 5
         )
-        assertEquals(0.0, funded.remainingToSaveMad, 0.001)
-        assertEquals(0.0, funded.monthlyReserveMad, 0.001)
+        assertEquals(Money.ZERO, funded.remainingToSaveMad)
+        assertEquals(Money.ZERO, funded.monthlyReserveMad)
         assertEquals(1.0f, funded.progressFraction, 0.001f)
     }
 
@@ -189,7 +184,7 @@ class FiscalCalculatorsTest {
             id = "vig_2027",
             preset = AnnualBillPreset.VIGNETTE,
             title = "Vignette Clio",
-            annualAmountMad = 700.0,
+            annualAmountMad = Money.fromDh(700),
             dueMonth = 1,
             dueYear = 2027,
             cvBand = FiscalRates.HorsepowerBand.UNDER_8_CV,
@@ -207,7 +202,7 @@ class FiscalCalculatorsTest {
 
         val (goal, recurringBill) = FiscalRepository.buildBackingGoalAndRecurringBill(
             bill = bill,
-            existingGoalSavedAmount = 100.0,
+            existingGoalSavedAmount = Money.fromDh(100),
             payCycleDay = 5,
             strings = FiscalStrings.forLang("fr"),
             currentYear = 2026,
@@ -215,13 +210,12 @@ class FiscalCalculatorsTest {
         )
         assertEquals("goal", goal.itemType)
         assertEquals("goal_fiscal_vig_2027", goal.id)
-        assertEquals(700.0, goal.amount, 0.001)
-        assertEquals(100.0, goal.secondaryAmount, 0.001)
+        assertEquals(Money.fromDh(700), goal.amount)
+        assertEquals(Money.fromDh(100), goal.secondaryAmount)
 
         assertEquals("bill", recurringBill.itemType)
         assertEquals("bill_fiscal_vig_2027", recurringBill.id)
-        // Remaining 600 DH over 6 months (Jul 2026 -> Jan 2027) = 100 DH/month
-        assertEquals(100.0, recurringBill.amount, 0.001)
+        assertEquals(Money.fromDh(100), recurringBill.amount)
         assertEquals(5, recurringBill.dayOrTurn)
     }
 
@@ -233,75 +227,70 @@ class FiscalCalculatorsTest {
     fun `zakat nisab threshold uses 85g gold or 595g silver from editable offline prices`() {
         val goldCfg = ZakatConfig(
             nisabStandard = NisabStandard.GOLD_85G,
-            goldPriceMadPerGram = 900.0,
-            silverPriceMadPerGram = 12.0
+            goldPriceMadPerGram = Money.fromDh(900),
+            silverPriceMadPerGram = Money.fromDh(12)
         )
-        assertEquals(76_500.0, ZakatCalculator.computeNisabThresholdMad(goldCfg), 0.001)
+        assertEquals(Money.fromDh(76_500), ZakatCalculator.computeNisabThresholdMad(goldCfg))
 
         val silverCfg = goldCfg.copy(nisabStandard = NisabStandard.SILVER_595G)
-        assertEquals(7_140.0, ZakatCalculator.computeNisabThresholdMad(silverCfg), 0.001)
+        assertEquals(Money.fromDh(7_140), ZakatCalculator.computeNisabThresholdMad(silverCfg))
     }
 
     @Test
     fun `zakat calculation handles below nisab, hawl running, and due now using HijrahDate`() {
         val config = ZakatConfig(
             nisabStandard = NisabStandard.GOLD_85G,
-            goldPriceMadPerGram = 900.0, // Nisab = 76,500 MAD
-            silverPriceMadPerGram = 11.0,
+            goldPriceMadPerGram = Money.fromDh(900),
+            silverPriceMadPerGram = Money.fromDh(11),
             pricesAsOfIso = "2026-01-01",
             hawlStartIso = "2026-01-01"
         )
 
-        // 1. Below Nisab: accounts 50,000 + savings 30,000 - borrowed Sellef 10,000 = 70,000 < 76,500
         val below = ZakatCalculator.calculate(
-            accountsTotalMad = 50_000.0,
-            savingsTotalMad = 30_000.0,
-            shortTermDebtsOwedMad = 10_000.0,
+            accountsTotalMad = Money.fromDh(50_000),
+            savingsTotalMad = Money.fromDh(30_000),
+            shortTermDebtsOwedMad = Money.fromDh(10_000),
             config = config,
             todayIso = "2026-06-01"
         )
-        assertEquals(70_000.0, below.eligibleWealthMad, 0.001)
-        assertEquals(0.0, below.zakatDueMad, 0.001)
+        assertEquals(Money.fromDh(70_000), below.eligibleWealthMad)
+        assertEquals(Money.ZERO, below.zakatDueMad)
         assertEquals(HawlStatus.BELOW_NISAB, below.status)
 
-        // 2. Hawl Running: accounts 80,000 + savings 40,000 - borrowed Sellef 20,000 = 100,000 >= 76,500
-        // 2.5% of 100,000 = 2,500 MAD
         val running = ZakatCalculator.calculate(
-            accountsTotalMad = 80_000.0,
-            savingsTotalMad = 40_000.0,
-            shortTermDebtsOwedMad = 20_000.0,
+            accountsTotalMad = Money.fromDh(80_000),
+            savingsTotalMad = Money.fromDh(40_000),
+            shortTermDebtsOwedMad = Money.fromDh(20_000),
             config = config,
             todayIso = "2026-06-01"
         )
-        assertEquals(100_000.0, running.eligibleWealthMad, 0.001)
-        assertEquals(2_500.0, running.zakatDueMad, 0.001)
+        assertEquals(Money.fromDh(100_000), running.eligibleWealthMad)
+        assertEquals(Money.fromDh(2_500), running.zakatDueMad)
         assertEquals(HawlStatus.HAWL_RUNNING, running.status)
-        // One Hijri year from 2026-01-01 is ~354–355 days (~2026-12-21), so on 2026-06-01 ~200+ days remain
         assertTrue("Expected daysRemaining in 190..215, got ${running.daysRemaining}", running.daysRemaining in 190..215)
         assertTrue("Hijri start label should end with H", running.hawlHijriStartLabel.endsWith("H"))
         assertTrue("Hijri due label should end with H", running.hawlHijriDueLabel.endsWith("H"))
-        assertTrue("Monthly reserve suggestion should be > 0", running.monthlyReserveSuggestionMad > 0.0)
+        assertTrue("Monthly reserve suggestion should be > 0", running.monthlyReserveSuggestionMad.isPositive)
 
-        // 3. Due Now: after 1 full lunar year has passed (2027-01-05 > ~2026-12-21)
         val dueNow = ZakatCalculator.calculate(
-            accountsTotalMad = 100_000.0,
-            savingsTotalMad = 0.0,
-            shortTermDebtsOwedMad = 0.0,
+            accountsTotalMad = Money.fromDh(100_000),
+            savingsTotalMad = Money.ZERO,
+            shortTermDebtsOwedMad = Money.ZERO,
             config = config,
             todayIso = "2027-01-05"
         )
         assertEquals(HawlStatus.DUE_NOW, dueNow.status)
         assertEquals(0, dueNow.daysRemaining)
-        assertEquals(2_500.0, dueNow.zakatDueMad, 0.001)
-        assertEquals(2_500.0, dueNow.monthlyReserveSuggestionMad, 0.001)
+        assertEquals(Money.fromDh(2_500), dueNow.zakatDueMad)
+        assertEquals(Money.fromDh(2_500), dueNow.monthlyReserveSuggestionMad)
     }
 
     @Test
     fun `zakat config JSON round-trip and 4-language fiscal strings are complete`() {
         val cfg = ZakatConfig(
             nisabStandard = NisabStandard.SILVER_595G,
-            goldPriceMadPerGram = 950.0,
-            silverPriceMadPerGram = 13.5,
+            goldPriceMadPerGram = Money.fromDh(950),
+            silverPriceMadPerGram = Money(1350L),
             pricesAsOfIso = "2026-03-15",
             hawlStartIso = "2026-02-10",
             linkedAnnualBillId = "zakat_2027"

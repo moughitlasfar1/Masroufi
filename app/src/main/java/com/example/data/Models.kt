@@ -5,6 +5,7 @@ import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
+import com.masroufi.core.Money
 import java.util.Locale
 
 object DefaultCategoryResolver {
@@ -253,7 +254,7 @@ object DefaultCategoryResolver {
 data class UserProfile(
     @DocumentId val id: String = "",
     val userId: String = "",
-    val baseBudget: Double = 6400.0,
+    val baseBudget: Money = Money(640_000L),
     val payCycleDay: Int = 1,
     val rolloverEnabled: Boolean = true,
     val language: String = "fr",
@@ -269,7 +270,7 @@ data class TransactionItem(
     @DocumentId val id: String = "",
     val userId: String = "",
     val type: String = "expense", // "expense", "income", "transfer"
-    val amount: Double = 0.0,
+    val amount: Money = Money.ZERO,
     val category: String = "autre",
     val envelopeKey: String = "autre",
     val accountId: String = "acc_cash",
@@ -303,7 +304,7 @@ data class AccountItem(
     val userId: String = "",
     val name: String = "",
     val kind: String = "cash", // "cash", "bank", "wallet"
-    val initialBalance: Double = 0.0,
+    val initialBalance: Money = Money.ZERO,
     val colorHex: String = "#10B981",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -380,14 +381,17 @@ data class FinancialItem(
     val itemType: String = "goal", // "goal", "bill", "debt", "daret", "seasonal", "preset", "custom_prefs"
     val name: String = "",
     val subtitle: String = "", // personName for debt, category for preset, eventType for seasonal, palette|currency for custom_prefs
-    val amount: Double = 0.0, // target / bill amount / debt total / monthlyContribution / preset amount
-    val secondaryAmount: Double = 0.0, // savedAmount / paidAmount / totalMembers
+    val amount: Money = Money.ZERO, // target / bill amount / debt total / monthlyContribution / preset amount
+    val secondaryAmount: Money = Money.ZERO, // savedAmount / paidAmount (0 for daret)
+    val daretMembers: Int? = null, // totalMembers for itemType == "daret"
     val dayOrTurn: Int = 1, // dueDay (1..31) / myTurnNumber / bitmask for visible cards
     val extraInt: Int = 0, // paidMonthsCount for Daret
     val dateOrCycle: String = "", // deadlineIso / payoutDateIso / comma-separated paidCycles / "lent"|"borrowed" / customSubtitle
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
-)
+) {
+    fun resolvedDaretMembers(): Int = (daretMembers ?: 1).coerceAtLeast(1)
+}
 
 data class CustomizationPrefs(
     val accentPalette: String = "majorelle", // "emerald", "majorelle", "amber", "amethyst", "terracotta", "ocean"

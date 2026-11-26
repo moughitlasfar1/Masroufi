@@ -90,6 +90,8 @@ import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.MasroufiTheme
 import com.example.ui.theme.glass3d
 import com.example.voice.MoonshineVoiceController
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
 import kotlinx.coroutines.delay
 
 /**
@@ -111,7 +113,7 @@ object QuickCaptureReplayGuard {
 
     fun buildPayloadKey(items: List<VoiceParsedTransaction>): String {
         return items.joinToString("|") { item ->
-            val amtCents = kotlin.math.round(item.amount * 100.0).toLong()
+            val amtCents = item.amount.centimes
             val normDesc = item.description.trim().lowercase(java.util.Locale.ROOT)
             "${item.txType.lowercase(java.util.Locale.ROOT)}:$amtCents:$normDesc"
         }
@@ -174,11 +176,16 @@ class QuickCaptureActivity : FragmentActivity() {
         val presetName = AssistantEntryValidator.sanitizeText(
             intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_NAME)
         )
-        val rawPresetAmount = intent?.getDoubleExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, 0.0) ?: 0.0
-        val presetAmount = if (rawPresetAmount.isFinite() && rawPresetAmount > 0.0 && rawPresetAmount <= AssistantEntryValidator.MAX_AMOUNT) {
+        val rawPresetAmount = if (intent?.hasExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT_CENTIMES) == true) {
+            Money.fromCentimes(intent.getLongExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT_CENTIMES, 0L))
+        } else {
+            val legacyDouble = intent?.getDoubleExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, 0.0) ?: 0.0
+            if (legacyDouble.isFinite()) Money.fromLegacyDoubleDh(legacyDouble) else Money.ZERO
+        }
+        val presetAmount = if (rawPresetAmount.isPositive && rawPresetAmount <= AssistantEntryValidator.MAX_AMOUNT) {
             rawPresetAmount
         } else {
-            0.0
+            Money.ZERO
         }
         val presetEnvelope = AssistantEntryValidator.sanitizeText(
             intent?.getStringExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE)
@@ -209,7 +216,7 @@ class QuickCaptureActivity : FragmentActivity() {
             }
             val assistantAutoItems = remember(assistantResolution) {
                 (assistantResolution as? AssistantExpenseResolution.AutoLoggedBatch)?.items
-                    ?.filter { it.amount > 0.0 && it.amount <= AssistantEntryValidator.MAX_AMOUNT }
+                    ?.filter { it.amount.isPositive && it.amount <= AssistantEntryValidator.MAX_AMOUNT }
                     ?: emptyList()
             }
 
@@ -272,7 +279,7 @@ class QuickCaptureActivity : FragmentActivity() {
 fun QuickCaptureOverlayContent(
     initialAction: String,
     presetName: String,
-    presetAmount: Double,
+    presetAmount: Money,
     presetEnvelope: String,
     assistantAutoItems: List<VoiceParsedTransaction> = emptyList(),
     snapshot: WidgetSnapshot,
@@ -286,7 +293,7 @@ fun QuickCaptureOverlayContent(
     val isDark = snapshot.isDarkTheme
 
     val presetPendingItems = remember(presetName, presetAmount, presetEnvelope, snapshot) {
-        if (presetAmount > 0.0) {
+        if (presetAmount.isPositive) {
             val envObj = snapshot.envelopes.find { it.key == presetEnvelope }
             val catLabel = envObj?.name ?: DefaultCategoryResolver.resolveTransactionCategoryDisplay(
                 presetEnvelope,
@@ -296,7 +303,7 @@ fun QuickCaptureOverlayContent(
             )
             listOf(
                 VoiceParsedTransaction(
-                    rawTranscript = "$presetName $presetAmount",
+                    rawTranscript = "$presetName ${presetAmount.toCanonicalDecimalString()}",
                     amount = presetAmount,
                     description = presetName.ifBlank { catLabel },
                     envelopeKey = presetEnvelope.ifBlank { "cafe" },
@@ -550,7 +557,7 @@ fun QuickCaptureOverlayContent(
                             onCommitExpense = { amount, envKey, catName, note ->
                                 val item = listOf(
                                     VoiceParsedTransaction(
-                                        rawTranscript = "$catName $amount",
+                                        rawTranscript = "$catName ${amount.toCanonicalDecimalString()}",
                                         amount = amount,
                                         description = note.ifBlank { catName },
                                         envelopeKey = envKey,
@@ -586,7 +593,7 @@ private fun QuickCaptureConfirmBatchSection(
     onConfirmSave: () -> Unit,
     onCancel: () -> Unit
 ) {
-    val total = PayCycleEngine.roundMoney(items.sumOf { it.amount })
+    val total = items.map { it.amount }.sumMoney()
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier
@@ -867,7 +874,7 @@ private fun QuickCaptureVoiceSection(
             }
         }
 
-        val totalAmount = PayCycleEngine.roundMoney(parsedItems.sumOf { it.amount })
+        val totalAmount = parsedItems.map { it.amount }.sumMoney()
         Button(
             onClick = { onCommitItems(parsedItems) },
             enabled = parsedItems.isNotEmpty(),
@@ -900,7 +907,7 @@ private fun QuickCaptureVoiceSection(
 private fun QuickCaptureKeypadSection(
     snapshot: WidgetSnapshot,
     isLockedPrivacyMode: Boolean = false,
-    onCommitExpense: (Double, String, String, String) -> Unit
+    onCommitExpense: (Money, String, String, String) -> Unit
 ) {
     val context = LocalContext.current
     val strings = Translations.forLang(snapshot.language)
@@ -940,7 +947,7 @@ private fun QuickCaptureKeypadSection(
                     hasCap = wEnv.hasCap
                 ),
                 baseAllocated = wEnv.totalAvailable,
-                rolloverAmount = 0.0,
+                rolloverAmount = Money.ZERO,
                 totalAvailable = wEnv.totalAvailable,
                 spent = wEnv.spent,
                 remaining = wEnv.totalAvailable - wEnv.spent,
@@ -978,7 +985,7 @@ private fun QuickCaptureKeypadSection(
                         text = if (rawDigits.isEmpty()) "0 $cur" else "$rawDigits $cur",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.ExtraBold,
-                        color = if (parsedAmount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (parsedAmount.isPositive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.testTag("qc_keypad_amount_display")
                     )
                     IconButton(
@@ -995,7 +1002,7 @@ private fun QuickCaptureKeypadSection(
                         )
                     }
                 }
-                if (!isLockedPrivacyMode && snapshot.smartSuggestionsEnabled && parsedAmount > 0.0) {
+                if (!isLockedPrivacyMode && snapshot.smartSuggestionsEnabled && parsedAmount.isPositive) {
                     val impact = PayCycleEngine.computePurchaseImpact(
                         amount = parsedAmount,
                         safePool = snapshot.effectiveSafePool(),
@@ -1050,10 +1057,10 @@ private fun QuickCaptureKeypadSection(
                                     onClick = {
                                         whyThisShortcut = null
                                         prefilledShortcut = shortcut
-                                        rawDigits = if (shortcut.amount % 1.0 == 0.0) {
-                                            shortcut.amount.toInt().toString()
+                                        rawDigits = if (shortcut.amount.centimes % 100L == 0L) {
+                                            (shortcut.amount.centimes / 100L).toString()
                                         } else {
-                                            shortcut.amount.toString()
+                                            shortcut.amount.toCanonicalDecimalString()
                                         }
                                         customDescription = shortcut.desc
                                         val matchedCat = categories.find { it.first == shortcut.envelopeKey }
@@ -1178,7 +1185,7 @@ private fun QuickCaptureKeypadSection(
 
         Button(
             onClick = {
-                if (parsedAmount > 0.0) {
+                if (parsedAmount.isPositive) {
                     prefilledShortcut?.let { prefilled ->
                         com.example.notifications.MasroufiNotificationManager.recordShortcutAmountEdit(
                             context = context,
@@ -1195,7 +1202,7 @@ private fun QuickCaptureKeypadSection(
                     )
                 }
             },
-            enabled = parsedAmount > 0.0,
+            enabled = parsedAmount.isPositive,
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -1227,7 +1234,7 @@ private fun QuickCaptureUndoConfirmationBar(
     onUndo: () -> Unit,
     onDoneNow: () -> Unit
 ) {
-    val total = PayCycleEngine.roundMoney(savedBatch.sumOf { it.amount })
+    val total = savedBatch.map { it.amount }.sumMoney()
     val formattedTotal = PayCycleEngine.formatCurrencyOrMask(total, currencySymbol, hideAmounts)
     val summaryLabel = if (savedBatch.size == 1) {
         "${savedBatch.first().desc} · $formattedTotal"

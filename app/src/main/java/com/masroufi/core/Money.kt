@@ -78,6 +78,17 @@ value class Money(val centimes: Long) : Comparable<Money> {
     fun coerceAtMost(maximumValue: Money): Money =
         if (centimes > maximumValue.centimes) maximumValue else this
 
+    fun coerceIn(minimumValue: Money, maximumValue: Money): Money {
+        require(minimumValue.centimes <= maximumValue.centimes) {
+            "Cannot coerce value to an empty range: maximum $maximumValue is less than minimum $minimumValue."
+        }
+        return when {
+            centimes < minimumValue.centimes -> minimumValue
+            centimes > maximumValue.centimes -> maximumValue
+            else -> this
+        }
+    }
+
     /** Exact major-unit (DH) representation with scale 2 (e.g., `1999L -> BigDecimal("19.99")`). */
     fun toBigDecimalDh(): BigDecimal = BigDecimal.valueOf(centimes, 2)
 
@@ -149,6 +160,11 @@ value class Money(val centimes: Long) : Comparable<Money> {
 
     companion object {
         val ZERO: Money = Money(0L)
+        val ONE_CENTIME: Money = Money(1L)
+
+        /** Default storable bounds (±100,000,000.00 DH = ±10_000_000_000L centimes). */
+        val MAX_STORABLE: Money = Money(MoneyParser.DEFAULT_MAX_ABS_CENTIMES)
+        val MIN_STORABLE: Money = Money(-MoneyParser.DEFAULT_MAX_ABS_CENTIMES)
 
         /** Exact centimes per 1 Dirham (MAD). */
         const val CENTIMES_PER_DH: Long = 100L
@@ -159,6 +175,9 @@ value class Money(val centimes: Long) : Comparable<Money> {
         private val HUNDRED_BD: BigDecimal = BigDecimal.valueOf(CENTIMES_PER_DH)
 
         fun fromCentimes(centimes: Long): Money = Money(centimes)
+
+        /** Exact whole-Dirham factory (`dh * 100L`); throws [ArithmeticException] on overflow. */
+        fun fromDh(dh: Long): Money = Money(Math.multiplyExact(dh, CENTIMES_PER_DH))
 
         /**
          * Converts exact major units (DH) to centimes via `movePointRight(2)` and explicit rounding.
@@ -232,6 +251,15 @@ fun Iterable<Money>.sumMoney(): Money {
     var acc = 0L
     for (item in this) {
         acc = Math.addExact(acc, item.centimes)
+    }
+    return Money(acc)
+}
+
+/** Exact sum of [Money] values produced by [selector]; throws [ArithmeticException] on overflow. */
+inline fun <T> Iterable<T>.sumMoney(selector: (T) -> Money): Money {
+    var acc = 0L
+    for (item in this) {
+        acc = Math.addExact(acc, selector(item).centimes)
     }
     return Money(acc)
 }

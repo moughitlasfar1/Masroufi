@@ -10,6 +10,10 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.snapshots
+import com.masroufi.core.Money
+import com.masroufi.credit.data.SavedCreditEntity
+import java.math.BigDecimal
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -17,6 +21,133 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+
+/**
+ * Explicit, zero-reflection Firestore [DocumentSnapshot] mappers for domain models carrying
+ * `@JvmInline value class Money`. Converts legacy Firestore DH numbers via [Money.fromLegacyDoubleDh]
+ * (`BigDecimal.valueOf`) and never uses `doc.toObject(...)` on classes with inline value fields.
+ */
+object FirestoreSnapshotMappers {
+
+    fun DocumentSnapshot.readMoneyDh(field: String, default: Money = Money.ZERO): Money {
+        val raw = get(field) ?: return default
+        return when (raw) {
+            is BigDecimal -> runCatching { Money.fromMajorUnits(raw) }.getOrDefault(default)
+            is Number -> {
+                val d = raw.toDouble()
+                if (d.isFinite()) runCatching { Money.fromLegacyDoubleDh(d) }.getOrDefault(default) else default
+            }
+            is String -> Money.fromDhString(raw) ?: default
+            else -> default
+        }
+    }
+
+    fun toUserProfile(doc: DocumentSnapshot, fallbackUserId: String): UserProfile {
+        val isDark = doc.getBoolean("isDarkTheme")
+            ?: doc.getBoolean("darkTheme")
+            ?: false
+        return UserProfile(
+            id = doc.id,
+            userId = doc.getString("userId") ?: fallbackUserId,
+            baseBudget = doc.readMoneyDh("baseBudget", Money.fromDh(6400)),
+            payCycleDay = (doc.getLong("payCycleDay") ?: 1L).toInt().coerceIn(1, 28),
+            rolloverEnabled = doc.getBoolean("rolloverEnabled") ?: true,
+            language = doc.getString("language") ?: "fr",
+            isDarkTheme = isDark,
+            seeded = doc.getBoolean("seeded") ?: true,
+            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+        )
+    }
+
+    fun toAccountItem(doc: DocumentSnapshot, fallbackUserId: String = ""): AccountItem {
+        return AccountItem(
+            id = doc.id,
+            userId = doc.getString("userId") ?: fallbackUserId,
+            name = doc.getString("name") ?: "",
+            kind = doc.getString("kind") ?: "cash",
+            initialBalance = doc.readMoneyDh("initialBalance", Money.ZERO),
+            colorHex = doc.getString("colorHex") ?: "#10B981",
+            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+        )
+    }
+
+    fun toTransactionItem(doc: DocumentSnapshot, fallbackUserId: String = ""): TransactionItem {
+        val rawCat = doc.getString("category") ?: "autre"
+        val rawEnv = doc.getString("envelopeKey") ?: "autre"
+        val normCat = DefaultCategoryResolver.normalizeStoredCategoryValue(rawCat, rawEnv)
+        val normEnv = DefaultCategoryResolver.canonicalDefaultId(rawEnv)
+            ?: DefaultCategoryResolver.canonicalDefaultId(rawCat)
+            ?: rawEnv
+        return TransactionItem(
+            id = doc.id,
+            userId = doc.getString("userId") ?: fallbackUserId,
+            type = doc.getString("type") ?: "expense",
+            amount = doc.readMoneyDh("amount", Money.ZERO),
+            category = normCat,
+            envelopeKey = normEnv,
+            accountId = doc.getString("accountId") ?: "acc_cash",
+            toAccountId = doc.getString("toAccountId") ?: "",
+            desc = doc.getString("desc") ?: "",
+            isoDate = doc.getString("isoDate") ?: "",
+            hourOfDay = (doc.getLong("hourOfDay") ?: -1L).toInt(),
+            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+        )
+    }
+
+    fun toFinancialItem(doc: DocumentSnapshot, fallbackUserId: String = ""): FinancialItem {
+        val itemType = doc.getString("itemType") ?: "goal"
+        val isDaret = itemType == "daret"
+        val resolvedDaretMembers = if (isDaret) {
+            val explicit = doc.getLong("daretMembers")?.toInt()
+            val legacy = (doc.get("secondaryAmount") as? Number)?.toDouble()
+                ?.takeIf { it.isFinite() }?.roundToInt()
+            (explicit ?: legacy ?: 1).coerceAtLeast(1)
+        } else {
+            null
+        }
+        val secondaryMoney = if (isDaret) Money.ZERO else doc.readMoneyDh("secondaryAmount", Money.ZERO)
+        return FinancialItem(
+            id = doc.id,
+            userId = doc.getString("userId") ?: fallbackUserId,
+            itemType = itemType,
+            name = doc.getString("name") ?: "",
+            subtitle = doc.getString("subtitle") ?: "",
+            amount = doc.readMoneyDh("amount", Money.ZERO),
+            secondaryAmount = secondaryMoney,
+            daretMembers = resolvedDaretMembers,
+            dayOrTurn = (doc.getLong("dayOrTurn") ?: 1L).toInt(),
+            extraInt = (doc.getLong("extraInt") ?: 0L).toInt(),
+            dateOrCycle = doc.getString("dateOrCycle") ?: "",
+            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
+            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+        )
+    }
+
+    fun toSavedCreditEntity(doc: DocumentSnapshot, fallbackUserId: String = ""): SavedCreditEntity {
+        return SavedCreditEntity(
+            id = doc.id,
+            userId = doc.getString("userId") ?: fallbackUserId,
+            type = doc.getString("type") ?: "CONSOMMATION",
+            loanAmount = doc.readMoneyDh("loanAmount", Money.ZERO),
+            downPayment = doc.readMoneyDh("downPayment", Money.ZERO),
+            financedPrincipal = doc.readMoneyDh("financedPrincipal", Money.ZERO),
+            durationMonths = (doc.getLong("durationMonths") ?: 60L).toInt(),
+            deferredMonths = (doc.getLong("deferredMonths") ?: 0L).toInt(),
+            annualInterestRateHt = doc.getDouble("annualInterestRateHt") ?: 7.5,
+            applyInterestTva = doc.getBoolean("applyInterestTva") ?: true,
+            insuranceRate = doc.getDouble("insuranceRate") ?: 0.0,
+            monthlyPayment = doc.readMoneyDh("monthlyPayment", Money.ZERO),
+            totalCost = doc.readMoneyDh("totalCost", Money.ZERO),
+            debtToIncomeRatio = doc.getDouble("debtToIncomeRatio") ?: 0.0,
+            maxAllowedDti = doc.getDouble("maxAllowedDti") ?: 45.0,
+            linkToMonthlyExpenses = doc.getBoolean("linkToMonthlyExpenses") ?: false,
+            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+        )
+    }
+}
 
 class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource {
 
@@ -44,21 +175,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             docRef.snapshots()
                 .map { snapshot ->
                     if (snapshot.exists()) {
-                        val isDark = snapshot.getBoolean("isDarkTheme")
-                            ?: snapshot.getBoolean("darkTheme")
-                            ?: false
-                        UserProfile(
-                            id = snapshot.id,
-                            userId = snapshot.getString("userId") ?: userId,
-                            baseBudget = snapshot.getDouble("baseBudget") ?: 6400.0,
-                            payCycleDay = (snapshot.getLong("payCycleDay") ?: 1L).toInt().coerceIn(1, 28),
-                            rolloverEnabled = snapshot.getBoolean("rolloverEnabled") ?: true,
-                            language = snapshot.getString("language") ?: "fr",
-                            isDarkTheme = isDark,
-                            seeded = snapshot.getBoolean("seeded") ?: true,
-                            createdAt = snapshot.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-                            updatedAt = snapshot.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                        )
+                        FirestoreSnapshotMappers.toUserProfile(snapshot, userId)
                     } else {
                         null
                     }
@@ -85,14 +202,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         emitAll(
             query.snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(TransactionItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                        .map { tx ->
-                            val normCat = DefaultCategoryResolver.normalizeStoredCategoryValue(tx.category, tx.envelopeKey)
-                            val normEnv = DefaultCategoryResolver.canonicalDefaultId(tx.envelopeKey)
-                                ?: DefaultCategoryResolver.canonicalDefaultId(tx.category)
-                                ?: tx.envelopeKey
-                            tx.copy(category = normCat, envelopeKey = normEnv)
-                        }
+                    snapshot.documents.map { doc ->
+                        FirestoreSnapshotMappers.toTransactionItem(doc, userId)
+                    }
                 }
                 .catch { error ->
                     if (error is Exception) handleFirestoreError(error, OperationType.LIST, colRef.path)
@@ -106,7 +218,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         emitAll(
             colRef.whereEqualTo("userId", userId).snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(AccountItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    snapshot.documents.map { doc ->
+                        FirestoreSnapshotMappers.toAccountItem(doc, userId)
+                    }
                 }
                 .catch { error ->
                     if (error is Exception) handleFirestoreError(error, OperationType.LIST, colRef.path)
@@ -150,7 +264,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         emitAll(
             colRef.whereEqualTo("userId", userId).snapshots()
                 .map { snapshot ->
-                    snapshot.toObjects(FinancialItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                    snapshot.documents.map { doc ->
+                        FirestoreSnapshotMappers.toFinancialItem(doc, userId)
+                    }
                 }
                 .catch { error ->
                     if (error is Exception) handleFirestoreError(error, OperationType.LIST, colRef.path)
@@ -162,7 +278,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
     private fun buildProfilePayload(uid: String, profile: UserProfile): Map<String, Any> {
         return mapOf(
             "userId" to uid,
-            "baseBudget" to profile.baseBudget.coerceIn(0.0, 100000000.0),
+            "baseBudget" to profile.baseBudget.coerceIn(Money.ZERO, Money.MAX_STORABLE).toBigDecimalDh().toDouble(),
             "payCycleDay" to profile.payCycleDay.coerceIn(1, 28),
             "rolloverEnabled" to profile.rolloverEnabled,
             "language" to (if (profile.language in listOf("fr", "ar", "darija", "en")) profile.language else "fr"),
@@ -197,7 +313,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         return mapOf(
             "userId" to uid,
             "type" to safeType,
-            "amount" to tx.amount.coerceIn(0.01, 100000000.0),
+            "amount" to tx.amount.coerceIn(Money.ONE_CENTIME, Money.MAX_STORABLE).toBigDecimalDh().toDouble(),
             "category" to normalizedCat,
             "envelopeKey" to normalizedEnvKey,
             "accountId" to safeAccountId,
@@ -215,7 +331,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             "userId" to uid,
             "name" to account.name.ifBlank { "Compte" }.take(80),
             "kind" to safeKind,
-            "initialBalance" to account.initialBalance.coerceIn(-100000000.0, 100000000.0),
+            "initialBalance" to account.initialBalance.coerceIn(Money.MIN_STORABLE, Money.MAX_STORABLE).toBigDecimalDh().toDouble(),
             "colorHex" to account.colorHex.ifBlank { "#10B981" }.take(20),
             "createdAt" to (account.createdAt ?: FieldValue.serverTimestamp()),
             "updatedAt" to FieldValue.serverTimestamp()
@@ -243,13 +359,18 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
     private fun buildFinancialItemPayload(uid: String, item: FinancialItem): Map<String, Any> {
         val allowedTypes = listOf("goal", "bill", "debt", "daret", "seasonal", "preset", "custom_prefs")
         val safeType = if (item.itemType in allowedTypes) item.itemType else "goal"
+        val secondaryValue = if (safeType == "daret") {
+            item.resolvedDaretMembers().toDouble()
+        } else {
+            item.secondaryAmount.coerceIn(Money.ZERO, Money.MAX_STORABLE).toBigDecimalDh().toDouble()
+        }
         return mapOf(
             "userId" to uid,
             "itemType" to safeType,
             "name" to item.name.ifBlank { "Élément" }.take(120),
             "subtitle" to item.subtitle.take(250),
-            "amount" to item.amount.coerceIn(0.0, 100000000.0),
-            "secondaryAmount" to item.secondaryAmount.coerceIn(0.0, 100000000.0),
+            "amount" to item.amount.coerceIn(Money.ZERO, Money.MAX_STORABLE).toBigDecimalDh().toDouble(),
+            "secondaryAmount" to secondaryValue,
             "dayOrTurn" to item.dayOrTurn.coerceIn(0, 366),
             "extraInt" to item.extraInt.coerceIn(0, 366),
             "dateOrCycle" to item.dateOrCycle.take(250),
@@ -291,7 +412,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         val docRef = db.collection("users").document(targetUserId).collection("transactions").document(txId)
         try {
             val snap = docRef.get().await()
-            return snap.toObject(TransactionItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            return if (snap.exists()) FirestoreSnapshotMappers.toTransactionItem(snap, targetUserId) else null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -528,10 +649,10 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
     )
 
     private fun defaultQuickPresets(): List<FinancialItem> = listOf(
-        FinancialItem(id = "pre_cafe", itemType = "preset", name = "Café & Garo", subtitle = "cafe", amount = 20.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
-        FinancialItem(id = "pre_taxi", itemType = "preset", name = "Petit Taxi", subtitle = "transport", amount = 15.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
-        FinancialItem(id = "pre_bread", itemType = "preset", name = "Khobz & Lben", subtitle = "charges", amount = 10.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
-        FinancialItem(id = "pre_oncf", itemType = "preset", name = "Ticket ONCF", subtitle = "transport", amount = 50.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_bank")
+        FinancialItem(id = "pre_cafe", itemType = "preset", name = "Café & Garo", subtitle = "cafe", amount = Money.fromDh(20), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
+        FinancialItem(id = "pre_taxi", itemType = "preset", name = "Petit Taxi", subtitle = "transport", amount = Money.fromDh(15), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
+        FinancialItem(id = "pre_bread", itemType = "preset", name = "Khobz & Lben", subtitle = "charges", amount = Money.fromDh(10), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
+        FinancialItem(id = "pre_oncf", itemType = "preset", name = "Ticket ONCF", subtitle = "transport", amount = Money.fromDh(50), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_bank")
     )
 
     /**
@@ -555,7 +676,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             val newProfile = UserProfile(
                 id = uid,
                 userId = uid,
-                baseBudget = 6400.0,
+                baseBudget = Money.fromDh(6400),
                 payCycleDay = 1,
                 rolloverEnabled = true,
                 language = "fr",
@@ -567,9 +688,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
 
             // Clean 0 DH Accounts (Cash, Bank, Mobile Wallet)
             val cleanAccounts = listOf(
-                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981"),
-                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8"),
-                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#FBBF24")
+                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.ZERO, colorHex = "#10B981"),
+                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.ZERO, colorHex = "#38BDF8"),
+                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.ZERO, colorHex = "#FBBF24")
             )
             for (acc in cleanAccounts) {
                 val ref = profileRef.collection("accounts").document(acc.id)
@@ -619,9 +740,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             val batch = db.batch()
 
             val demoAccounts = listOf(
-                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 1850.0, colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
-                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 5200.0, colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
-                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 650.0, colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
+                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.fromDh(1850), colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
+                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.fromDh(5200), colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
+                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.fromDh(650), colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
             )
             for (acc in demoAccounts) {
                 val ref = profileRef.collection("accounts").document(acc.id)
@@ -634,15 +755,15 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             }
 
             val demoTxs = listOf(
-                TransactionItem(id = "tx_demo_9", type = "expense", amount = 5.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
-                TransactionItem(id = "tx_demo_8", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-30"),
-                TransactionItem(id = "tx_demo_7", type = "expense", amount = 5.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
-                TransactionItem(id = "tx_demo_6", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-30"),
-                TransactionItem(id = "tx_demo_5", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-29"),
-                TransactionItem(id = "tx_demo_4", type = "expense", amount = 457.0, category = "Transport & Carburant", envelopeKey = "transport", accountId = "acc_bank", desc = "ONCF CARTE", isoDate = "2026-10-29"),
-                TransactionItem(id = "tx_demo_3", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-29"),
-                TransactionItem(id = "tx_demo_2", type = "expense", amount = 500.0, category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit mama", isoDate = "2026-10-29"),
-                TransactionItem(id = "tx_demo_1", type = "expense", amount = 1000.0, category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit inaam", isoDate = "2026-10-29")
+                TransactionItem(id = "tx_demo_9", type = "expense", amount = Money.fromDh(5), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
+                TransactionItem(id = "tx_demo_8", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-30"),
+                TransactionItem(id = "tx_demo_7", type = "expense", amount = Money.fromDh(5), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
+                TransactionItem(id = "tx_demo_6", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-30"),
+                TransactionItem(id = "tx_demo_5", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-29"),
+                TransactionItem(id = "tx_demo_4", type = "expense", amount = Money.fromDh(457), category = "Transport & Carburant", envelopeKey = "transport", accountId = "acc_bank", desc = "ONCF CARTE", isoDate = "2026-10-29"),
+                TransactionItem(id = "tx_demo_3", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-29"),
+                TransactionItem(id = "tx_demo_2", type = "expense", amount = Money.fromDh(500), category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit mama", isoDate = "2026-10-29"),
+                TransactionItem(id = "tx_demo_1", type = "expense", amount = Money.fromDh(1000), category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit inaam", isoDate = "2026-10-29")
             )
             for (tx in demoTxs) {
                 val ref = profileRef.collection("transactions").document(tx.id)
@@ -650,15 +771,15 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             }
 
             val demoItems = defaultQuickPresets() + listOf(
-                FinancialItem(id = "bill_fibre", itemType = "bill", name = "Fibre Optique & Mobile", subtitle = "charges", amount = 250.0, secondaryAmount = 0.0, dayOrTurn = 5, extraInt = 0, dateOrCycle = ""),
-                FinancialItem(id = "bill_lydec", itemType = "bill", name = "Eau & Électricité (Lydec/Redal)", subtitle = "charges", amount = 320.0, secondaryAmount = 0.0, dayOrTurn = 18, extraInt = 0, dateOrCycle = ""),
-                FinancialItem(id = "goal_urgence", itemType = "goal", name = "Fonds d'urgence (Tawfir)", subtitle = "epargne", amount = 10000.0, secondaryAmount = 4200.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-06-30"),
-                FinancialItem(id = "debt_mama", itemType = "debt", name = "Crédit Mama", subtitle = "Mama", amount = 500.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
-                FinancialItem(id = "debt_inaam", itemType = "debt", name = "Crédit Inaam", subtitle = "Inaam", amount = 1000.0, secondaryAmount = 200.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
-                FinancialItem(id = "daret_famille", itemType = "daret", name = "Daret Collègues", subtitle = "10 membres", amount = 1000.0, secondaryAmount = 10.0, dayOrTurn = 4, extraInt = 3, dateOrCycle = "2027-02-01"),
-                FinancialItem(id = "season_ramadan", itemType = "seasonal", name = "Ramadan & Ftous", subtitle = "ramadan", amount = 3000.0, secondaryAmount = 900.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-02-17"),
-                FinancialItem(id = "season_eid", itemType = "seasonal", name = "Aïd al-Adha (Kebch)", subtitle = "eid", amount = 4500.0, secondaryAmount = 1200.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-05-16"),
-                FinancialItem(id = "season_vignette", itemType = "seasonal", name = "Vignette & Assurance Auto", subtitle = "vignette", amount = 3800.0, secondaryAmount = 1500.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-01-31")
+                FinancialItem(id = "bill_fibre", itemType = "bill", name = "Fibre Optique & Mobile", subtitle = "charges", amount = Money.fromDh(250), secondaryAmount = Money.ZERO, dayOrTurn = 5, extraInt = 0, dateOrCycle = ""),
+                FinancialItem(id = "bill_lydec", itemType = "bill", name = "Eau & Électricité (Lydec/Redal)", subtitle = "charges", amount = Money.fromDh(320), secondaryAmount = Money.ZERO, dayOrTurn = 18, extraInt = 0, dateOrCycle = ""),
+                FinancialItem(id = "goal_urgence", itemType = "goal", name = "Fonds d'urgence (Tawfir)", subtitle = "epargne", amount = Money.fromDh(10000), secondaryAmount = Money.fromDh(4200), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-06-30"),
+                FinancialItem(id = "debt_mama", itemType = "debt", name = "Crédit Mama", subtitle = "Mama", amount = Money.fromDh(500), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
+                FinancialItem(id = "debt_inaam", itemType = "debt", name = "Crédit Inaam", subtitle = "Inaam", amount = Money.fromDh(1000), secondaryAmount = Money.fromDh(200), dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
+                FinancialItem(id = "daret_famille", itemType = "daret", name = "Daret Collègues", subtitle = "10 membres", amount = Money.fromDh(1000), secondaryAmount = Money.ZERO, daretMembers = 10, dayOrTurn = 4, extraInt = 3, dateOrCycle = "2027-02-01"),
+                FinancialItem(id = "season_ramadan", itemType = "seasonal", name = "Ramadan & Ftous", subtitle = "ramadan", amount = Money.fromDh(3000), secondaryAmount = Money.fromDh(900), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-02-17"),
+                FinancialItem(id = "season_eid", itemType = "seasonal", name = "Aïd al-Adha (Kebch)", subtitle = "eid", amount = Money.fromDh(4500), secondaryAmount = Money.fromDh(1200), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-05-16"),
+                FinancialItem(id = "season_vignette", itemType = "seasonal", name = "Vignette & Assurance Auto", subtitle = "vignette", amount = Money.fromDh(3800), secondaryAmount = Money.fromDh(1500), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-01-31")
             )
             for (item in demoItems) {
                 val ref = profileRef.collection("items").document(item.id)
@@ -709,9 +830,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
 
             val cleanBatch = db.batch()
             val cleanAccounts = listOf(
-                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
-                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
-                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
+                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.ZERO, colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
+                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.ZERO, colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
+                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.ZERO, colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
             )
             for (acc in cleanAccounts) {
                 cleanBatch.set(profileRef.collection("accounts").document(acc.id), buildAccountPayload(uid, acc))

@@ -1,6 +1,9 @@
 package com.masroufi.fiscal.domain
 
 import android.os.Build
+import com.masroufi.core.Money
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 import java.time.chrono.HijrahDate
 import java.time.format.DateTimeFormatter
@@ -8,8 +11,6 @@ import java.time.temporal.ChronoField
 import java.time.temporal.ChronoUnit
 import java.util.Calendar
 import java.util.Locale
-import kotlin.math.max
-import kotlin.math.round
 
 enum class AnnualBillPreset(val key: String) {
     VIGNETTE("vignette"),
@@ -27,7 +28,7 @@ data class AnnualBillItem(
     val id: String,
     val preset: AnnualBillPreset,
     val title: String,
-    val annualAmountMad: Double,
+    val annualAmountMad: Money,
     val dueMonth: Int, // 1..12
     val dueYear: Int,
     val cvBand: FiscalRates.HorsepowerBand? = null,
@@ -41,11 +42,11 @@ data class AnnualBillItem(
 )
 
 data class AnnualBillReserveBreakdown(
-    val annualAmountMad: Double,
-    val savedAmountMad: Double,
-    val remainingToSaveMad: Double,
+    val annualAmountMad: Money,
+    val savedAmountMad: Money,
+    val remainingToSaveMad: Money,
     val monthsRemaining: Int,
-    val monthlyReserveMad: Double,
+    val monthlyReserveMad: Money,
     val progressFraction: Float,
     val dueYear: Int,
     val dueMonth: Int,
@@ -60,11 +61,6 @@ data class AnnualBillReserveBreakdown(
  * school fees, Eid, Zakat) into monthly reserves.
  */
 object AnnualBillCalculator {
-
-    fun roundMoney(value: Double): Double {
-        if (!value.isFinite()) return 0.0
-        return round(value * 100.0) / 100.0
-    }
 
     /**
      * Resolves the upcoming target year for a newly created bill with [dueMonth] (`1..12`).
@@ -98,17 +94,17 @@ object AnnualBillCalculator {
      *     sets `isDueDatePassed = true`, `monthsRemaining = 1`, and `monthlyReserveMad = remainingToSaveMad`.
      */
     fun computeBreakdown(
-        annualAmountMad: Double,
-        savedAmountMad: Double,
+        annualAmountMad: Money,
+        savedAmountMad: Money,
         dueMonth: Int,
         dueYear: Int,
         currentYear: Int,
         currentMonth: Int,
         rollForwardIfPassed: Boolean = false
     ): AnnualBillReserveBreakdown {
-        val safeAnnual = roundMoney(annualAmountMad.coerceAtLeast(0.0))
-        val safeSaved = roundMoney(savedAmountMad.coerceAtLeast(0.0))
-        val remaining = roundMoney(max(0.0, safeAnnual - safeSaved))
+        val safeAnnual = annualAmountMad.coerceAtLeast(Money.ZERO)
+        val safeSaved = savedAmountMad.coerceAtLeast(Money.ZERO)
+        val remaining = (safeAnnual - safeSaved).coerceAtLeast(Money.ZERO)
         val safeDueMonth = dueMonth.coerceIn(1, 12)
         val safeCurrentMonth = currentMonth.coerceIn(1, 12)
 
@@ -151,15 +147,15 @@ object AnnualBillCalculator {
             }
         }
 
-        val monthlyReserve = if (remaining <= 0.0) {
-            0.0
+        val monthlyReserve = if (!remaining.isPositive) {
+            Money.ZERO
         } else {
-            roundMoney(remaining / monthsRemaining.toDouble())
+            remaining.divideBy(monthsRemaining.toLong(), RoundingMode.HALF_UP)
         }
-        val progress = if (safeAnnual <= 0.0) {
+        val progress = if (!safeAnnual.isPositive) {
             0f
         } else {
-            (safeSaved / safeAnnual).toFloat().coerceIn(0f, 1f)
+            (safeSaved.centimes.toDouble() / safeAnnual.centimes.toDouble()).toFloat().coerceIn(0f, 1f)
         }
         val dueDateIso = String.format(Locale.US, "%04d-%02d-01", effectiveDueYear, safeDueMonth)
 
@@ -207,20 +203,20 @@ enum class HawlStatus {
 
 data class ZakatConfig(
     val nisabStandard: NisabStandard = NisabStandard.GOLD_85G,
-    val goldPriceMadPerGram: Double = FiscalRates.DEFAULT_GOLD_PRICE_MAD_PER_GRAM,
-    val silverPriceMadPerGram: Double = FiscalRates.DEFAULT_SILVER_PRICE_MAD_PER_GRAM,
+    val goldPriceMadPerGram: Money = FiscalRates.DEFAULT_GOLD_PRICE_MAD_PER_GRAM,
+    val silverPriceMadPerGram: Money = FiscalRates.DEFAULT_SILVER_PRICE_MAD_PER_GRAM,
     val pricesAsOfIso: String = FiscalRates.DEFAULT_METAL_PRICES_AS_OF_ISO,
     val hawlStartIso: String = "", // YYYY-MM-DD when wealth first passed Nisab
     val linkedAnnualBillId: String = ""
 )
 
 data class ZakatCalculationResult(
-    val accountsTotalMad: Double,
-    val savingsTotalMad: Double,
-    val shortTermDebtsOwedMad: Double,
-    val eligibleWealthMad: Double,
-    val nisabThresholdMad: Double,
-    val zakatDueMad: Double,
+    val accountsTotalMad: Money,
+    val savingsTotalMad: Money,
+    val shortTermDebtsOwedMad: Money,
+    val eligibleWealthMad: Money,
+    val nisabThresholdMad: Money,
+    val zakatDueMad: Money,
     val status: HawlStatus,
     val hawlStartIso: String,
     val hawlDueDateIso: String,
@@ -228,7 +224,7 @@ data class ZakatCalculationResult(
     val hawlHijriDueLabel: String,
     val daysRemaining: Int,
     val hawlProgressFraction: Float,
-    val monthlyReserveSuggestionMad: Double
+    val monthlyReserveSuggestionMad: Money
 )
 
 /**
@@ -248,17 +244,15 @@ object ZakatCalculator {
         return y in 1970..2150 && m in 1..12 && d in 1..31
     }
 
-    fun computeNisabThresholdMad(config: ZakatConfig): Double {
-        val goldPrice = config.goldPriceMadPerGram.takeIf { it.isFinite() && it > 0.0 }
+    fun computeNisabThresholdMad(config: ZakatConfig): Money {
+        val goldPrice = config.goldPriceMadPerGram.takeIf { it.isPositive }
             ?: FiscalRates.DEFAULT_GOLD_PRICE_MAD_PER_GRAM
-        val silverPrice = config.silverPriceMadPerGram.takeIf { it.isFinite() && it > 0.0 }
+        val silverPrice = config.silverPriceMadPerGram.takeIf { it.isPositive }
             ?: FiscalRates.DEFAULT_SILVER_PRICE_MAD_PER_GRAM
-        return AnnualBillCalculator.roundMoney(
-            when (config.nisabStandard) {
-                NisabStandard.GOLD_85G -> FiscalRates.NISAB_GOLD_GRAMS * goldPrice
-                NisabStandard.SILVER_595G -> FiscalRates.NISAB_SILVER_GRAMS * silverPrice
-            }
-        )
+        return when (config.nisabStandard) {
+            NisabStandard.GOLD_85G -> goldPrice.multiplyRate(BigDecimal.valueOf(FiscalRates.NISAB_GOLD_GRAMS))
+            NisabStandard.SILVER_595G -> silverPrice.multiplyRate(BigDecimal.valueOf(FiscalRates.NISAB_SILVER_GRAMS))
+        }
     }
 
     /**
@@ -269,25 +263,23 @@ object ZakatCalculator {
      * `zakatDue = if (eligibleWealth >= nisabThreshold) eligibleWealth * 0.025 else 0`
      */
     fun calculate(
-        accountsTotalMad: Double,
-        savingsTotalMad: Double,
-        shortTermDebtsOwedMad: Double,
+        accountsTotalMad: Money,
+        savingsTotalMad: Money,
+        shortTermDebtsOwedMad: Money,
         config: ZakatConfig,
         todayIso: String,
-        alreadyReservedMad: Double = 0.0
+        alreadyReservedMad: Money = Money.ZERO
     ): ZakatCalculationResult {
-        val safeAccounts = AnnualBillCalculator.roundMoney(accountsTotalMad.coerceAtLeast(0.0))
-        val safeSavings = AnnualBillCalculator.roundMoney(savingsTotalMad.coerceAtLeast(0.0))
-        val safeDebtsOwed = AnnualBillCalculator.roundMoney(shortTermDebtsOwedMad.coerceAtLeast(0.0))
-        val eligibleWealth = AnnualBillCalculator.roundMoney(
-            max(0.0, safeAccounts + safeSavings - safeDebtsOwed)
-        )
+        val safeAccounts = accountsTotalMad.coerceAtLeast(Money.ZERO)
+        val safeSavings = savingsTotalMad.coerceAtLeast(Money.ZERO)
+        val safeDebtsOwed = shortTermDebtsOwedMad.coerceAtLeast(Money.ZERO)
+        val eligibleWealth = (safeAccounts + safeSavings - safeDebtsOwed).coerceAtLeast(Money.ZERO)
         val nisabThreshold = computeNisabThresholdMad(config)
-        val meetsNisab = eligibleWealth >= nisabThreshold && nisabThreshold > 0.0
+        val meetsNisab = eligibleWealth >= nisabThreshold && nisabThreshold.isPositive
         val zakatDue = if (meetsNisab) {
-            AnnualBillCalculator.roundMoney(eligibleWealth * FiscalRates.ZAKAT_RATE)
+            eligibleWealth.multiplyRate(BigDecimal.valueOf(FiscalRates.ZAKAT_RATE))
         } else {
-            0.0
+            Money.ZERO
         }
 
         val normalizedToday = if (isValidIsoDate(todayIso)) todayIso.trim() else fallbackTodayIso()
@@ -315,7 +307,7 @@ object ZakatCalculator {
         val curYear = todayParts.getOrNull(0)?.toIntOrNull() ?: 2026
         val curMonth = todayParts.getOrNull(1)?.toIntOrNull() ?: 1
 
-        val monthlyReserve = if (zakatDue > 0.0) {
+        val monthlyReserve = if (zakatDue.isPositive) {
             AnnualBillCalculator.computeBreakdown(
                 annualAmountMad = zakatDue,
                 savedAmountMad = alreadyReservedMad,
@@ -326,7 +318,7 @@ object ZakatCalculator {
                 rollForwardIfPassed = false
             ).monthlyReserveMad
         } else {
-            0.0
+            Money.ZERO
         }
 
         return ZakatCalculationResult(

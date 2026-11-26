@@ -2,6 +2,8 @@ package com.masroufi.credit.presentation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
 import com.masroufi.credit.data.CreditDataSource
 import com.masroufi.credit.data.SavedCreditEntity
 import com.masroufi.credit.domain.CreditCalculator
@@ -93,7 +95,7 @@ class CreditSimulatorViewModel(
                             hasAppliedSavedDebtPrefill = true
                         }
                         val nextInput = if (shouldPrefillDebt) {
-                            val totalSavedMonthly = credits.sumOf { it.monthlyPayment }
+                            val totalSavedMonthly = credits.map { it.monthlyPayment }.sumMoney()
                             val anyMortgage = credits.any { it.type == CreditType.IMMOBILIER.name }
                             current.input.copy(
                                 existingMonthlyDebt = if (!userEditedExistingDebt) totalSavedMonthly else current.input.existingMonthlyDebt,
@@ -127,8 +129,8 @@ class CreditSimulatorViewModel(
         }
     }
 
-    fun applyMasroufiIncomePrefill(monthlySalaryMad: Double) {
-        if (hasAppliedIncomePrefill || monthlySalaryMad <= 0.0) return
+    fun applyMasroufiIncomePrefill(monthlySalaryMad: Money) {
+        if (hasAppliedIncomePrefill || !monthlySalaryMad.isPositive) return
         hasAppliedIncomePrefill = true
         _uiState.update { current ->
             buildUiState(
@@ -157,17 +159,15 @@ class CreditSimulatorViewModel(
         }
     }
 
-    fun onLoanAmountChanged(amount: Double) {
+    fun onLoanAmountChanged(amount: Money) {
         updateInput { input ->
-            val sanitized = if (amount.isFinite()) amount.coerceAtLeast(0.0) else 0.0
-            input.copy(loanAmount = sanitized)
+            input.copy(loanAmount = amount.coerceAtLeast(Money.ZERO))
         }
     }
 
-    fun onDownPaymentChanged(amount: Double) {
+    fun onDownPaymentChanged(amount: Money) {
         updateInput { input ->
-            val sanitized = if (amount.isFinite()) amount.coerceAtLeast(0.0) else 0.0
-            input.copy(downPayment = sanitized)
+            input.copy(downPayment = amount.coerceAtLeast(Money.ZERO))
         }
     }
 
@@ -199,19 +199,17 @@ class CreditSimulatorViewModel(
         updateInput { it.copy(applyInterestTva = apply) }
     }
 
-    fun onMonthlyNetIncomeChanged(income: Double) {
+    fun onMonthlyNetIncomeChanged(income: Money) {
         hasAppliedIncomePrefill = true
         updateInput { input ->
-            val sanitized = if (income.isFinite()) income.coerceAtLeast(0.0) else 0.0
-            input.copy(monthlyNetIncome = sanitized)
+            input.copy(monthlyNetIncome = income.coerceAtLeast(Money.ZERO))
         }
     }
 
-    fun onExistingMonthlyDebtChanged(debt: Double) {
+    fun onExistingMonthlyDebtChanged(debt: Money) {
         userEditedExistingDebt = true
         updateInput { input ->
-            val sanitized = if (debt.isFinite()) debt.coerceAtLeast(0.0) else 0.0
-            input.copy(existingMonthlyDebt = sanitized)
+            input.copy(existingMonthlyDebt = debt.coerceAtLeast(Money.ZERO))
         }
     }
 
@@ -367,10 +365,11 @@ class CreditSimulatorViewModel(
     ): Map<String, String> {
         val strings = CreditStrings.forLang(language)
         val errors = linkedMapOf<String, String>()
-        if (!input.loanAmount.isFinite() || input.loanAmount <= 0.0 || input.loanAmount > 100_000_000.0) {
+        val maxLoan = Money.fromDh(100_000_000)
+        if (!input.loanAmount.isPositive || input.loanAmount > maxLoan) {
             errors[CreditValidationKeys.LOAN_AMOUNT] = strings.errorLoanAmountInvalid
         }
-        if (!input.downPayment.isFinite() || input.downPayment < 0.0 || input.downPayment > input.loanAmount) {
+        if (input.downPayment.isNegative || input.downPayment > input.loanAmount) {
             errors[CreditValidationKeys.DOWN_PAYMENT] = strings.errorDownPaymentBounds
         }
         if (input.durationMonths < 1 || input.durationMonths > maxDuration) {
@@ -385,7 +384,7 @@ class CreditSimulatorViewModel(
         if (!input.annualInterestRateHt.isFinite() || input.annualInterestRateHt < 0.0 || input.annualInterestRateHt > 50.0) {
             errors[CreditValidationKeys.INTEREST_RATE] = strings.errorRateInvalid
         }
-        if (!input.monthlyNetIncome.isFinite() || input.monthlyNetIncome <= 0.0) {
+        if (!input.monthlyNetIncome.isPositive) {
             errors[CreditValidationKeys.MONTHLY_INCOME] = strings.errorIncomeInvalid
         }
         if (input.borrowerAge !in 18..69) {

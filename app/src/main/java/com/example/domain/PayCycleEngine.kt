@@ -5,7 +5,12 @@ import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.TransactionItem
 import com.example.data.DefaultCategoryResolver
-import java.text.NumberFormat
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
+import com.masroufi.core.sumMoney
+import java.math.BigDecimal
+import java.math.MathContext
+import java.math.RoundingMode
 import java.util.Calendar
 import java.util.Collections
 import java.util.Locale
@@ -14,17 +19,16 @@ import org.json.JSONObject
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 enum class ProjectionAlertLevel {
     NONE, AMBER, RED
 }
 
 data class CycleSpendProjection(
-    val projectedTotal: Double = 0.0,
-    val optimisticTotal: Double = 0.0,
-    val medianDailyVariable: Double = 0.0,
-    val lowerQuartileDailyVariable: Double = 0.0,
+    val projectedTotal: Money = Money.ZERO,
+    val optimisticTotal: Money = Money.ZERO,
+    val medianDailyVariable: Money = Money.ZERO,
+    val lowerQuartileDailyVariable: Money = Money.ZERO,
     val daysElapsed: Int = 0,
     val transactionCount: Int = 0,
     val showEstimateAlert: Boolean = false,
@@ -43,19 +47,19 @@ data class PayCycleWindow(
 
 data class AccountWithBalance(
     val account: AccountItem,
-    val currentBalance: Double,
-    val totalIn: Double,
-    val totalOut: Double
+    val currentBalance: Money,
+    val totalIn: Money,
+    val totalOut: Money
 )
 
 data class EnvelopeStatus(
     val config: EnvelopeConfig,
-    val baseAllocated: Double,
-    val rolloverAmount: Double,
-    val totalAvailable: Double,
-    val spent: Double,
-    val previousSpent: Double = 0.0,
-    val remaining: Double,
+    val baseAllocated: Money,
+    val rolloverAmount: Money,
+    val totalAvailable: Money,
+    val spent: Money,
+    val previousSpent: Money = Money.ZERO,
+    val remaining: Money,
     val usagePercent: Int,
     val isOver90Percent: Boolean
 )
@@ -73,24 +77,24 @@ enum class PurchaseVerdict {
 }
 
 data class PurchaseImpact(
-    val amount: Double,
-    val safePool: Double,
+    val amount: Money,
+    val safePool: Money,
     val daysRemaining: Int,
-    val currentDailyAllowance: Double,
-    val newSafeToday: Double,
-    val delta: Double,
-    val remainingTodayAllowance: Double,
-    val overSafePoolAmount: Double,
+    val currentDailyAllowance: Money,
+    val newSafeToday: Money,
+    val delta: Money,
+    val remainingTodayAllowance: Money,
+    val overSafePoolAmount: Money,
     val verdict: PurchaseVerdict,
     val runOutIso: String? = null,
     val envelopeUsageAfter: Int? = null,
     val envelopeKey: String? = null,
-    val envelopeNewSpent: Double? = null,
-    val envelopeRemainingAfter: Double? = null,
+    val envelopeNewSpent: Money? = null,
+    val envelopeRemainingAfter: Money? = null,
     val envelopeHasCap: Boolean = false
 ) {
-    val newDailyAllowance: Double get() = newSafeToday
-    val dailyAllowanceDelta: Double get() = delta
+    val newDailyAllowance: Money get() = newSafeToday
+    val dailyAllowanceDelta: Money get() = delta
     val envelopeNewUsagePercent: Int? get() = envelopeUsageAfter
 }
 
@@ -106,20 +110,20 @@ data class SmartReminder(
     val kind: String, // "bill", "daret", "debt"
     val title: String,
     val subtitle: String,
-    val amount: Double,
+    val amount: Money,
     val actionLabel: String,
     val item: FinancialItem
 )
 
 data class DetectedSubscription(
     val merchant: String,
-    val amount: Double,
+    val amount: Money,
     val suggestedDueDay: Int,
     val occurrences: Int,
     val envelopeKey: String = "charges"
 ) {
     val name: String get() = merchant
-    val monthlyAmount: Double get() = amount
+    val monthlyAmount: Money get() = amount
     val typicalDayOfMonth: Int get() = suggestedDueDay
 }
 
@@ -127,7 +131,7 @@ data class MoroccanBillTemplate(
     val id: String,
     val name: String,
     val providerSubtitle: String,
-    val defaultAmount: Double,
+    val defaultAmount: Money,
     val dueDay: Int,
     val emoji: String = "🧾"
 ) {
@@ -139,20 +143,20 @@ data class MoroccanSeasonalTemplate(
     val id: String,
     val name: String,
     val subtitle: String,
-    val defaultTargetAmount: Double,
+    val defaultTargetAmount: Money,
     val defaultTargetIso: String,
     val emoji: String = "🌙"
 ) {
     val key: String get() = id
-    val targetAmount: Double get() = defaultTargetAmount
+    val targetAmount: Money get() = defaultTargetAmount
     val targetIsoDate: String get() = defaultTargetIso
 }
 
 data class SeasonalCountdownInfo(
     val daysRemaining: Int,
     val monthsRemaining: Int,
-    val remainingAmount: Double,
-    val suggestedMonthlySaving: Double
+    val remainingAmount: Money,
+    val suggestedMonthlySaving: Money
 )
 
 data class SmartDefaultGuess(
@@ -348,8 +352,8 @@ object PayCycleEngine {
         transactions: List<TransactionItem>
     ): List<AccountWithBalance> {
         return accounts.map { acc ->
-            var totalIn = 0.0
-            var totalOut = 0.0
+            var totalIn = Money.ZERO
+            var totalOut = Money.ZERO
             for (tx in transactions) {
                 when (tx.type) {
                     "income" -> if (tx.accountId == acc.id) totalIn += tx.amount
@@ -371,7 +375,7 @@ object PayCycleEngine {
 
     fun computeEnvelopes(
         envelopes: List<EnvelopeConfig>,
-        baseBudget: Double,
+        baseBudget: Money,
         rolloverEnabled: Boolean,
         currentWindow: PayCycleWindow,
         previousWindow: PayCycleWindow,
@@ -384,30 +388,37 @@ object PayCycleEngine {
                 (maxDateIso.isBlank() || it.isoDate <= maxDateIso)
         }
         val prevExpenses = allTransactions.filter { it.type == "expense" && isInWindow(it.isoDate, previousWindow) }
-        val totalCurExp = curExpenses.sumOf { it.amount }
+        val hundredBd = BigDecimal.valueOf(100L)
 
         return envelopes.map { env ->
             val key = env.key
             val spentCurrent = curExpenses
                 .filter { (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == key }
-                .sumOf { it.amount }
+                .map { it.amount }
+                .sumMoney()
 
             val spentPrev = prevExpenses
                 .filter { (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == key }
-                .sumOf { it.amount }
+                .map { it.amount }
+                .sumMoney()
 
-            val baseAllocated = if (env.hasCap) (baseBudget * (env.percentage / 100.0)) else 0.0
+            val baseAllocated = if (env.hasCap) {
+                val ratio = BigDecimal.valueOf(env.percentage).divide(hundredBd, 10, RoundingMode.HALF_UP)
+                baseBudget.multiplyRate(ratio)
+            } else {
+                Money.ZERO
+            }
 
             val rolloverAmount = if (rolloverEnabled && env.hasCap && prevExpenses.isNotEmpty()) {
-                max(0.0, baseAllocated - spentPrev)
+                (baseAllocated - spentPrev).coerceAtLeast(Money.ZERO)
             } else {
-                0.0
+                Money.ZERO
             }
 
             val totalAvailable = baseAllocated + rolloverAmount
-            val remaining = if (env.hasCap) totalAvailable - spentCurrent else 0.0
-            val usagePct = if (env.hasCap && totalAvailable > 0.0) {
-                ((spentCurrent / totalAvailable) * 100.0).roundToLong().toInt()
+            val remaining = if (env.hasCap) totalAvailable - spentCurrent else Money.ZERO
+            val usagePct = if (env.hasCap && totalAvailable.isPositive) {
+                ((spentCurrent.centimes.toDouble() / totalAvailable.centimes.toDouble()) * 100.0).roundToInt()
             } else {
                 0
             }
@@ -430,22 +441,22 @@ object PayCycleEngine {
         lang: String,
         currency: String,
         window: PayCycleWindow,
-        totalAvailableBudget: Double,
-        cycleExpenses: Double,
-        previousCycleExpenses: Double,
-        safeToSpendToday: Double,
-        dailyAverageSpend: Double,
+        totalAvailableBudget: Money,
+        cycleExpenses: Money,
+        previousCycleExpenses: Money,
+        safeToSpendToday: Money,
+        dailyAverageSpend: Money,
         envelopes: List<EnvelopeStatus>,
-        projectedCycleSpend: Double = dailyAverageSpend * window.totalDays
+        projectedCycleSpend: Money = dailyAverageSpend * window.totalDays.toLong()
     ): List<SmartInsight> {
         val insights = mutableListOf<SmartInsight>()
         val timeProgressPct = ((window.daysElapsed.toDouble() / max(1, window.totalDays)) * 100.0).roundToInt()
-        val budgetProgressPct = if (totalAvailableBudget > 0) {
-            ((cycleExpenses / totalAvailableBudget) * 100.0).roundToInt()
+        val budgetProgressPct = if (totalAvailableBudget.isPositive) {
+            ((cycleExpenses.centimes.toDouble() / totalAvailableBudget.centimes.toDouble()) * 100.0).roundToInt()
         } else 0
 
         // 1. Pace vs Cycle Time Insight (uses unified projectedCycleSpend from state.spendProjection)
-        if (cycleExpenses <= 0.0) {
+        if (!cycleExpenses.isPositive) {
             insights.add(
                 SmartInsight(
                     id = "clean_start",
@@ -468,7 +479,7 @@ object PayCycleEngine {
         }
 
         if (budgetProgressPct > timeProgressPct + 12 || projectedCycleSpend > totalAvailableBudget) {
-            val projectedDiff = max(0.0, projectedCycleSpend - totalAvailableBudget)
+            val projectedDiff = (projectedCycleSpend - totalAvailableBudget).coerceAtLeast(Money.ZERO)
             insights.add(
                 SmartInsight(
                     id = "pace_fast",
@@ -488,7 +499,7 @@ object PayCycleEngine {
                 )
             )
         } else {
-            val potentialSave = max(0.0, totalAvailableBudget - projectedCycleSpend)
+            val potentialSave = (totalAvailableBudget - projectedCycleSpend).coerceAtLeast(Money.ZERO)
             insights.add(
                 SmartInsight(
                     id = "pace_good",
@@ -510,10 +521,13 @@ object PayCycleEngine {
         }
 
         // 2. Top Spending Category & Savings Suggestion
-        val topEnv = envelopes.filter { it.spent > 0 }.maxByOrNull { it.spent }
+        val topEnv = envelopes.filter { it.spent.isPositive }.maxByOrNull { it.spent }
         if (topEnv != null) {
-            val share = if (cycleExpenses > 0) ((topEnv.spent / cycleExpenses) * 100.0).roundToInt() else 0
-            val save20 = topEnv.spent * 0.20
+            val share = if (cycleExpenses.isPositive) {
+                ((topEnv.spent.centimes.toDouble() / cycleExpenses.centimes.toDouble()) * 100.0).roundToInt()
+            } else 0
+            val save20 = topEnv.spent.multiplyRate(BigDecimal("0.20"))
+            val save20Year = save20 * 12L
             val envName = topEnv.config.localizedName(lang)
             insights.add(
                 SmartInsight(
@@ -525,10 +539,10 @@ object PayCycleEngine {
                         else -> "Où va votre argent : $envName ($share%)"
                     },
                     body = when (lang) {
-                        "darija" -> "صرفتي فيها ${formatDh(topEnv.spent)} $currency. غير تنقص 20% غادي تربح ${formatDh(save20)} $currency فـ الشهر (${formatDh(save20 * 12)} $currency فـ العام)."
+                        "darija" -> "صرفتي فيها ${formatDh(topEnv.spent)} $currency. غير تنقص 20% غادي تربح ${formatDh(save20)} $currency فـ الشهر (${formatDh(save20Year)} $currency فـ العام)."
                         "ar" -> "أنفقت ${formatDh(topEnv.spent)} $currency. خفض 20% يوفر لك ${formatDh(save20)} $currency شهرياً."
-                        "en" -> "Spent ${formatDh(topEnv.spent)} $currency. Cutting 20% saves ${formatDh(save20)} $currency/mo (${formatDh(save20 * 12)} $currency/yr)."
-                        else -> "Vous y avez dépensé ${formatDh(topEnv.spent)} $currency. Réduire de 20% libère +${formatDh(save20)} $currency/mois (+${formatDh(save20 * 12)} $currency/an)."
+                        "en" -> "Spent ${formatDh(topEnv.spent)} $currency. Cutting 20% saves ${formatDh(save20)} $currency/mo (${formatDh(save20Year)} $currency/yr)."
+                        else -> "Vous y avez dépensé ${formatDh(topEnv.spent)} $currency. Réduire de 20% libère +${formatDh(save20)} $currency/mois (+${formatDh(save20Year)} $currency/an)."
                     },
                     severity = if (topEnv.isOver90Percent) "warn" else "info"
                 )
@@ -536,23 +550,23 @@ object PayCycleEngine {
         }
 
         // 3. Month-over-Month Trend Insight
-        if (previousCycleExpenses > 0.0) {
+        if (previousCycleExpenses.isPositive) {
             val delta = cycleExpenses - previousCycleExpenses
-            val deltaPct = ((delta / previousCycleExpenses) * 100.0).roundToInt()
+            val deltaPct = ((delta.centimes.toDouble() / previousCycleExpenses.centimes.toDouble()) * 100.0).roundToInt()
             insights.add(
                 SmartInsight(
                     id = "mom_trend",
-                    title = if (delta <= 0) {
+                    title = if (delta <= Money.ZERO) {
                         "Tendance mensuelle : ${deltaPct}% vs cycle précédent"
                     } else {
                         "Tendance mensuelle : +${deltaPct}% vs cycle précédent"
                     },
-                    body = if (delta <= 0) {
-                        "Vous avez dépensé ${formatDh(abs(delta))} $currency de moins que le cycle dernier (${formatDh(previousCycleExpenses)} $currency)."
+                    body = if (delta <= Money.ZERO) {
+                        "Vous avez dépensé ${formatDh(delta.abs())} $currency de moins que le cycle dernier (${formatDh(previousCycleExpenses)} $currency)."
                     } else {
                         "Vos dépenses dépassent le cycle précédent de ${formatDh(delta)} $currency (${formatDh(previousCycleExpenses)} $currency)."
                     },
-                    severity = if (delta <= 0) "good" else "warn"
+                    severity = if (delta <= Money.ZERO) "good" else "warn"
                 )
             )
         }
@@ -588,17 +602,20 @@ object PayCycleEngine {
             d in (nowEpoch - 34)..(nowEpoch - 7)
         }
 
+        val minWeeklyBaseline = Money.fromDh(20)
+        val spikeThresholdFactor = BigDecimal("1.20")
+
         for (env in envelopes) {
             val recentWeekSum = last7Txs.filter {
                 (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == env.key
-            }.sumOf { it.amount }
+            }.map { it.amount }.sumMoney()
             val prior4WeeksSum = prior28Txs.filter {
                 (it.envelopeKey.ifBlank { resolveEnvelopeKey(it.category, it.desc, envelopes) }) == env.key
-            }.sumOf { it.amount }
-            val priorWeeklyAvg = prior4WeeksSum / 4.0
+            }.map { it.amount }.sumMoney()
+            val priorWeeklyAvg = prior4WeeksSum.divideBy(4L)
 
-            if (priorWeeklyAvg >= 20.0 && recentWeekSum > priorWeeklyAvg * 1.20) {
-                val upPct = (((recentWeekSum - priorWeeklyAvg) / priorWeeklyAvg) * 100.0).roundToInt()
+            if (priorWeeklyAvg >= minWeeklyBaseline && recentWeekSum > priorWeeklyAvg.multiplyRate(spikeThresholdFactor)) {
+                val upPct = (((recentWeekSum - priorWeeklyAvg).centimes.toDouble() / priorWeeklyAvg.centimes.toDouble()) * 100.0).roundToInt()
                 val label = env.localizedName(lang)
                 nudges.add(
                     SmartInsight(
@@ -652,13 +669,13 @@ object PayCycleEngine {
      */
     fun computeOverspendProjection(
         window: PayCycleWindow,
-        totalAvailableBudget: Double,
-        spentSoFar: Double,
-        scheduledBills: Double,
+        totalAvailableBudget: Money,
+        spentSoFar: Money,
+        scheduledBills: Money,
         pastOrTodayCycleTransactions: List<TransactionItem>,
         bills: List<FinancialItem> = emptyList()
     ): CycleSpendProjection {
-        val expenseTxs = pastOrTodayCycleTransactions.filter { it.type == "expense" && it.amount > 0.0 }
+        val expenseTxs = pastOrTodayCycleTransactions.filter { it.type == "expense" && it.amount.isPositive }
         val txCount = expenseTxs.size
         val billNamesLower = bills.map { it.name.trim().lowercase(Locale.ROOT) }.filter { it.isNotEmpty() }
 
@@ -672,14 +689,15 @@ object PayCycleEngine {
 
         val dailyByDate = variableExpenses
             .groupBy { it.isoDate }
-            .mapValues { (_, list) -> list.sumOf { it.amount } }
+            .mapValues { (_, list) -> list.map { it.amount }.sumMoney() }
 
         val elapsedCount = max(1, window.daysElapsed)
-        val rawDailySamples: List<Double> = dailyByDate.values.sorted()
+        val rawDailySamples: List<Money> = dailyByDate.values.sorted()
 
         val initialMedian = computePercentile(rawDailySamples, 0.50)
-        val filteredSamples = if (initialMedian > 0.0) {
-            rawDailySamples.filter { it <= initialMedian * 3.0 }.ifEmpty { rawDailySamples }
+        val filteredSamples = if (initialMedian.isPositive) {
+            val outlierCap = initialMedian * 3L
+            rawDailySamples.filter { it <= outlierCap }.ifEmpty { rawDailySamples }
         } else {
             rawDailySamples
         }
@@ -696,24 +714,24 @@ object PayCycleEngine {
         // Unified pace projection: if there are no separate outlier spikes, pace = spentSoFar / elapsedCount.
         // If there are single-day >3x outliers filtered out, use cleanMedian; otherwise use pace so 5 276 DH in 16/31d -> ~10 222 DH.
         val hasFilteredOutliers = filteredSamples.size < rawDailySamples.size
-        val paceDailyRate = spentSoFar / elapsedCount
-        val effectiveDailyRate = if (hasFilteredOutliers && cleanMedian > 0.0) {
+        val paceDailyRate = spentSoFar.divideBy(elapsedCount.toLong())
+        val effectiveDailyRate = if (hasFilteredOutliers && cleanMedian.isPositive) {
             cleanMedian
-        } else if (paceDailyRate > 0.0) {
+        } else if (paceDailyRate.isPositive) {
             paceDailyRate
         } else {
             cleanMedian
         }
 
         val projectedTotal = if (window.isCurrentCycle) {
-            roundMoney(spentSoFar + scheduledBills + (effectiveDailyRate * daysLeft))
+            spentSoFar + scheduledBills + (effectiveDailyRate * daysLeft.toLong())
         } else {
-            roundMoney(spentSoFar)
+            spentSoFar
         }
         val optimisticTotal = if (window.isCurrentCycle) {
-            roundMoney(spentSoFar + scheduledBills + (lowerQuartile * daysLeft))
+            spentSoFar + scheduledBills + (lowerQuartile * daysLeft.toLong())
         } else {
-            roundMoney(spentSoFar)
+            spentSoFar
         }
 
         val eligibleForAlert = window.isCurrentCycle && window.daysElapsed >= 7 && txCount >= 10
@@ -736,14 +754,21 @@ object PayCycleEngine {
         )
     }
 
-    private fun computePercentile(sorted: List<Double>, p: Double): Double {
-        if (sorted.isEmpty()) return 0.0
+    private fun computePercentile(sorted: List<Money>, p: Double): Money {
+        if (sorted.isEmpty()) return Money.ZERO
         if (sorted.size == 1) return sorted[0]
         val pos = p.coerceIn(0.0, 1.0) * (sorted.size - 1)
         val lowerIdx = pos.toInt()
         val upperIdx = (lowerIdx + 1).coerceAtMost(sorted.lastIndex)
-        val weight = pos - lowerIdx
-        return sorted[lowerIdx] * (1.0 - weight) + sorted[upperIdx] * weight
+        val weight = BigDecimal.valueOf(pos - lowerIdx)
+        val oneMinusWeight = BigDecimal.ONE.subtract(weight)
+        val lowerCents = BigDecimal.valueOf(sorted[lowerIdx].centimes)
+        val upperCents = BigDecimal.valueOf(sorted[upperIdx].centimes)
+        val interpolated = lowerCents.multiply(oneMinusWeight)
+            .add(upperCents.multiply(weight))
+            .setScale(0, RoundingMode.HALF_UP)
+            .longValueExact()
+        return Money.fromCentimes(interpolated)
     }
 
     /**
@@ -780,9 +805,9 @@ object PayCycleEngine {
 
             val sorted = txList.sortedBy { it.isoDate }
             val amounts = sorted.map { it.amount }
-            val minAmt = amounts.minOrNull() ?: 0.0
-            val maxAmt = amounts.maxOrNull() ?: 0.0
-            if (minAmt <= 0.0 || (maxAmt - minAmt) / minAmt > 0.100001) continue
+            val minAmt = amounts.minOrNull() ?: Money.ZERO
+            val maxAmt = amounts.maxOrNull() ?: Money.ZERO
+            if (!minAmt.isPositive || (maxAmt - minAmt).centimes.toDouble() / minAmt.centimes.toDouble() > 0.100001) continue
 
             val intervals = sorted.zipWithNext { a, b ->
                 (parseEpochDays(b.isoDate) - parseEpochDays(a.isoDate)).toInt()
@@ -827,7 +852,7 @@ object PayCycleEngine {
         if (anchorEpoch < startEpoch) return 0
 
         val expenseEpochDays = cycleTransactions
-            .filter { it.type == "expense" && it.amount > 0.0 }
+            .filter { it.type == "expense" && it.amount.isPositive }
             .map { parseEpochDays(it.isoDate) }
             .toSet()
 
@@ -870,12 +895,12 @@ object PayCycleEngine {
      */
     fun computeBiggestSpendingDayInCycle(
         cycleTransactions: List<TransactionItem>
-    ): Pair<String, Double> {
+    ): Pair<String, Money> {
         val byDay = cycleTransactions
             .filter { it.type == "expense" && it.isoDate.isNotBlank() }
             .groupBy { it.isoDate }
-            .mapValues { (_, list) -> list.sumOf { it.amount } }
-        return byDay.maxByOrNull { it.value }?.toPair() ?: ("" to 0.0)
+            .mapValues { (_, list) -> list.map { it.amount }.sumMoney() }
+        return byDay.maxByOrNull { it.value }?.toPair() ?: ("" to Money.ZERO)
     }
 
     /**
@@ -883,8 +908,8 @@ object PayCycleEngine {
      * "At this pace you'll finish the month with 1,240 MAD."
      */
     fun formatMonthEndForecast(
-        totalAvailableBudget: Double,
-        projectedCycleSpend: Double,
+        totalAvailableBudget: Money,
+        projectedCycleSpend: Money,
         currency: String,
         lang: String,
         hideAmounts: Boolean = false
@@ -894,13 +919,13 @@ object PayCycleEngine {
     }
 
     fun formatMonthEndForecast(
-        forecastEnd: Double,
+        forecastEnd: Money,
         currency: String,
         lang: String,
         hideAmounts: Boolean = false
     ): String {
-        val absFormatted = if (hideAmounts) "••••" else formatDh(abs(forecastEnd))
-        return if (forecastEnd >= 0) {
+        val absFormatted = if (hideAmounts) "••••" else formatDh(forecastEnd.abs())
+        return if (!forecastEnd.isNegative) {
             when (lang) {
                 "darija" -> "بهاد الوتيرة غادي تكمل الشهر بـ +$absFormatted $currency"
                 "ar" -> "بهذه الوتيرة ستنهي الشهر بـ +$absFormatted $currency"
@@ -1053,8 +1078,8 @@ object PayCycleEngine {
             itemType = "custom_prefs",
             name = "learned_categories",
             subtitle = part1,
-            amount = 0.0,
-            secondaryAmount = 0.0,
+            amount = Money.ZERO,
+            secondaryAmount = Money.ZERO,
             dayOrTurn = 0,
             extraInt = 0,
             dateOrCycle = part2,
@@ -1081,7 +1106,7 @@ object PayCycleEngine {
 
     fun markDaretPotCollected(daret: FinancialItem): FinancialItem {
         val cleanDate = daretPayoutDateOnly(daret)
-        val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+        val totalMembers = daret.resolvedDaretMembers()
         val markedDateOrCycle = if (cleanDate.isNotBlank()) {
             "$cleanDate|$DARET_POT_COLLECTED_MARKER"
         } else {
@@ -1191,17 +1216,17 @@ object PayCycleEngine {
      */
     fun findRecentDuplicateTransaction(
         type: String,
-        amount: Double,
+        amount: Money,
         envelopeKey: String,
         category: String,
         allTransactions: List<TransactionItem>,
         nowIso: String = todayIso(),
         nowEpochMs: Long = System.currentTimeMillis()
     ): TransactionItem? {
-        if (amount <= 0.0) return null
+        if (!amount.isPositive) return null
         return allTransactions.firstOrNull { tx ->
             val sameType = tx.type == type
-            val sameAmount = abs(tx.amount - amount) < 0.01
+            val sameAmount = tx.amount == amount
             val sameCategory = (tx.envelopeKey.isNotBlank() && tx.envelopeKey == envelopeKey) ||
                 tx.category.equals(category, ignoreCase = true)
             val createdMs = tx.createdAt?.toDate()?.time ?: 0L
@@ -1215,7 +1240,7 @@ object PayCycleEngine {
     }
 
     fun findRecentDuplicateTransaction(
-        amount: Double,
+        amount: Money,
         envelopeKey: String,
         category: String,
         allTransactions: List<TransactionItem>,
@@ -1236,8 +1261,8 @@ object PayCycleEngine {
      */
     fun computeSeasonalCountdown(
         targetIso: String,
-        targetAmount: Double,
-        savedAmount: Double,
+        targetAmount: Money,
+        savedAmount: Money,
         nowIso: String = todayIso()
     ): SeasonalCountdownInfo {
         val validTarget = if (isValidIsoDate(targetIso)) targetIso else "2027-03-01"
@@ -1245,8 +1270,8 @@ object PayCycleEngine {
         val targetEpoch = parseEpochDays(validTarget)
         val daysLeft = max(0, (targetEpoch - nowEpoch).toInt())
         val monthsLeft = max(1, kotlin.math.ceil(daysLeft / 30.0).toInt())
-        val remAmount = max(0.0, targetAmount - savedAmount)
-        val monthlySave = if (remAmount > 0.0) remAmount / monthsLeft else 0.0
+        val remAmount = (targetAmount - savedAmount).coerceAtLeast(Money.ZERO)
+        val monthlySave = if (remAmount.isPositive) remAmount.divideBy(monthsLeft.toLong()) else Money.ZERO
         return SeasonalCountdownInfo(
             daysRemaining = daysLeft,
             monthsRemaining = monthsLeft,
@@ -1271,23 +1296,28 @@ object PayCycleEngine {
      * What-if simulator goal impact: "Cut takeout by 20% and you reach your goal 2 months sooner."
      */
     fun computeWhatIfGoalImpact(
-        monthlySaved: Double,
+        monthlySaved: Money,
         goals: List<FinancialItem>,
         seasonals: List<FinancialItem>,
         lang: String,
         currency: String
     ): String {
-        val targetItem = (goals + seasonals).firstOrNull { (it.amount - it.secondaryAmount) > 0.0 }
-        val remGoal = if (targetItem != null) max(0.0, targetItem.amount - targetItem.secondaryAmount) else 5000.0
+        val targetItem = (goals + seasonals).firstOrNull { (it.amount - it.secondaryAmount).isPositive }
+        val remGoal = if (targetItem != null) {
+            (targetItem.amount - targetItem.secondaryAmount).coerceAtLeast(Money.ZERO)
+        } else {
+            Money.fromDh(5000)
+        }
         val goalName = targetItem?.name ?: when (lang) {
             "darija" -> "صندوق الطوارئ"
             "ar" -> "هدف الادخار"
             "en" -> "Emergency Fund"
             else -> "Objectif d'épargne"
         }
-        val baselineMonthlySave = max(200.0, remGoal / 10.0)
-        val baseMonths = kotlin.math.ceil(remGoal / baselineMonthlySave).toInt().coerceAtLeast(2)
-        val newMonths = kotlin.math.ceil(remGoal / (baselineMonthlySave + max(1.0, monthlySaved))).toInt().coerceAtLeast(1)
+        val baselineMonthlySave = maxOf(Money.fromDh(200), remGoal.divideBy(10L))
+        val baseMonths = kotlin.math.ceil(remGoal.centimes.toDouble() / baselineMonthlySave.centimes.toDouble()).toInt().coerceAtLeast(2)
+        val improvedMonthly = baselineMonthlySave + monthlySaved.coerceAtLeast(Money.fromDh(1))
+        val newMonths = kotlin.math.ceil(remGoal.centimes.toDouble() / improvedMonthly.centimes.toDouble()).toInt().coerceAtLeast(1)
         val monthsSooner = max(1, baseMonths - newMonths)
 
         return when (lang) {
@@ -1300,15 +1330,16 @@ object PayCycleEngine {
 
     fun computeWhatIfGoalImpact(
         envelopeName: String,
-        envelopeMonthlySpend: Double,
+        envelopeMonthlySpend: Money,
         cutPercent: Double,
-        currentMonthlySavingCapacity: Double,
+        currentMonthlySavingCapacity: Money,
         goals: List<FinancialItem>,
         currencySymbol: String,
         language: String,
         hideAmounts: Boolean = false
     ): String {
-        val monthlySaved = envelopeMonthlySpend * (cutPercent / 100.0)
+        val rate = BigDecimal.valueOf(cutPercent).divide(BigDecimal.valueOf(100L), 10, RoundingMode.HALF_UP)
+        val monthlySaved = envelopeMonthlySpend.multiplyRate(rate)
         return computeWhatIfGoalImpact(
             monthlySaved = monthlySaved,
             goals = goals,
@@ -1322,31 +1353,33 @@ object PayCycleEngine {
      * Multi-currency conversion for MRE users & trips (MAD, EUR, USD).
      */
     fun convertCurrencyAmount(
-        amount: Double,
+        amount: Money,
         fromCurrency: String,
         toCurrency: String,
         eurToMadRate: Double = DEFAULT_EUR_TO_MAD,
         usdToMadRate: Double = DEFAULT_USD_TO_MAD
-    ): Double {
-        if (amount <= 0.0) return 0.0
+    ): Money {
+        if (!amount.isPositive) return Money.ZERO
         val normFrom = normalizeCurrencyCode(fromCurrency)
         val normTo = normalizeCurrencyCode(toCurrency)
         if (normFrom == normTo) return amount
 
-        val safeEur = if (eurToMadRate > 0.1) eurToMadRate else DEFAULT_EUR_TO_MAD
-        val safeUsd = if (usdToMadRate > 0.1) usdToMadRate else DEFAULT_USD_TO_MAD
+        val safeEur = BigDecimal.valueOf(if (eurToMadRate > 0.1) eurToMadRate else DEFAULT_EUR_TO_MAD)
+        val safeUsd = BigDecimal.valueOf(if (usdToMadRate > 0.1) usdToMadRate else DEFAULT_USD_TO_MAD)
+        val mc = MathContext.DECIMAL128
 
-        // Convert to MAD first
+        val amountBd = amount.toBigDecimalDh()
         val inMad = when (normFrom) {
-            "EUR" -> amount * safeEur
-            "USD" -> amount * safeUsd
-            else -> amount
+            "EUR" -> amountBd.multiply(safeEur, mc)
+            "USD" -> amountBd.multiply(safeUsd, mc)
+            else -> amountBd
         }
-        return when (normTo) {
-            "EUR" -> inMad / safeEur
-            "USD" -> inMad / safeUsd
+        val converted = when (normTo) {
+            "EUR" -> inMad.divide(safeEur, mc)
+            "USD" -> inMad.divide(safeUsd, mc)
             else -> inMad
         }
+        return Money.fromMajorUnits(converted, RoundingMode.HALF_UP)
     }
 
     fun normalizeCurrencyCode(symbolOrCode: String): String {
@@ -1359,21 +1392,21 @@ object PayCycleEngine {
     }
 
     fun moroccanBillTemplates(): List<MoroccanBillTemplate> = listOf(
-        MoroccanBillTemplate("tpl_lydec", "Lydec / SRM (Eau & Élec)", "Eau & Électricité Casablanca", 380.0, 15, "💧"),
-        MoroccanBillTemplate("tpl_redal", "Redal (Eau & Élec)", "Eau & Électricité Rabat-Salé", 340.0, 15, "💧"),
-        MoroccanBillTemplate("tpl_amendis", "Amendis (Eau & Élec)", "Eau & Électricité Tanger/Tétouan", 350.0, 15, "💧"),
-        MoroccanBillTemplate("tpl_onee", "ONEE (Électricité & Eau)", "Office National Électricité & Eau", 320.0, 18, "⚡"),
-        MoroccanBillTemplate("tpl_iam", "Maroc Telecom (IAM Fibre/ADSL)", "Internet & Fixe IAM", 400.0, 5, "🌐"),
-        MoroccanBillTemplate("tpl_inwi", "Inwi (Forfait / Fibre)", "Mobile & Internet Inwi", 249.0, 10, "📱"),
-        MoroccanBillTemplate("tpl_orange", "Orange Maroc (Forfait / Fibre)", "Mobile & Fibre Orange", 249.0, 10, "🍊"),
-        MoroccanBillTemplate("tpl_rent", "Loyer / الكراء", "Loyer mensuel appartement", 2500.0, 1, "🏠")
+        MoroccanBillTemplate("tpl_lydec", "Lydec / SRM (Eau & Élec)", "Eau & Électricité Casablanca", Money.fromDh(380), 15, "💧"),
+        MoroccanBillTemplate("tpl_redal", "Redal (Eau & Élec)", "Eau & Électricité Rabat-Salé", Money.fromDh(340), 15, "💧"),
+        MoroccanBillTemplate("tpl_amendis", "Amendis (Eau & Élec)", "Eau & Électricité Tanger/Tétouan", Money.fromDh(350), 15, "💧"),
+        MoroccanBillTemplate("tpl_onee", "ONEE (Électricité & Eau)", "Office National Électricité & Eau", Money.fromDh(320), 18, "⚡"),
+        MoroccanBillTemplate("tpl_iam", "Maroc Telecom (IAM Fibre/ADSL)", "Internet & Fixe IAM", Money.fromDh(400), 5, "🌐"),
+        MoroccanBillTemplate("tpl_inwi", "Inwi (Forfait / Fibre)", "Mobile & Internet Inwi", Money.fromDh(249), 10, "📱"),
+        MoroccanBillTemplate("tpl_orange", "Orange Maroc (Forfait / Fibre)", "Mobile & Fibre Orange", Money.fromDh(249), 10, "🍊"),
+        MoroccanBillTemplate("tpl_rent", "Loyer / الكراء", "Loyer mensuel appartement", Money.fromDh(2500), 1, "🏠")
     )
 
     fun moroccanSeasonalTemplates(): List<MoroccanSeasonalTemplate> = listOf(
-        MoroccanSeasonalTemplate("sea_ramadan", "Ramadan (قفة ومصاريف رمضان)", "Provisions & Table du Ftour", 3000.0, "2027-02-08", "🌙"),
-        MoroccanSeasonalTemplate("sea_aid_adha", "Aïd al-Adha (صندوق الحولي)", "Mouton & Fête de l'Aïd", 4500.0, "2027-05-16", "🐏"),
-        MoroccanSeasonalTemplate("sea_rentree", "Rentrée Scolaire (الدخول المدرسي)", "Fournitures, manuels & inscription", 2500.0, "2027-09-01", "🎒"),
-        MoroccanSeasonalTemplate("sea_vacances", "Vacances d'été (عطلة الصيف)", "Voyage & Détente en famille", 5000.0, "2027-07-15", "🏖️")
+        MoroccanSeasonalTemplate("sea_ramadan", "Ramadan (قفة ومصاريف رمضان)", "Provisions & Table du Ftour", Money.fromDh(3000), "2027-02-08", "🌙"),
+        MoroccanSeasonalTemplate("sea_aid_adha", "Aïd al-Adha (صندوق الحولي)", "Mouton & Fête de l'Aïd", Money.fromDh(4500), "2027-05-16", "🐏"),
+        MoroccanSeasonalTemplate("sea_rentree", "Rentrée Scolaire (الدخول المدرسي)", "Fournitures, manuels & inscription", Money.fromDh(2500), "2027-09-01", "🎒"),
+        MoroccanSeasonalTemplate("sea_vacances", "Vacances d'été (عطلة الصيف)", "Voyage & Détente en famille", Money.fromDh(5000), "2027-07-15", "🏖️")
     )
 
     fun computeSmartReminders(
@@ -1403,7 +1436,7 @@ object PayCycleEngine {
 
         // 2. Active Darets with remaining rounds
         darets.forEach { daret ->
-            val totalMembers = daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+            val totalMembers = daret.resolvedDaretMembers()
             if (daret.extraInt < totalMembers) {
                 val whoseTurn = daret.subtitle.ifBlank { "Tour #${daret.dayOrTurn}" }
                 list.add(
@@ -1422,8 +1455,8 @@ object PayCycleEngine {
 
         // 3. Unsettled Debts / Loans
         debts.forEach { debt ->
-            val rem = max(0.0, debt.amount - debt.secondaryAmount)
-            if (rem > 0.0) {
+            val rem = (debt.amount - debt.secondaryAmount).coerceAtLeast(Money.ZERO)
+            if (rem.isPositive) {
                 val isLent = debt.dateOrCycle != "borrowed"
                 list.add(
                     SmartReminder(
@@ -1516,11 +1549,6 @@ object PayCycleEngine {
         return mondayEpochDay to "$monStr → $sunStr"
     }
 
-    fun roundMoney(amount: Double): Double {
-        if (amount.isNaN() || amount.isInfinite()) return 0.0
-        return kotlin.math.round(amount * 100.0) / 100.0
-    }
-
     private val MONTHS_SHORT_FR = arrayOf("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.")
     private val MONTHS_SHORT_EN = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
     private val MONTHS_SHORT_AR = arrayOf("يناير", "فبراير", "مارس", "أبريل", "ماي", "يونيو", "يوليوز", "غشت", "شتنبر", "أكتوبر", "نونبر", "دجنبر")
@@ -1565,33 +1593,21 @@ object PayCycleEngine {
         return "$s → $e"
     }
 
-    fun formatDh(value: Double): String {
-        if (value.isNaN() || value.isInfinite()) return "0"
-        val nf = NumberFormat.getIntegerInstance(Locale.FRANCE)
-        return nf.format(value.roundToLong())
-    }
+    fun formatDh(value: Money): String = value.formatDhRounded()
 
-    fun formatAmountOrMask(value: Double, hideAmounts: Boolean): String {
-        return if (hideAmounts) "••••" else formatDh(value)
-    }
+    fun formatAmountOrMask(value: Money, hideAmounts: Boolean): String =
+        if (hideAmounts) "••••" else value.formatDhRounded()
 
-    fun formatCurrencyOrMask(value: Double, currencySymbol: String, hideAmounts: Boolean): String {
-        return if (hideAmounts) "•••• $currencySymbol" else "${formatDh(value)} $currencySymbol"
-    }
+    fun formatCurrencyOrMask(value: Money, currencySymbol: String, hideAmounts: Boolean): String =
+        value.formatCurrencyOrMask(currencySymbol, hideAmounts, includeDecimals = false)
 
     /**
-     * Parses a user-typed amount supporting dots ("85.50"), commas ("85,50"), and whitespace.
+     * Parses a user-typed non-negative amount strictly via [MoneyParser] (zero Double).
+     * Supports dots ("85.50"), commas ("85,50"), thousands separators, and currency suffixes.
      */
-    fun parseFlexibleAmount(rawAmountText: String): Double {
-        val clean = rawAmountText
-            .replace("\u00A0", "")
-            .replace(" ", "")
-            .trim()
-            .replace(',', '.')
-        if (clean.isEmpty()) return 0.0
-        val parsed = clean.toDoubleOrNull() ?: return 0.0
-        if (parsed.isNaN() || parsed.isInfinite() || parsed < 0.0) return 0.0
-        return parsed
+    fun parseFlexibleAmount(rawAmountText: String): Money {
+        val centimes = MoneyParser.parseMoroccanAmountToCentimes(rawAmountText) ?: return Money.ZERO
+        return if (centimes >= 0L) Money.fromCentimes(centimes) else Money.ZERO
     }
 
     /**
@@ -1608,7 +1624,7 @@ object PayCycleEngine {
         val refEpoch = parseEpochDays(referenceIso)
 
         val recentExpenses = expenseHistory.filter { tx ->
-            if (tx.type != "expense" || tx.amount <= 0.0 || !isValidIsoDate(tx.isoDate)) return@filter false
+            if (tx.type != "expense" || !tx.amount.isPositive || !isValidIsoDate(tx.isoDate)) return@filter false
             val ageDays = (refEpoch - parseEpochDays(tx.isoDate)).toInt()
             ageDays in 0..55
         }
@@ -1623,7 +1639,7 @@ object PayCycleEngine {
 
         val spendByIso = recentExpenses
             .groupBy { it.isoDate }
-            .mapValues { (_, list) -> list.sumOf { it.amount } }
+            .mapValues { (_, list) -> list.sumOf { it.amount.centimes.toDouble() } }
 
         val sumByDow = DoubleArray(8)
         val countByDow = IntArray(8)
@@ -1685,16 +1701,16 @@ object PayCycleEngine {
      * - Returns FITS_TODAY, LOWERS_ALLOWANCE, or OVER_POOL, plus [envelopeUsageAfter].
      */
     fun computePurchaseImpact(
-        amount: Double,
-        safePool: Double,
+        amount: Money,
+        safePool: Money,
         daysRemaining: Int,
         expenseHistory: List<TransactionItem> = emptyList(),
         window: PayCycleWindow? = null,
         envelope: EnvelopeStatus? = null,
         todayIso: String = todayIso()
     ): PurchaseImpact {
-        val safeAmount = if (amount.isNaN() || amount.isInfinite() || amount < 0.0) 0.0 else roundMoney(amount)
-        val clampedPool = if (safePool.isNaN() || safePool.isInfinite() || safePool < 0.0) 0.0 else roundMoney(safePool)
+        val safeAmount = amount.coerceAtLeast(Money.ZERO)
+        val clampedPool = safePool.coerceAtLeast(Money.ZERO)
         val effectiveDays = max(1, daysRemaining)
 
         val refIso = when {
@@ -1727,43 +1743,46 @@ object PayCycleEngine {
             }
         }
 
-        val currentDaily = roundMoney(clampedPool * todayShare)
-        val remainingPoolAfter = max(0.0, clampedPool - safeAmount)
-        val newDaily = roundMoney(remainingPoolAfter * todayShare)
-        val delta = roundMoney(newDaily - currentDaily)
-        val remainingToday = roundMoney(max(0.0, currentDaily - safeAmount))
-        val overPool = if (safeAmount > clampedPool) roundMoney(safeAmount - clampedPool) else 0.0
+        val todayShareBd = BigDecimal.valueOf(todayShare)
+        val currentDaily = clampedPool.multiplyRate(todayShareBd)
+        val remainingPoolAfter = (clampedPool - safeAmount).coerceAtLeast(Money.ZERO)
+        val newDaily = remainingPoolAfter.multiplyRate(todayShareBd)
+        val delta = newDaily - currentDaily
+        val remainingToday = (currentDaily - safeAmount).coerceAtLeast(Money.ZERO)
+        val overPool = if (safeAmount > clampedPool) safeAmount - clampedPool else Money.ZERO
 
         val verdict = when {
-            clampedPool <= 0.0 && safeAmount > 0.0 -> PurchaseVerdict.OVER_POOL
-            safeAmount <= currentDaily + 0.005 -> PurchaseVerdict.FITS_TODAY
-            safeAmount <= clampedPool + 0.005 -> PurchaseVerdict.LOWERS_ALLOWANCE
+            !clampedPool.isPositive && safeAmount.isPositive -> PurchaseVerdict.OVER_POOL
+            safeAmount <= currentDaily -> PurchaseVerdict.FITS_TODAY
+            safeAmount <= clampedPool -> PurchaseVerdict.LOWERS_ALLOWANCE
             else -> PurchaseVerdict.OVER_POOL
         }
 
         // Re-run computeOverspendProjection with spentSoFar + amount to get runOutIso
         val runOutIso: String? = if (window != null) {
             val cycleExpensesSoFar = expenseHistory.filter {
-                it.type == "expense" && it.amount > 0.0 && isInWindow(it.isoDate, window) && it.isoDate <= refIso
+                it.type == "expense" && it.amount.isPositive && isInWindow(it.isoDate, window) && it.isoDate <= refIso
             }
-            val spentSoFar = cycleExpensesSoFar.sumOf { it.amount }
+            val spentSoFar = cycleExpensesSoFar.map { it.amount }.sumMoney()
             val totalAvailableBudget = spentSoFar + clampedPool
             val proj = computeOverspendProjection(
                 window = window,
                 totalAvailableBudget = totalAvailableBudget,
                 spentSoFar = spentSoFar + safeAmount,
-                scheduledBills = 0.0,
+                scheduledBills = Money.ZERO,
                 pastOrTodayCycleTransactions = cycleExpensesSoFar
             )
             val dailyPace = when {
-                proj.medianDailyVariable > 0.0 -> proj.medianDailyVariable
-                window.daysElapsed > 0 && spentSoFar > 0.0 -> spentSoFar / window.daysElapsed.toDouble()
-                else -> 0.0
+                proj.medianDailyVariable.isPositive -> proj.medianDailyVariable
+                window.daysElapsed > 0 && spentSoFar.isPositive -> spentSoFar.divideBy(window.daysElapsed.toLong())
+                else -> Money.ZERO
             }
             when {
-                safeAmount > clampedPool && safeAmount > 0.0 -> refIso
-                dailyPace > 0.0 && proj.projectedTotal > totalAvailableBudget + 0.01 -> {
-                    val daysLeftUntilExhausted = kotlin.math.floor(remainingPoolAfter / dailyPace).toLong().coerceAtLeast(0L)
+                safeAmount > clampedPool && safeAmount.isPositive -> refIso
+                dailyPace.isPositive && proj.projectedTotal > totalAvailableBudget -> {
+                    val daysLeftUntilExhausted = kotlin.math.floor(
+                        remainingPoolAfter.centimes.toDouble() / dailyPace.centimes.toDouble()
+                    ).toLong().coerceAtLeast(0L)
                     val runOutEpoch = (refEpoch + daysLeftUntilExhausted).coerceAtMost(parseEpochDays(window.endIso))
                     val candidateIso = epochDaysToIso(runOutEpoch)
                     if (candidateIso <= window.endIso) candidateIso else null
@@ -1774,16 +1793,16 @@ object PayCycleEngine {
             null
         }
 
-        val envNewSpent = envelope?.let { roundMoney(it.spent + safeAmount) }
-        val envHasCap = envelope != null && envelope.config.hasCap && envelope.totalAvailable > 0.0
+        val envNewSpent = envelope?.let { it.spent + safeAmount }
+        val envHasCap = envelope != null && envelope.config.hasCap && envelope.totalAvailable.isPositive
         val envNewPct = if (envelope != null && envHasCap) {
-            ((envNewSpent!! / envelope.totalAvailable) * 100.0).roundToInt().coerceAtLeast(0)
+            ((envNewSpent!!.centimes.toDouble() / envelope.totalAvailable.centimes.toDouble()) * 100.0).roundToInt().coerceAtLeast(0)
         } else if (envelope != null) {
             0
         } else {
             null
         }
-        val envRemAfter = envelope?.let { roundMoney(it.totalAvailable - (envNewSpent ?: 0.0)) }
+        val envRemAfter = envelope?.let { it.totalAvailable - (envNewSpent ?: Money.ZERO) }
 
         return PurchaseImpact(
             amount = safeAmount,
@@ -1806,7 +1825,7 @@ object PayCycleEngine {
 
     fun computePurchaseImpact(
         rawAmountText: String,
-        safePool: Double,
+        safePool: Money,
         daysRemaining: Int,
         expenseHistory: List<TransactionItem> = emptyList(),
         window: PayCycleWindow? = null,

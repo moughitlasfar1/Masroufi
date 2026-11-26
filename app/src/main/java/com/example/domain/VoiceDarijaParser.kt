@@ -2,11 +2,16 @@ package com.example.domain
 
 import com.example.data.EnvelopeConfig
 import com.example.ui.DashboardState
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
+import com.masroufi.core.sumMoney
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.Locale
 
 data class VoiceParsedTransaction(
     val rawTranscript: String,
-    val amount: Double,
+    val amount: Money,
     val description: String,
     val envelopeKey: String,
     val categoryName: String,
@@ -26,7 +31,7 @@ sealed interface VoiceBatchParseResult {
     data class ExpensesBatch(
         val items: List<VoiceParsedTransaction>
     ) : VoiceBatchParseResult {
-        val totalAmount: Double get() = PayCycleEngine.roundMoney(items.sumOf { it.amount })
+        val totalAmount: Money get() = items.map { it.amount }.sumMoney()
     }
 
     data class BudgetQuery(
@@ -52,81 +57,84 @@ object VoiceDarijaParser {
         '۵' to '5', '۶' to '6', '۷' to '7', '۸' to '8', '۹' to '9'
     )
 
-    private val SPOKEN_NUMBERS = listOf(
-        "ألفين" to 2000.0,
-        "الفين" to 2000.0,
-        "ألف" to 1000.0,
-        "الف" to 1000.0,
-        "تسعمية" to 900.0,
-        "تسعمائة" to 900.0,
-        "تمنمية" to 800.0,
-        "ثمانمائة" to 800.0,
-        "سبعمية" to 700.0,
-        "سبعمائة" to 700.0,
-        "ستمية" to 600.0,
-        "ستمائة" to 600.0,
-        "خمسمائة" to 500.0,
-        "خمسمية" to 500.0,
-        "ربعمية" to 400.0,
-        "أربعمائة" to 400.0,
-        "تلاتمية" to 300.0,
-        "ثلاثمائة" to 300.0,
-        "ميتين" to 200.0,
-        "مائتين" to 200.0,
-        "مية" to 100.0,
-        "مائة" to 100.0,
-        "تسعين" to 90.0,
-        "تمانين" to 80.0,
-        "ثمانين" to 80.0,
-        "سبعين" to 70.0,
-        "ستين" to 60.0,
-        "خمسين" to 50.0,
-        "ربعين" to 40.0,
-        "أربعين" to 40.0,
-        "تلاتين" to 30.0,
-        "ثلاثين" to 30.0,
-        "خمسة وعشرين" to 25.0,
-        "عشرين" to 20.0,
-        "خمسطاش" to 15.0,
-        "خمسة عشر" to 15.0,
-        "طناش" to 12.0,
-        "عشرة" to 10.0,
-        "عشره" to 10.0,
-        "تسعود" to 9.0,
-        "تسعة" to 9.0,
-        "تمنية" to 8.0,
-        "ثمانية" to 8.0,
-        "سبعة" to 7.0,
-        "ستة" to 6.0,
-        "خمسة" to 5.0,
-        "خمسه" to 5.0,
-        "ربعة" to 4.0,
-        "أربعة" to 4.0,
-        "تلاتة" to 3.0,
-        "ثلاثة" to 3.0,
-        "جوج" to 2.0,
-        "زوج" to 2.0
+    private val SPOKEN_NUMBERS: List<Pair<String, Long>> = listOf(
+        "ألفين" to 2000L,
+        "الفين" to 2000L,
+        "ألف" to 1000L,
+        "الف" to 1000L,
+        "تسعمية" to 900L,
+        "تسعمائة" to 900L,
+        "تمنمية" to 800L,
+        "ثمانمائة" to 800L,
+        "سبعمية" to 700L,
+        "سبعمائة" to 700L,
+        "ستمية" to 600L,
+        "ستمائة" to 600L,
+        "خمسمائة" to 500L,
+        "خمسمية" to 500L,
+        "ربعمية" to 400L,
+        "أربعمائة" to 400L,
+        "تلاتمية" to 300L,
+        "ثلاثمائة" to 300L,
+        "ميتين" to 200L,
+        "مائتين" to 200L,
+        "مية" to 100L,
+        "مائة" to 100L,
+        "تسعين" to 90L,
+        "تمانين" to 80L,
+        "ثمانين" to 80L,
+        "سبعين" to 70L,
+        "ستين" to 60L,
+        "خمسين" to 50L,
+        "ربعين" to 40L,
+        "أربعين" to 40L,
+        "تلاتين" to 30L,
+        "ثلاثين" to 30L,
+        "خمسة وعشرين" to 25L,
+        "عشرين" to 20L,
+        "خمسطاش" to 15L,
+        "خمسة عشر" to 15L,
+        "طناش" to 12L,
+        "عشرة" to 10L,
+        "عشره" to 10L,
+        "تسعود" to 9L,
+        "تسعة" to 9L,
+        "تمنية" to 8L,
+        "ثمانية" to 8L,
+        "سبعة" to 7L,
+        "ستة" to 6L,
+        "خمسة" to 5L,
+        "خمسه" to 5L,
+        "ربعة" to 4L,
+        "أربعة" to 4L,
+        "تلاتة" to 3L,
+        "ثلاثة" to 3L,
+        "جوج" to 2L,
+        "زوج" to 2L
     )
 
-    private val RYAL_THOUSAND_MULTIPLIERS = listOf(
-        "مية" to 100.0, "مائة" to 100.0,
-        "تسعين" to 90.0, "تمانين" to 80.0, "ثمانين" to 80.0,
-        "سبعين" to 70.0, "ستين" to 60.0, "خمسين" to 50.0,
-        "ربعين" to 40.0, "أربعين" to 40.0,
-        "تلاتين" to 30.0, "ثلاثين" to 30.0,
-        "عشرين" to 20.0, "3echrin" to 20.0,
-        "خمسطاش" to 15.0, "خمسة عشر" to 15.0,
-        "طناش" to 12.0,
-        "عشرة" to 10.0, "عشره" to 10.0, "3achra" to 10.0, "achra" to 10.0,
-        "تسعود" to 9.0, "تسعة" to 9.0,
-        "تمنية" to 8.0, "ثمانية" to 8.0, "temnya" to 8.0,
-        "سبعة" to 7.0, "seb3a" to 7.0,
-        "ستة" to 6.0, "setta" to 6.0,
-        "خمسة" to 5.0, "خمسه" to 5.0, "khamsa" to 5.0,
-        "ربعة" to 4.0, "أربعة" to 4.0, "rb3a" to 4.0, "reb3a" to 4.0,
-        "تلاتة" to 3.0, "ثلاثة" to 3.0, "tlata" to 3.0,
-        "جوج" to 2.0, "زوج" to 2.0, "jouj" to 2.0, "jooj" to 2.0
+    private val RYAL_THOUSAND_MULTIPLIERS: List<Pair<String, BigDecimal>> = listOf(
+        "مية" to BigDecimal.valueOf(100L), "مائة" to BigDecimal.valueOf(100L),
+        "تسعين" to BigDecimal.valueOf(90L), "تمانين" to BigDecimal.valueOf(80L), "ثمانين" to BigDecimal.valueOf(80L),
+        "سبعين" to BigDecimal.valueOf(70L), "ستين" to BigDecimal.valueOf(60L), "خمسين" to BigDecimal.valueOf(50L),
+        "ربعين" to BigDecimal.valueOf(40L), "أربعين" to BigDecimal.valueOf(40L),
+        "تلاتين" to BigDecimal.valueOf(30L), "ثلاثين" to BigDecimal.valueOf(30L),
+        "عشرين" to BigDecimal.valueOf(20L), "3echrin" to BigDecimal.valueOf(20L),
+        "خمسطاش" to BigDecimal.valueOf(15L), "خمسة عشر" to BigDecimal.valueOf(15L),
+        "طناش" to BigDecimal.valueOf(12L),
+        "عشرة" to BigDecimal.valueOf(10L), "عشره" to BigDecimal.valueOf(10L), "3achra" to BigDecimal.valueOf(10L), "achra" to BigDecimal.valueOf(10L),
+        "تسعود" to BigDecimal.valueOf(9L), "تسعة" to BigDecimal.valueOf(9L),
+        "تمنية" to BigDecimal.valueOf(8L), "ثمانية" to BigDecimal.valueOf(8L), "temnya" to BigDecimal.valueOf(8L),
+        "سبعة" to BigDecimal.valueOf(7L), "seb3a" to BigDecimal.valueOf(7L),
+        "ستة" to BigDecimal.valueOf(6L), "setta" to BigDecimal.valueOf(6L),
+        "خمسة" to BigDecimal.valueOf(5L), "خمسه" to BigDecimal.valueOf(5L), "khamsa" to BigDecimal.valueOf(5L),
+        "ربعة" to BigDecimal.valueOf(4L), "أربعة" to BigDecimal.valueOf(4L), "rb3a" to BigDecimal.valueOf(4L), "reb3a" to BigDecimal.valueOf(4L),
+        "تلاتة" to BigDecimal.valueOf(3L), "ثلاثة" to BigDecimal.valueOf(3L), "tlata" to BigDecimal.valueOf(3L),
+        "جوج" to BigDecimal.valueOf(2L), "زوج" to BigDecimal.valueOf(2L), "jouj" to BigDecimal.valueOf(2L), "jooj" to BigDecimal.valueOf(2L)
     )
+
+    private val FIFTY_BD: BigDecimal = BigDecimal.valueOf(50L)
+    private val RYAL_TO_DH_BD: BigDecimal = BigDecimal("0.05")
 
     private val CURRENCY_NOISE_WORDS = listOf(
         "درهم", "دراهم", "د.م", "dh", "dhs", "mad", "dirhams", "dirham",
@@ -266,8 +274,8 @@ object VoiceDarijaParser {
             normalizedDigits = pattern.replace(normalizedDigits, replacement)
         }
 
-        // 1. Check Moroccan Ryal / Dlaf / Francs idioms and numeric Ryal ("1000 ryal", "ألف ريال", "جوج دلاف") first (1 DH = 20 Ryal)
-        var extractedAmount = 0.0
+        // 1. Check Moroccan Ryal / Dlaf / Francs idioms and numeric Ryal ("1000 ryal", "ألف ريال", "جوج دلاف") first (1 Ryal = 5 centimes exact)
+        var extractedAmount = Money.ZERO
         var cleanedText = normalizedDigits
         val ryalMatch = extractRyalOrDlafAmount(normalizedDigits)
         if (ryalMatch != null) {
@@ -278,17 +286,21 @@ object VoiceDarijaParser {
             val standaloneNumberRegex = Regex("""(?<!\p{L})(\d+(?:[.,]\d{1,2})?)(?!\p{L})""")
             val fallbackNumberRegex = Regex("""(\d+(?:[.,]\d{1,2})?)""")
             val match = standaloneNumberRegex.find(normalizedDigits) ?: fallbackNumberRegex.find(normalizedDigits)
-            extractedAmount = match?.groupValues?.get(1)?.replace(",", ".")?.toDoubleOrNull() ?: 0.0
+            extractedAmount = match?.groupValues?.get(1)
+                ?.let { MoneyParser.parseMoroccanAmountToCentimes(it) }
+                ?.takeIf { it > 0L }
+                ?.let { Money.fromCentimes(it) }
+                ?: Money.ZERO
             cleanedText = if (match != null) {
                 (normalizedDigits.substring(0, match.range.first) + " " + normalizedDigits.substring(match.range.last + 1)).trim()
             } else {
                 normalizedDigits
             }
 
-            if (extractedAmount <= 0.0) {
-                for ((word, value) in SPOKEN_NUMBERS) {
+            if (!extractedAmount.isPositive) {
+                for ((word, valueDh) in SPOKEN_NUMBERS) {
                     if (cleanedText.contains(word, ignoreCase = true)) {
-                        extractedAmount = value
+                        extractedAmount = Money.fromDh(valueDh)
                         cleanedText = cleanedText.replaceFirst(word, "", ignoreCase = true).trim()
                         break
                     }
@@ -296,8 +308,7 @@ object VoiceDarijaParser {
             }
         }
 
-        val roundedAmount = PayCycleEngine.roundMoney(extractedAmount)
-        if (roundedAmount <= 0.0) return null
+        if (!extractedAmount.isPositive) return null
 
         // 2. Clean currency words and punctuation
         val descTokens = cleanedText
@@ -349,7 +360,7 @@ object VoiceDarijaParser {
 
         return VoiceParsedTransaction(
             rawTranscript = rawInput.trim(),
-            amount = roundedAmount,
+            amount = extractedAmount,
             description = cleanedDesc,
             envelopeKey = finalEnvKey,
             categoryName = finalCategoryName,
@@ -357,87 +368,110 @@ object VoiceDarijaParser {
         )
     }
 
-    private fun parseMultiplierToken(raw: String): Double? {
+    private fun parsePositiveDecimal(raw: String): BigDecimal? {
+        val clean = raw.trim().replace(",", ".")
+        if (clean.isEmpty()) return null
+        val bd = clean.toBigDecimalOrNull() ?: return null
+        return if (bd.signum() > 0) bd else null
+    }
+
+    private fun parseMultiplierToken(raw: String): BigDecimal? {
         val clean = raw.trim().lowercase(Locale.ROOT).replace(",", ".")
-        clean.toDoubleOrNull()?.let { return it }
+        parsePositiveDecimal(clean)?.let { return it }
         return RYAL_THOUSAND_MULTIPLIERS.firstOrNull { (token, _) ->
             clean == token.lowercase(Locale.ROOT)
         }?.second
     }
 
     /**
-     * Converts Moroccan Ryal (`1 DH = 20 Ryal`), Dlaf (`جوج دلاف` = 2000 Ryal = 100 DH,
-     * `عشرة دلاف` = 10000 Ryal = 500 DH), and Francs (`1 DH = 100 Francs`) expressions to Dirhams.
+     * Converts Moroccan Ryal (`1 Ryal = 5 centimes` exact), Dlaf (`جوج دلاف` = 2000 Ryal = 100.00 DH,
+     * `عشرة دلاف` = 10000 Ryal = 500.00 DH), and Francs (`1 Franc = 1 centime` exact) expressions to [Money].
      */
-    private fun extractRyalOrDlafAmount(input: String): Pair<Double, String>? {
+    private fun extractRyalOrDlafAmount(input: String): Pair<Money, String>? {
         val multChoices = RYAL_THOUSAND_MULTIPLIERS.joinToString("|") { Regex.escape(it.first) }
 
-        // A. Dlaf idioms: "جوج دلاف", "عشرة دلاف", "2 dlaf", "10 dlaf" -> multiplier * 1000 ryal / 20
+        // A. Dlaf idioms: "جوج دلاف", "عشرة دلاف", "2 dlaf", "10 dlaf" -> multiplier * 1000 ryal = multiplier * 50 DH
         val dlafRegex = Regex(
             """(?<!\p{L})($multChoices|\d+(?:[.,]\d+)?)\s*(?:دلاف|dlaf|d'alaf)(?!\p{L})""",
             RegexOption.IGNORE_CASE
         )
         dlafRegex.find(input)?.let { m ->
             val mult = parseMultiplierToken(m.groupValues[1])
-            if (mult != null && mult > 0.0) {
-                val dh = (mult * 1000.0) / 20.0
-                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
-                return dh to rem
+            if (mult != null && mult.signum() > 0) {
+                val money = runCatching {
+                    Money.fromMajorUnits(mult.multiply(FIFTY_BD), RoundingMode.HALF_UP)
+                }.getOrNull()
+                if (money != null && money.isPositive) {
+                    val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                    return money to rem
+                }
             }
         }
 
-        // B. Compound "<multiplier> ألف/آلاف ريال": e.g. "عشرين ألف ريال" = 20000 ryal = 1000 DH
+        // B. Compound "<multiplier> ألف/آلاف ريال": e.g. "عشرين ألف ريال" = 20000 ryal = 1000.00 DH
         val compoundAlfRyalRegex = Regex(
             """(?<!\p{L})($multChoices|\d+(?:[.,]\d+)?)\s*(?:ألف|الف|آلاف|الاف|alf|alaf)\s*(?:ريال|ريالات|ryalat|ryal|rial)(?!\p{L})""",
             RegexOption.IGNORE_CASE
         )
         compoundAlfRyalRegex.find(input)?.let { m ->
             val mult = parseMultiplierToken(m.groupValues[1])
-            if (mult != null && mult > 0.0) {
-                val dh = (mult * 1000.0) / 20.0
-                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
-                return dh to rem
+            if (mult != null && mult.signum() > 0) {
+                val money = runCatching {
+                    Money.fromMajorUnits(mult.multiply(FIFTY_BD), RoundingMode.HALF_UP)
+                }.getOrNull()
+                if (money != null && money.isPositive) {
+                    val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                    return money to rem
+                }
             }
         }
 
-        // C. Numeric "<amount> ryal/ريال": e.g. "1000 ryal" = 50 DH, "100 ryal" = 5 DH
+        // C. Numeric "<amount> ryal/ريال": 1 Ryal = 5 centimes exact (e.g., "1000 ryal" = 50.00 DH, "1 ryal" = 0.05 DH)
         val numericRyalRegex = Regex(
             """(?<!\p{L})(\d+(?:[.,]\d{1,2})?)\s*(?:ريال|ريالات|ryalat|ryal|rial)(?!\p{L})""",
             RegexOption.IGNORE_CASE
         )
         numericRyalRegex.find(input)?.let { m ->
-            val ryal = m.groupValues[1].replace(",", ".").toDoubleOrNull()
-            if (ryal != null && ryal > 0.0) {
-                val dh = ryal / 20.0
-                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
-                return dh to rem
+            val ryalBd = parsePositiveDecimal(m.groupValues[1])
+            if (ryalBd != null) {
+                val money = runCatching {
+                    Money.fromMajorUnits(ryalBd.multiply(RYAL_TO_DH_BD), RoundingMode.HALF_UP)
+                }.getOrNull()
+                if (money != null && money.isPositive) {
+                    val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                    return money to rem
+                }
             }
         }
 
-        // D. Spoken single number + Ryal: e.g. "ألف ريال" = 50 DH, "مية ريال" = 5 DH, "خمسمية ريال" = 25 DH
-        for ((word, value) in SPOKEN_NUMBERS) {
+        // D. Spoken single number + Ryal: e.g. "ألف ريال" = 50.00 DH, "مية ريال" = 5.00 DH, "خمسمية ريال" = 25.00 DH
+        for ((word, valueRyal) in SPOKEN_NUMBERS) {
             val spokenRyalRegex = Regex(
                 """(?<!\p{L})${Regex.escape(word)}\s*(?:ريال|ريالات|ryalat|ryal|rial)(?!\p{L})""",
                 RegexOption.IGNORE_CASE
             )
             spokenRyalRegex.find(input)?.let { m ->
-                val dh = value / 20.0
+                val money = Money.fromRyal(valueRyal)
                 val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
-                return dh to rem
+                return money to rem
             }
         }
 
-        // E. Numeric or spoken Francs (1 DH = 100 francs): e.g. "500 francs" -> 5 DH
+        // E. Numeric Francs (1 DH = 100 francs -> 1 franc = 1 centime exact): e.g. "500 francs" -> 5.00 DH
         val numericFrancRegex = Regex(
             """(?<!\p{L})(\d+(?:[.,]\d{1,2})?)\s*(?:فرنك|frank|francs?)(?!\p{L})""",
             RegexOption.IGNORE_CASE
         )
         numericFrancRegex.find(input)?.let { m ->
-            val fr = m.groupValues[1].replace(",", ".").toDoubleOrNull()
-            if (fr != null && fr > 0.0) {
-                val dh = fr / 100.0
-                val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
-                return dh to rem
+            val frBd = parsePositiveDecimal(m.groupValues[1])
+            if (frBd != null) {
+                val money = runCatching {
+                    Money.fromMajorUnits(frBd.movePointLeft(2), RoundingMode.HALF_UP)
+                }.getOrNull()
+                if (money != null && money.isPositive) {
+                    val rem = (input.substring(0, m.range.first) + " " + input.substring(m.range.last + 1)).trim()
+                    return money to rem
+                }
             }
         }
 

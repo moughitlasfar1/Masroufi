@@ -1,5 +1,6 @@
 package com.masroufi.importer.domain
 
+import com.masroufi.core.Money
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -92,9 +93,9 @@ data class CsvInspectionResult(
 data class StatementRow(
     val isoDate: String,
     val rawLabel: String,
-    val debitMad: Double? = null,
-    val creditMad: Double? = null,
-    val signedAmountMad: Double? = null,
+    val debitMad: Money? = null,
+    val creditMad: Money? = null,
+    val signedAmountMad: Money? = null,
     val sourceLineNumber: Int = 0
 )
 
@@ -104,7 +105,7 @@ data class ImportCandidateRow(
     val rawLabel: String,
     val cleanedLabel: String,
     val txType: String, // "expense", "income", "transfer"
-    val amountMad: Double,
+    val amountMad: Money,
     val accountId: String,
     val toAccountId: String = "",
     val envelopeKey: String,
@@ -115,7 +116,7 @@ data class ImportCandidateRow(
 )
 
 data class ParsedReceipt(
-    val totalAmountMad: Double?,
+    val totalAmountMad: Money?,
     val isoDate: String?,
     val merchantName: String?,
     val rawLineCount: Int,
@@ -171,12 +172,12 @@ object ImporterConstants {
      */
     fun buildDeterministicId(
         isoDate: String,
-        amountMad: Double,
+        amountMad: Money,
         normalizedLabel: String,
         accountId: String,
         occurrenceIndex: Int = 0
     ): String {
-        val canonicalAmount = String.format(Locale.US, "%.2f", amountMad)
+        val canonicalAmount = amountMad.toCanonicalDecimalString()
         val canonicalLabel = sanitizeLabel(normalizedLabel)
             .lowercase(Locale.ROOT)
             .replace(MULTI_SPACE_REGEX, " ")

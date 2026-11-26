@@ -1,7 +1,7 @@
 package com.masroufi.importer.domain
 
 import com.example.domain.PayCycleEngine
-import java.util.Locale
+import com.masroufi.core.Money
 
 /**
  * Pure Kotlin receipt text extractor (Phase 2).
@@ -135,8 +135,11 @@ object ReceiptParser {
         )
     }
 
-    private fun extractTotalAmount(lines: List<String>): Double? {
-        data class ScoredAmount(val amount: Double, val score: Int, val lineIndex: Int)
+    private val MIN_RECEIPT_AMOUNT: Money = Money.fromCentimes(50L)
+    private val MAX_RECEIPT_AMOUNT: Money = Money.fromDh(500_000L)
+
+    private fun extractTotalAmount(lines: List<String>): Money? {
+        data class ScoredAmount(val amount: Money, val score: Int, val lineIndex: Int)
 
         val candidates = ArrayList<ScoredAmount>()
         val totalLines = lines.size
@@ -158,7 +161,7 @@ object ReceiptParser {
                     else -> 10
                 }
                 for (amt in amountsOnLine) {
-                    if (amt in 0.5..500_000.0) {
+                    if (amt in MIN_RECEIPT_AMOUNT..MAX_RECEIPT_AMOUNT) {
                         candidates.add(ScoredAmount(amt, baseScore, i))
                     }
                 }
@@ -167,7 +170,7 @@ object ReceiptParser {
                 val nextAmounts = extractAmountsFromLine(lines[i + 1])
                 val score = if (hasHighKw) 95 else 65
                 for (amt in nextAmounts) {
-                    if (amt in 0.5..500_000.0) {
+                    if (amt in MIN_RECEIPT_AMOUNT..MAX_RECEIPT_AMOUNT) {
                         candidates.add(ScoredAmount(amt, score, i + 1))
                     }
                 }
@@ -183,11 +186,10 @@ object ReceiptParser {
             .filter { it.score >= maxScore - 10 }
             .maxByOrNull { it.amount }
             ?.amount
-            ?.let { PayCycleEngine.roundMoney(it) }
     }
 
-    private fun extractAmountsFromLine(line: String): List<Double> {
-        val found = ArrayList<Double>()
+    private fun extractAmountsFromLine(line: String): List<Money> {
+        val found = ArrayList<Money>()
         // Remove dates and timestamps so "14.05.2026" or "12:30" are not misread as amounts
         val withoutDates = DATE_INLINE_REGEX.replace(line, " ")
             .replace(Regex("\\b\\d{1,2}:\\d{2}(?::\\d{2})?\\b"), " ")
@@ -195,14 +197,14 @@ object ReceiptParser {
         AMOUNT_TOKEN_REGEX.findAll(withoutDates).forEach { match ->
             val intPart = match.groupValues[1].replace(Regex("[\\s\\u00A0.]"), "")
             val decPart = match.groupValues[2]
-            val parsed = "$intPart.$decPart".toDoubleOrNull()
-            if (parsed != null && parsed > 0.0) {
+            val parsed = Money.fromDhString("$intPart.$decPart")
+            if (parsed != null && parsed.isPositive) {
                 found.add(parsed)
             }
         }
         INTEGER_CURRENCY_REGEX.findAll(withoutDates).forEach { match ->
-            val parsed = match.groupValues[1].toDoubleOrNull()
-            if (parsed != null && parsed > 0.0) {
+            val parsed = Money.fromDhString(match.groupValues[1])
+            if (parsed != null && parsed.isPositive) {
                 found.add(parsed)
             }
         }

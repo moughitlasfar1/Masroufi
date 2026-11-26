@@ -112,8 +112,8 @@ import com.example.ui.theme.distinctAccountColor
 import com.example.ui.theme.distinctEnvelopeColor
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
-import kotlin.math.abs
-import kotlin.math.max
+import com.masroufi.core.Money
+import java.math.BigDecimal
 
 @Composable
 fun MonthScreen(
@@ -125,7 +125,7 @@ fun MonthScreen(
     onOpenNewSeasonal: (FinancialItem?) -> Unit,
     onDeleteItem: (String) -> Unit,
     onShiftCycle: (Int) -> Unit = {},
-    onQuickCreateSeasonalTemplate: (String, Double, String) -> Unit = { _, _, _ -> },
+    onQuickCreateSeasonalTemplate: (String, Money, String) -> Unit = { _, _, _ -> },
     onConvertSubscriptionToBill: (DetectedSubscription) -> Unit = {},
     onDismissDetectedSubscription: (DetectedSubscription) -> Unit = {},
     onShareText: (String) -> Unit = {}
@@ -134,17 +134,17 @@ fun MonthScreen(
     val hide = state.hideAmounts
     val haptics = LocalHapticFeedback.current
     val lang = state.profile.language
-    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
-    val pct = if (state.totalAvailableBudget > 0) {
-        ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).safeRoundToInt()
+    fun fmt(value: Money): String = PayCycleEngine.formatAmountOrMask(value, hide)
+    val pct = if (state.totalAvailableBudget.isPositive) {
+        ((state.cycleExpenses.centimes.toDouble() / state.totalAvailableBudget.centimes.toDouble()) * 100.0).safeRoundToInt()
     } else 0
-    val isOver = state.remainingBudget < 0
+    val isOver = state.remainingBudget.isNegative
 
     val selectedEnv = state.envelopes.find { it.config.key == state.whatIfState.selectedEnvelopeKey }
         ?: state.envelopes.firstOrNull()
-    val baseSpendForSim = max(selectedEnv?.spent ?: 0.0, selectedEnv?.baseAllocated ?: 500.0)
-    val monthlySaved = baseSpendForSim * (state.whatIfState.cutPercentage / 100.0)
-    val yearlySaved = monthlySaved * 12.0
+    val baseSpendForSim = maxOf(selectedEnv?.spent ?: Money.ZERO, selectedEnv?.baseAllocated ?: Money.fromDh(500))
+    val monthlySaved = baseSpendForSim.multiplyRate(BigDecimal.valueOf(state.whatIfState.cutPercentage.toLong(), 2))
+    val yearlySaved = monthlySaved * 12L
     val goalImpactText = PayCycleEngine.computeWhatIfGoalImpact(
         monthlySaved = monthlySaved,
         goals = state.goals,
@@ -294,7 +294,7 @@ fun MonthScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    text = "${if (isOver && !hide) "-" else "+"}${fmt(abs(state.remainingBudget))} $cur",
+                    text = "${if (isOver && !hide) "-" else "+"}${fmt(state.remainingBudget.abs())} $cur",
                     style = MaterialTheme.typography.displayMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = if (isOver) expColor else incColor
@@ -320,13 +320,13 @@ fun MonthScreen(
         }
 
         // 2. Advanced Analytics Accordion (Month-over-Month Comparison)
-        if (state.previousCycleExpenses > 0.0) {
+        if (state.previousCycleExpenses.isPositive) {
             item(key = "month_comparison_card") {
                 val isDark = state.profile.isDarkTheme
                 val incColor = semanticIncomeColor(isDark)
                 val expColor = semanticExpenseColor(isDark)
                 val projectedDelta = state.totalAvailableBudget - state.spendProjection.projectedTotal
-                val momDiffPct = (((state.cycleExpenses - state.previousCycleExpenses) / state.previousCycleExpenses) * 100.0).safeRoundToInt()
+                val momDiffPct = (((state.cycleExpenses - state.previousCycleExpenses).centimes.toDouble() / state.previousCycleExpenses.centimes.toDouble()) * 100.0).safeRoundToInt()
                 val momBadge = "${if (momDiffPct > 0) "+" else ""}$momDiffPct%"
                 ExpressiveAccordionCard(
                     title = when (state.profile.language) {
@@ -335,10 +335,10 @@ fun MonthScreen(
                         "en" -> "Month Comparison"
                         else -> "Comparaison Mensuelle"
                     },
-                    subtitle = if (projectedDelta >= 0) {
+                    subtitle = if (!projectedDelta.isNegative) {
                         "Projection : +${fmt(projectedDelta)} $cur"
                     } else {
-                        "Projection : -${fmt(abs(projectedDelta))} $cur"
+                        "Projection : -${fmt(projectedDelta.abs())} $cur"
                     },
                     summaryBadge = momBadge,
                     summaryBadgeColor = if (momDiffPct <= 0) incColor else expColor,
@@ -354,12 +354,12 @@ fun MonthScreen(
                         val prevSpent = env.previousSpent
                         val diff = curSpent - prevSpent
                         val badgeText = when {
-                            prevSpent <= 0.0 && curSpent <= 0.0 -> "0 $cur"
-                            prevSpent <= 0.0 -> "${strings.newLabel} (-${fmt(curSpent)} $cur)"
-                            diff <= 0.0 -> "-${fmt(abs(diff))} $cur ${strings.vsLastMonthSuffix}"
+                            !prevSpent.isPositive && !curSpent.isPositive -> "0 $cur"
+                            !prevSpent.isPositive -> "${strings.newLabel} (-${fmt(curSpent)} $cur)"
+                            !diff.isPositive -> "-${fmt(diff.abs())} $cur ${strings.vsLastMonthSuffix}"
                             else -> "+${fmt(diff)} $cur ${strings.vsLastMonthSuffix}"
                         }
-                        val badgeColor = if (diff <= 0.0) incColor else expColor
+                        val badgeColor = if (!diff.isPositive) incColor else expColor
                         ExpressiveGlassSurface(
                             shape = RoundedCornerShape(16.dp),
                             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -536,10 +536,10 @@ fun MonthScreen(
 
         // 4. Monthly Review Accordion (Bilan du mois)
         item(key = "insights_monthly_review") {
-            val vsLastMonthDiff = if (state.previousCycleExpenses > 0.0) {
-                (((state.cycleExpenses - state.previousCycleExpenses) / state.previousCycleExpenses) * 100.0).safeRoundToInt()
+            val vsLastMonthDiff = if (state.previousCycleExpenses.isPositive) {
+                (((state.cycleExpenses - state.previousCycleExpenses).centimes.toDouble() / state.previousCycleExpenses.centimes.toDouble()) * 100.0).safeRoundToInt()
             } else 0
-            val vsLastMonthText = if (state.previousCycleExpenses > 0.0) {
+            val vsLastMonthText = if (state.previousCycleExpenses.isPositive) {
                 val sign = if (vsLastMonthDiff > 0) "+" else ""
                 "$sign$vsLastMonthDiff% ${strings.vsLastMonthSuffix}"
             } else {
@@ -569,7 +569,7 @@ fun MonthScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = if (state.remainingBudget >= 0) {
+                        text = if (!state.remainingBudget.isNegative) {
                             "${strings.remainingLabel} ${fmt(state.remainingBudget)} $cur (${state.activeWindow.daysRemaining}j)"
                         } else {
                             "${strings.overrunLabel} ${fmt(-state.remainingBudget)} $cur"
@@ -780,7 +780,7 @@ fun MonthScreen(
                     }
 
                     state.seasonals.forEach { item ->
-                        val prog = if (item.amount > 0) (item.secondaryAmount / item.amount).toFloat().safeFraction() else 0f
+                        val prog = if (item.amount.isPositive) (item.secondaryAmount.centimes.toDouble() / item.amount.centimes.toDouble()).toFloat().safeFraction() else 0f
                         val countdown = PayCycleEngine.computeSeasonalCountdown(
                             targetIso = item.dateOrCycle,
                             targetAmount = item.amount,
@@ -840,7 +840,7 @@ fun MonthScreen(
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                                 )
                                             }
-                                            if (countdown.suggestedMonthlySaving > 0.0) {
+                                            if (countdown.suggestedMonthlySaving.isPositive) {
                                                 Text(
                                                     text = "+${fmt(countdown.suggestedMonthlySaving)} $cur/m",
                                                     style = MaterialTheme.typography.labelSmall,
@@ -907,10 +907,10 @@ fun BudgetAndDaretScreen(
     onOpenNewBill: (FinancialItem?) -> Unit,
     onPayBill: (FinancialItem) -> Unit,
     onDeleteItem: (String) -> Unit,
-    onPartialRepayDebt: (FinancialItem, Double) -> Unit = { _, _ -> },
+    onPartialRepayDebt: (FinancialItem, Money) -> Unit = { _, _ -> },
     onSendWhatsAppReminder: (String) -> Unit = {},
     onOpenSplitBillModal: () -> Unit = {},
-    onQuickCreateBillTemplate: (String, Double, Int) -> Unit = { _, _, _ -> },
+    onQuickCreateBillTemplate: (String, Money, Int) -> Unit = { _, _, _ -> },
     onOpenAccountModal: (AccountItem?) -> Unit = {},
     onOpenTransferModal: () -> Unit = {},
     onQuickPresetTap: (FinancialItem) -> Unit = {},
@@ -934,9 +934,9 @@ fun BudgetAndDaretScreen(
     fun togglePlanSection(key: String) {
         expandedPlanSection = if (expandedPlanSection == key) null else key
     }
-    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
-    val cycleUsagePct = if (state.totalAvailableBudget > 0) {
-        ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).safeRoundToInt()
+    fun fmt(value: Money): String = PayCycleEngine.formatAmountOrMask(value, hide)
+    val cycleUsagePct = if (state.totalAvailableBudget.isPositive) {
+        ((state.cycleExpenses.centimes.toDouble() / state.totalAvailableBudget.centimes.toDouble()) * 100.0).safeRoundToInt()
     } else 0
     val isDark = state.profile.isDarkTheme
     val incColor = semanticIncomeColor(isDark)
@@ -1012,14 +1012,14 @@ fun BudgetAndDaretScreen(
                                 text = "${fmt(state.remainingBudget)} $cur",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
-                                color = if (state.remainingBudget >= 0) MaterialTheme.colorScheme.primary else expColor,
+                                color = if (!state.remainingBudget.isNegative) MaterialTheme.colorScheme.primary else expColor,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
                 }
-                if (state.cycleSavings > 0.0) {
+                if (state.cycleSavings.isPositive) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "${strings.cycleSavingsLabel}: +${fmt(state.cycleSavings)} $cur",
@@ -1082,8 +1082,8 @@ fun BudgetAndDaretScreen(
                         animationSpec = ExpressiveMotion.snappySpring(),
                         label = "env_chevron_${envStatus.config.key}"
                     )
-                    val envRemaining = max(0.0, envStatus.totalAvailable - envStatus.spent)
-                    val envDailyPace = envRemaining / daysLeft.toDouble()
+                    val envRemaining = (envStatus.totalAvailable - envStatus.spent).coerceAtLeast(Money.ZERO)
+                    val envDailyPace = envRemaining.divideBy(daysLeft.toLong())
 
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(20.dp),
@@ -1136,7 +1136,7 @@ fun BudgetAndDaretScreen(
                                             text = "-${fmt(envStatus.spent)} $cur",
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (envStatus.spent > 0) expColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = if (envStatus.spent.isPositive) expColor else MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
@@ -1214,7 +1214,7 @@ fun BudgetAndDaretScreen(
                                                     color = if (envStatus.isOver90Percent) expColor else MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                             }
-                                            if (envStatus.rolloverAmount > 0) {
+                                            if (envStatus.rolloverAmount.isPositive) {
                                                 Text(
                                                     text = strings.rolloverBadge.replace("{amt}", fmt(envStatus.rolloverAmount)),
                                                     style = MaterialTheme.typography.labelSmall,
@@ -1816,7 +1816,7 @@ fun BudgetAndDaretScreen(
                 }
 
                 state.goals.forEach { goal ->
-                    val prog = if (goal.amount > 0) (goal.secondaryAmount / goal.amount).toFloat().safeFraction() else 0f
+                    val prog = if (goal.amount.isPositive) (goal.secondaryAmount.centimes.toDouble() / goal.amount.centimes.toDouble()).toFloat().safeFraction() else 0f
                     ExpressiveGlassSurface(
                         shape = RoundedCornerShape(20.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -2022,8 +2022,8 @@ fun BudgetAndDaretScreen(
                     }
 
                     state.darets.forEach { daret ->
-                        val totalMembers = daret.secondaryAmount.safeRoundToInt().coerceAtLeast(1)
-                        val totalPot = daret.amount * totalMembers
+                        val totalMembers = daret.resolvedDaretMembers()
+                        val totalPot = daret.amount * totalMembers.toLong()
                         val progress = (daret.extraInt.toFloat() / totalMembers.toFloat()).safeFraction()
                         val whoseTurn = daret.subtitle.ifBlank { "Membre #${(daret.extraInt + 1).coerceAtMost(totalMembers)}" }
                         val cleanPayoutDate = PayCycleEngine.daretPayoutDateOnly(daret)
@@ -2248,8 +2248,8 @@ fun BudgetAndDaretScreen(
 
                     state.debts.forEach { debt ->
                         val isLent = debt.dateOrCycle != "borrowed"
-                        val remDebt = max(0.0, debt.amount - debt.secondaryAmount)
-                        val prog = if (debt.amount > 0) (debt.secondaryAmount / debt.amount).toFloat().safeFraction() else 0f
+                        val remDebt = (debt.amount - debt.secondaryAmount).coerceAtLeast(Money.ZERO)
+                        val prog = if (debt.amount.isPositive) (debt.secondaryAmount.centimes.toDouble() / debt.amount.centimes.toDouble()).toFloat().safeFraction() else 0f
                         val amtColor = if (isLent) incColor else expColor
                         ExpressiveGlassSurface(
                             shape = RoundedCornerShape(20.dp),
@@ -2306,7 +2306,7 @@ fun BudgetAndDaretScreen(
                                         )
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (remDebt > 0) {
+                                        if (remDebt.isPositive) {
                                             IconButton(
                                                 onClick = {
                                                     onShareCard(
@@ -2334,7 +2334,7 @@ fun BudgetAndDaretScreen(
                                     }
                                 }
 
-                                if (remDebt > 0) {
+                                if (remDebt.isPositive) {
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Row(
                                         modifier = Modifier
@@ -2343,7 +2343,8 @@ fun BudgetAndDaretScreen(
                                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        listOf(50.0, 100.0, 200.0).filter { it < remDebt }.forEach { stepAmt ->
+                                        listOf(50L, 100L, 200L).map { Money.fromDh(it) }.filter { it < remDebt }.forEach { stepAmt ->
+                                            val stepDh = stepAmt.centimes / 100L
                                             Surface(
                                                 shape = CircleShape,
                                                 color = MaterialTheme.colorScheme.secondaryContainer,
@@ -2353,10 +2354,10 @@ fun BudgetAndDaretScreen(
                                                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                                         onPartialRepayDebt(debt, stepAmt)
                                                     }
-                                                    .testTag("btn_sellef_partial_${debt.id}_${stepAmt.toInt()}")
+                                                    .testTag("btn_sellef_partial_${debt.id}_$stepDh")
                                             ) {
                                                 Text(
-                                                    text = "+${stepAmt.toInt()} $cur",
+                                                    text = "+$stepDh $cur",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                                     fontWeight = FontWeight.Bold,
@@ -2409,7 +2410,7 @@ fun BudgetAndDaretScreen(
 @Composable
 fun CategoryDonutChart(
     envelopes: List<EnvelopeStatus>,
-    totalSpent: Double,
+    totalSpent: Money,
     lang: String,
     currencySymbol: String = "DH",
     hideAmounts: Boolean = false,
@@ -2431,7 +2432,7 @@ fun CategoryDonutChart(
         ) {
             Canvas(modifier = Modifier.size(116.dp)) {
                 val stroke = Stroke(width = 20.dp.toPx(), cap = StrokeCap.Butt)
-                if (totalSpent <= 0.0) {
+                if (!totalSpent.isPositive) {
                     drawArc(
                         color = Color.Gray.copy(alpha = 0.25f),
                         startAngle = 0f,
@@ -2442,8 +2443,8 @@ fun CategoryDonutChart(
                 } else {
                     var startAngle = -90f
                     envelopes.forEachIndexed { index, env ->
-                        if (env.spent > 0) {
-                            val sweep = ((env.spent / totalSpent) * 360.0).toFloat()
+                        if (env.spent.isPositive) {
+                            val sweep = ((env.spent.centimes.toDouble() / totalSpent.centimes.toDouble()) * 360.0).toFloat()
                             if (sweep.isFinite() && sweep > 0f) {
                                 drawArc(
                                     color = envColors[index].copy(alpha = (1f - (index * 0.12f)).coerceIn(0.35f, 1f)),
@@ -2478,7 +2479,7 @@ fun CategoryDonutChart(
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             envelopes.forEachIndexed { index, env ->
-                val sharePct = if (totalSpent > 0) ((env.spent / totalSpent) * 100.0).safeRoundToInt() else 0
+                val sharePct = if (totalSpent.isPositive) ((env.spent.centimes.toDouble() / totalSpent.centimes.toDouble()) * 100.0).safeRoundToInt() else 0
                 val dotColor = envColors[index].copy(alpha = (1f - (index * 0.12f)).coerceIn(0.45f, 1f))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,

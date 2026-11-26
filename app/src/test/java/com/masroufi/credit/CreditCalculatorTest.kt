@@ -1,5 +1,6 @@
 package com.masroufi.credit
 
+import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
 import com.masroufi.credit.domain.CreditCalculator
 import com.masroufi.credit.domain.CreditInput
@@ -35,8 +36,8 @@ class CreditCalculatorTest {
 
     @Test
     fun resolveMaxDti_withoutMortgage_returns45Or50() {
-        val lowIncome = CreditInput(creditType = CreditType.CONSOMMATION, monthlyNetIncome = 15_000.0)
-        val highIncome = CreditInput(creditType = CreditType.AUTO, monthlyNetIncome = 15_001.0)
+        val lowIncome = CreditInput(creditType = CreditType.CONSOMMATION, monthlyNetIncome = Money.fromDh(15_000))
+        val highIncome = CreditInput(creditType = CreditType.AUTO, monthlyNetIncome = Money.fromDh(15_001))
 
         assertEquals(45.0, CreditCalculator.resolveMaxDti(lowIncome), 0.001)
         assertEquals(50.0, CreditCalculator.resolveMaxDti(highIncome), 0.001)
@@ -44,12 +45,12 @@ class CreditCalculatorTest {
 
     @Test
     fun resolveMaxDti_withMortgage_returns50Or55Or60() {
-        val standard = CreditInput(creditType = CreditType.IMMOBILIER, monthlyNetIncome = 20_000.0)
-        val midTier = CreditInput(creditType = CreditType.IMMOBILIER, monthlyNetIncome = 35_000.0)
-        val topTier = CreditInput(creditType = CreditType.IMMOBILIER, monthlyNetIncome = 65_000.0)
+        val standard = CreditInput(creditType = CreditType.IMMOBILIER, monthlyNetIncome = Money.fromDh(20_000))
+        val midTier = CreditInput(creditType = CreditType.IMMOBILIER, monthlyNetIncome = Money.fromDh(35_000))
+        val topTier = CreditInput(creditType = CreditType.IMMOBILIER, monthlyNetIncome = Money.fromDh(65_000))
         val consoWithExistingMortgage = CreditInput(
             creditType = CreditType.CONSOMMATION,
-            monthlyNetIncome = 40_000.0,
+            monthlyNetIncome = Money.fromDh(40_000),
             hasExistingMortgage = true
         )
 
@@ -63,93 +64,92 @@ class CreditCalculatorTest {
     fun calculate_zeroPercentInterest_noDivisionByZeroAndExactSchedule() {
         val input = CreditInput(
             creditType = CreditType.AUTO,
-            loanAmount = 120_000.0,
-            downPayment = 20_000.0,
+            loanAmount = Money.fromDh(120_000),
+            downPayment = Money.fromDh(20_000),
             durationMonths = 50,
             annualInterestRateHt = 0.0,
             applyInterestTva = true,
-            monthlyNetIncome = 12_000.0,
+            monthlyNetIncome = Money.fromDh(12_000),
             insuranceRate = 0.0
         )
 
         val result = CreditCalculator.calculate(input)
-        assertEquals(100_000.0, result.financedPrincipal, 0.01)
-        assertEquals(2_000.0, result.monthlyPayment, 0.01)
-        assertEquals(0.0, result.totalInterestHt, 0.01)
-        assertEquals(0.0, result.totalTva, 0.01)
-        assertEquals(100_000.0, result.totalRepayment, 0.01)
+        assertEquals(Money.fromDh(100_000), result.financedPrincipal)
+        assertEquals(Money.fromDh(2_000), result.monthlyPayment)
+        assertEquals(Money.ZERO, result.totalInterestHt)
+        assertEquals(Money.ZERO, result.totalTva)
+        assertEquals(Money.fromDh(100_000), result.totalRepayment)
         assertEquals(50, result.amortizationSchedule.size)
-        assertEquals(0.0, result.amortizationSchedule.last().remainingBalance, 0.01)
+        assertEquals(Money.ZERO, result.amortizationSchedule.last().remainingBalance)
     }
 
     @Test
     fun calculate_htPlus10PercentTva_splitsInterestAndTvaAccurately() {
         val baseInput = CreditInput(
             creditType = CreditType.CONSOMMATION,
-            loanAmount = 100_000.0,
-            downPayment = 0.0,
+            loanAmount = Money.fromDh(100_000),
+            downPayment = Money.ZERO,
             durationMonths = 48,
             annualInterestRateHt = 7.5,
             applyInterestTva = true,
-            monthlyNetIncome = 15_000.0,
+            monthlyNetIncome = Money.fromDh(15_000),
             insuranceRate = 0.5
         )
         val noTvaResult = CreditCalculator.calculate(baseInput.copy(applyInterestTva = false))
         val withTvaResult = CreditCalculator.calculate(baseInput)
 
         assertTrue(withTvaResult.monthlyPayment > noTvaResult.monthlyPayment)
-        assertEquals(0.0, noTvaResult.totalTva, 0.01)
-        assertTrue(withTvaResult.totalTva > 0.0)
-        val tvaRatio = withTvaResult.totalTva / withTvaResult.totalInterestHt
+        assertEquals(Money.ZERO, noTvaResult.totalTva)
+        assertTrue(withTvaResult.totalTva.isPositive)
+        val tvaRatio = withTvaResult.totalTva.centimes.toDouble() / withTvaResult.totalInterestHt.centimes.toDouble()
         assertEquals(0.10, tvaRatio, 0.005)
         assertEquals(
             withTvaResult.totalInterestHt + withTvaResult.totalTva + withTvaResult.totalInsurance,
-            withTvaResult.totalCost,
-            0.05
+            withTvaResult.totalCost
         )
-        assertEquals(0.0, withTvaResult.amortizationSchedule.last().remainingBalance, 0.01)
+        assertEquals(Money.ZERO, withTvaResult.amortizationSchedule.last().remainingBalance)
     }
 
     @Test
     fun calculate_withDeferredMonths_paysInterestAndInsuranceOnlyThenAmortizes() {
         val input = CreditInput(
             creditType = CreditType.IMMOBILIER,
-            loanAmount = 500_000.0,
-            downPayment = 100_000.0,
+            loanAmount = Money.fromDh(500_000),
+            downPayment = Money.fromDh(100_000),
             durationMonths = 120,
             deferredMonths = 3,
             annualInterestRateHt = 4.5,
             applyInterestTva = true,
-            monthlyNetIncome = 25_000.0,
+            monthlyNetIncome = Money.fromDh(25_000),
             insuranceRate = 0.4
         )
         val result = CreditCalculator.calculate(input)
 
         assertEquals(120, result.amortizationSchedule.size)
-        assertTrue(result.deferredMonthlyPayment > 0.0)
+        assertTrue(result.deferredMonthlyPayment.isPositive)
         assertTrue(result.deferredMonthlyPayment < result.monthlyPayment)
         for (i in 0 until 3) {
             val row = result.amortizationSchedule[i]
             assertTrue(row.isDeferred)
-            assertEquals(0.0, row.principal, 0.01)
-            assertEquals(400_000.0, row.remainingBalance, 0.01)
+            assertEquals(Money.ZERO, row.principal)
+            assertEquals(Money.fromDh(400_000), row.remainingBalance)
         }
         assertFalse(result.amortizationSchedule[3].isDeferred)
-        assertTrue(result.amortizationSchedule[3].principal > 0.0)
-        assertEquals(0.0, result.amortizationSchedule.last().remainingBalance, 0.01)
+        assertTrue(result.amortizationSchedule[3].principal.isPositive)
+        assertEquals(Money.ZERO, result.amortizationSchedule.last().remainingBalance)
     }
 
     @Test
     fun calculate_triggersBcpRegulatoryWarningsCorrectlyAcrossAll4Languages() {
         val input = CreditInput(
             creditType = CreditType.CONSOMMATION,
-            loanAmount = 550_000.0,
-            downPayment = 0.0,
+            loanAmount = Money.fromDh(550_000),
+            downPayment = Money.ZERO,
             durationMonths = 84,
             annualInterestRateHt = 7.5,
             applyInterestTva = true,
-            monthlyNetIncome = 2_800.0, // Below SMIG (3 045 MAD) and over-indebted
-            existingMonthlyDebt = 500.0,
+            monthlyNetIncome = Money.fromDh(2_800), // Below SMIG (3 045 MAD) and over-indebted
+            existingMonthlyDebt = Money.fromDh(500),
             borrowerAge = 66, // 66 + 7 = 73 > 70
             insuranceRate = 0.0 // Mandatory ADI > 10 000 MAD
         )
@@ -167,9 +167,9 @@ class CreditCalculatorTest {
 
     @Test
     fun formatMad_usesFrenchMoroccanGroupingAndCommaDecimal() {
-        assertEquals("12 500,00 MAD", CreditCalculator.formatMad(12_500.0))
-        assertEquals("0,00 MAD", CreditCalculator.formatMad(0.0))
-        assertEquals("1 250 000,50 MAD", CreditCalculator.formatMad(1_250_000.5))
+        assertEquals("12 500,00 MAD", CreditCalculator.formatMad(Money.fromDh(12_500)))
+        assertEquals("0,00 MAD", CreditCalculator.formatMad(Money.ZERO))
+        assertEquals("1 250 000,50 MAD", CreditCalculator.formatMad(Money(125_000_050L)))
     }
 
     @Test
@@ -177,8 +177,8 @@ class CreditCalculatorTest {
         val vm = CreditSimulatorViewModel(repository = null, initialLanguage = "fr")
 
         // Masroufi salary pre-fill
-        vm.applyMasroufiIncomePrefill(18_000.0)
-        assertEquals(18_000.0, vm.uiState.value.input.monthlyNetIncome, 0.01)
+        vm.applyMasroufiIncomePrefill(Money.fromDh(18_000))
+        assertEquals(Money.fromDh(18_000), vm.uiState.value.input.monthlyNetIncome)
 
         // Enable 120 months on Consommation, set duration to 110, then switch to AUTO -> clamped to 60
         vm.onEligibleFor120MonthsChanged(true)
@@ -193,7 +193,7 @@ class CreditCalculatorTest {
         assertFalse(vm.uiState.value.input.isEligibleFor120Months)
 
         // Validation error when downPayment exceeds loanAmount
-        vm.onDownPaymentChanged(vm.uiState.value.input.loanAmount + 1_000.0)
+        vm.onDownPaymentChanged(vm.uiState.value.input.loanAmount + Money.fromDh(1_000))
         assertTrue(vm.uiState.value.validationErrors.containsKey(CreditValidationKeys.DOWN_PAYMENT))
 
         // Reloading a saved Immobilier credit restores parameters cleanly
@@ -202,15 +202,15 @@ class CreditCalculatorTest {
                 id = "c1",
                 userId = "user_1",
                 type = CreditType.IMMOBILIER.name,
-                loanAmount = 700_000.0,
-                downPayment = 100_000.0,
-                financedPrincipal = 600_000.0,
+                loanAmount = Money.fromDh(700_000),
+                downPayment = Money.fromDh(100_000),
+                financedPrincipal = Money.fromDh(600_000),
                 durationMonths = 240,
                 deferredMonths = 3,
                 annualInterestRateHt = 4.5,
                 applyInterestTva = true,
                 insuranceRate = 0.4,
-                monthlyPayment = 4_200.0
+                monthlyPayment = Money.fromDh(4_200)
             )
         )
         assertEquals(CreditType.IMMOBILIER, vm.uiState.value.input.creditType)

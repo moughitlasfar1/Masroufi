@@ -1,8 +1,6 @@
 package com.masroufi.importer.domain
 
-import com.example.domain.PayCycleEngine
-import java.util.Locale
-import kotlin.math.abs
+import com.masroufi.core.Money
 
 /**
  * Pure Kotlin PDF text-to-StatementRow parser for Moroccan bank statements (Phase 3).
@@ -130,7 +128,7 @@ object PdfStatementParser {
         }
 
         // Track an opening balance if present to infer credit vs debit when a running balance column exists
-        var runningBalance: Double? = extractOpeningBalance(rawLines)
+        var runningBalance: Money? = extractOpeningBalance(rawLines)
 
         data class RawPdfEntry(
             val isoDate: String,
@@ -203,7 +201,7 @@ object PdfStatementParser {
             if (updatedBalance != null) {
                 runningBalance = updatedBalance
             }
-            if (txAmount <= 0.0) continue
+            if (!txAmount.isPositive) continue
 
             statementRows.add(
                 StatementRow(
@@ -225,7 +223,7 @@ object PdfStatementParser {
         )
     }
 
-    private fun extractOpeningBalance(lines: List<String>): Double? {
+    private fun extractOpeningBalance(lines: List<String>): Money? {
         for (line in lines.take(40)) {
             val norm = CsvStatementParser.normalizeAscii(line)
             if (norm.contains("solde anterieur") || norm.contains("solde initial") || norm.contains("solde de depart")) {
@@ -240,23 +238,24 @@ object PdfStatementParser {
      * Classifies amount(s) on a PDF statement row into (positiveAmount, isCredit, newRunningBalance?).
      */
     private fun classifyPdfRowAmounts(
-        parsedAmounts: List<Double>,
+        parsedAmounts: List<Money>,
         rawTokens: List<String>,
         labelNorm: String,
-        previousBalance: Double?
-    ): Triple<Double, Boolean, Double?> {
+        previousBalance: Money?
+    ): Triple<Money, Boolean, Money?> {
         // Case 1: Single amount on the row (e.g., Debit or Credit column only, or signed Montant)
         if (parsedAmounts.size == 1) {
             val val1 = parsedAmounts[0]
             val token1 = rawTokens[0].trim()
-            val explicitNeg = token1.startsWith("-") || token1.endsWith("-") || val1 < 0.0
+            val explicitNeg = token1.startsWith("-") || token1.endsWith("-") || val1.isNegative
             val explicitPos = token1.startsWith("+")
             val isCredit = when {
                 explicitNeg -> false
                 explicitPos -> true
                 else -> inferIsCreditFromLabel(labelNorm)
             }
-            return Triple(abs(val1), isCredit, previousBalance?.let { if (isCredit) it + abs(val1) else it - abs(val1) })
+            val absVal = val1.abs()
+            return Triple(absVal, isCredit, previousBalance?.let { if (isCredit) it + absVal else it - absVal })
         }
 
         // Case 2: Two or more amounts on the row -> usually [movement, runningBalance] or [debit, credit]
@@ -264,30 +263,30 @@ object PdfStatementParser {
         val last = parsedAmounts.last()
         val firstToken = rawTokens[0].trim()
 
-        // If we know previous running balance, check if last amount matches prev +/- abs(first)
+        // If we know previous running balance, check if last amount matches prev +/- abs(first) within 5 centimes
         if (previousBalance != null) {
-            val amt = abs(first)
-            if (abs((previousBalance - amt) - last) < 0.05) {
+            val amt = first.abs()
+            if (((previousBalance - amt) - last).abs().centimes < 5L) {
                 return Triple(amt, false, last)
             }
-            if (abs((previousBalance + amt) - last) < 0.05) {
+            if (((previousBalance + amt) - last).abs().centimes < 5L) {
                 return Triple(amt, true, last)
             }
         }
 
         // If one of the two amounts is zero (0,00), it's explicit [Debit, Credit] columns
         if (parsedAmounts.size == 2) {
-            if (abs(first) < 0.005 && abs(last) > 0.005) {
-                return Triple(abs(last), true, previousBalance)
+            if (first.isZero && last.abs().isPositive) {
+                return Triple(last.abs(), true, previousBalance)
             }
-            if (abs(last) < 0.005 && abs(first) > 0.005) {
-                return Triple(abs(first), false, previousBalance)
+            if (last.isZero && first.abs().isPositive) {
+                return Triple(first.abs(), false, previousBalance)
             }
         }
 
         // Otherwise treat the first non-zero amount as the transaction amount and infer sign/direction
         val movement = first
-        val explicitNeg = firstToken.startsWith("-") || firstToken.endsWith("-") || movement < 0.0
+        val explicitNeg = firstToken.startsWith("-") || firstToken.endsWith("-") || movement.isNegative
         val explicitPos = firstToken.startsWith("+")
         val isCredit = when {
             explicitNeg -> false
@@ -295,7 +294,7 @@ object PdfStatementParser {
             else -> inferIsCreditFromLabel(labelNorm)
         }
         val newBalance = if (parsedAmounts.size >= 2) last else previousBalance
-        return Triple(abs(movement), isCredit, newBalance)
+        return Triple(movement.abs(), isCredit, newBalance)
     }
 
     private fun inferIsCreditFromLabel(labelNorm: String): Boolean {

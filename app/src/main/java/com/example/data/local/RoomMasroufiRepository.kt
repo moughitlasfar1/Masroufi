@@ -13,6 +13,7 @@ import com.example.data.local.MasroufiEntityMappers.toEntity
 import com.example.domain.PayCycleEngine
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import com.masroufi.core.Money
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -232,10 +233,10 @@ class RoomMasroufiRepository(
     )
 
     private fun defaultQuickPresets(): List<FinancialItem> = listOf(
-        FinancialItem(id = "pre_cafe", itemType = "preset", name = "Café & Garo", subtitle = "cafe", amount = 20.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
-        FinancialItem(id = "pre_taxi", itemType = "preset", name = "Petit Taxi", subtitle = "transport", amount = 15.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
-        FinancialItem(id = "pre_bread", itemType = "preset", name = "Khobz & Lben", subtitle = "charges", amount = 10.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
-        FinancialItem(id = "pre_oncf", itemType = "preset", name = "Ticket ONCF", subtitle = "transport", amount = 50.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_bank")
+        FinancialItem(id = "pre_cafe", itemType = "preset", name = "Café & Garo", subtitle = "cafe", amount = Money.fromDh(20), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
+        FinancialItem(id = "pre_taxi", itemType = "preset", name = "Petit Taxi", subtitle = "transport", amount = Money.fromDh(15), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
+        FinancialItem(id = "pre_bread", itemType = "preset", name = "Khobz & Lben", subtitle = "charges", amount = Money.fromDh(10), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_cash"),
+        FinancialItem(id = "pre_oncf", itemType = "preset", name = "Ticket ONCF", subtitle = "transport", amount = Money.fromDh(50), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "acc_bank")
     )
 
     private fun collisionSafeSeedId(baseId: String, ownerUid: String?, currentUid: String): String {
@@ -260,7 +261,7 @@ class RoomMasroufiRepository(
         val now = System.currentTimeMillis()
         val newProfile = UserProfileEntity(
             userId = uid,
-            baseBudget = 6400.0,
+            baseBudgetCentimes = 640_000L,
             payCycleDay = 1,
             rolloverEnabled = true,
             language = "fr",
@@ -270,9 +271,9 @@ class RoomMasroufiRepository(
             updatedAtEpochMs = now
         )
         val cleanAccounts = listOf(
-            AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981"),
-            AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8"),
-            AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#FBBF24")
+            AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.ZERO, colorHex = "#10B981"),
+            AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.ZERO, colorHex = "#38BDF8"),
+            AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.ZERO, colorHex = "#FBBF24")
         ).mapIndexed { idx, acc ->
             val safeId = collisionSafeSeedId(acc.id, dao.getAccountOwner(acc.id), uid)
             acc.copy(id = safeId).toEntity(uid, sortOrder = idx, nowMs = now)
@@ -304,34 +305,34 @@ class RoomMasroufiRepository(
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
         val demoAccounts = listOf(
-            AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 1850.0, colorHex = "#10B981"),
-            AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 5200.0, colorHex = "#38BDF8"),
-            AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 650.0, colorHex = "#FBBF24")
+            AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.fromDh(1850), colorHex = "#10B981"),
+            AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.fromDh(5200), colorHex = "#38BDF8"),
+            AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.fromDh(650), colorHex = "#FBBF24")
         ).mapIndexed { idx, acc -> acc.toEntity(uid, sortOrder = idx, nowMs = now) }
 
         val demoEnvelopes = defaultStandardEnvelopes(uid).map { it.toEntity(uid, now) }
         val demoTxs = listOf(
-            TransactionItem(id = "tx_demo_9", type = "expense", amount = 5.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
-            TransactionItem(id = "tx_demo_8", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-30"),
-            TransactionItem(id = "tx_demo_7", type = "expense", amount = 5.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
-            TransactionItem(id = "tx_demo_6", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-30"),
-            TransactionItem(id = "tx_demo_5", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-29"),
-            TransactionItem(id = "tx_demo_4", type = "expense", amount = 457.0, category = "Transport & Carburant", envelopeKey = "transport", accountId = "acc_bank", desc = "ONCF CARTE", isoDate = "2026-10-29"),
-            TransactionItem(id = "tx_demo_3", type = "expense", amount = 20.0, category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-29"),
-            TransactionItem(id = "tx_demo_2", type = "expense", amount = 500.0, category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit mama", isoDate = "2026-10-29"),
-            TransactionItem(id = "tx_demo_1", type = "expense", amount = 1000.0, category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit inaam", isoDate = "2026-10-29")
+            TransactionItem(id = "tx_demo_9", type = "expense", amount = Money.fromDh(5), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
+            TransactionItem(id = "tx_demo_8", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-30"),
+            TransactionItem(id = "tx_demo_7", type = "expense", amount = Money.fromDh(5), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Garo", isoDate = "2026-10-30"),
+            TransactionItem(id = "tx_demo_6", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-30"),
+            TransactionItem(id = "tx_demo_5", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Cafe & garo", isoDate = "2026-10-29"),
+            TransactionItem(id = "tx_demo_4", type = "expense", amount = Money.fromDh(457), category = "Transport & Carburant", envelopeKey = "transport", accountId = "acc_bank", desc = "ONCF CARTE", isoDate = "2026-10-29"),
+            TransactionItem(id = "tx_demo_3", type = "expense", amount = Money.fromDh(20), category = "Café & Sorties", envelopeKey = "cafe", accountId = "acc_cash", desc = "Café & garo", isoDate = "2026-10-29"),
+            TransactionItem(id = "tx_demo_2", type = "expense", amount = Money.fromDh(500), category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit mama", isoDate = "2026-10-29"),
+            TransactionItem(id = "tx_demo_1", type = "expense", amount = Money.fromDh(1000), category = "Autre / Imprévus", envelopeKey = "autre", accountId = "acc_bank", desc = "Crédit inaam", isoDate = "2026-10-29")
         ).map { it.toEntity(uid, now) }
 
         val demoItems = (defaultQuickPresets() + listOf(
-            FinancialItem(id = "bill_fibre", itemType = "bill", name = "Fibre Optique & Mobile", subtitle = "charges", amount = 250.0, secondaryAmount = 0.0, dayOrTurn = 5, extraInt = 0, dateOrCycle = ""),
-            FinancialItem(id = "bill_lydec", itemType = "bill", name = "Eau & Électricité (Lydec/Redal)", subtitle = "charges", amount = 320.0, secondaryAmount = 0.0, dayOrTurn = 18, extraInt = 0, dateOrCycle = ""),
-            FinancialItem(id = "goal_urgence", itemType = "goal", name = "Fonds d'urgence (Tawfir)", subtitle = "epargne", amount = 10000.0, secondaryAmount = 4200.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-06-30"),
-            FinancialItem(id = "debt_mama", itemType = "debt", name = "Crédit Mama", subtitle = "Mama", amount = 500.0, secondaryAmount = 0.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
-            FinancialItem(id = "debt_inaam", itemType = "debt", name = "Crédit Inaam", subtitle = "Inaam", amount = 1000.0, secondaryAmount = 200.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
-            FinancialItem(id = "daret_famille", itemType = "daret", name = "Daret Collègues", subtitle = "10 membres", amount = 1000.0, secondaryAmount = 10.0, dayOrTurn = 4, extraInt = 3, dateOrCycle = "2027-02-01"),
-            FinancialItem(id = "season_ramadan", itemType = "seasonal", name = "Ramadan & Ftous", subtitle = "ramadan", amount = 3000.0, secondaryAmount = 900.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-02-17"),
-            FinancialItem(id = "season_eid", itemType = "seasonal", name = "Aïd al-Adha (Kebch)", subtitle = "eid", amount = 4500.0, secondaryAmount = 1200.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-05-16"),
-            FinancialItem(id = "season_vignette", itemType = "seasonal", name = "Vignette & Assurance Auto", subtitle = "vignette", amount = 3800.0, secondaryAmount = 1500.0, dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-01-31")
+            FinancialItem(id = "bill_fibre", itemType = "bill", name = "Fibre Optique & Mobile", subtitle = "charges", amount = Money.fromDh(250), secondaryAmount = Money.ZERO, dayOrTurn = 5, extraInt = 0, dateOrCycle = ""),
+            FinancialItem(id = "bill_lydec", itemType = "bill", name = "Eau & Électricité (Lydec/Redal)", subtitle = "charges", amount = Money.fromDh(320), secondaryAmount = Money.ZERO, dayOrTurn = 18, extraInt = 0, dateOrCycle = ""),
+            FinancialItem(id = "goal_urgence", itemType = "goal", name = "Fonds d'urgence (Tawfir)", subtitle = "epargne", amount = Money.fromDh(10000), secondaryAmount = Money.fromDh(4200), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-06-30"),
+            FinancialItem(id = "debt_mama", itemType = "debt", name = "Crédit Mama", subtitle = "Mama", amount = Money.fromDh(500), secondaryAmount = Money.ZERO, dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
+            FinancialItem(id = "debt_inaam", itemType = "debt", name = "Crédit Inaam", subtitle = "Inaam", amount = Money.fromDh(1000), secondaryAmount = Money.fromDh(200), dayOrTurn = 1, extraInt = 0, dateOrCycle = "lent"),
+            FinancialItem(id = "daret_famille", itemType = "daret", name = "Daret Collègues", subtitle = "10 membres", amount = Money.fromDh(1000), secondaryAmount = Money.ZERO, daretMembers = 10, dayOrTurn = 4, extraInt = 3, dateOrCycle = "2027-02-01"),
+            FinancialItem(id = "season_ramadan", itemType = "seasonal", name = "Ramadan & Ftous", subtitle = "ramadan", amount = Money.fromDh(3000), secondaryAmount = Money.fromDh(900), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-02-17"),
+            FinancialItem(id = "season_eid", itemType = "seasonal", name = "Aïd al-Adha (Kebch)", subtitle = "eid", amount = Money.fromDh(4500), secondaryAmount = Money.fromDh(1200), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-05-16"),
+            FinancialItem(id = "season_vignette", itemType = "seasonal", name = "Vignette & Assurance Auto", subtitle = "vignette", amount = Money.fromDh(3800), secondaryAmount = Money.fromDh(1500), dayOrTurn = 1, extraInt = 0, dateOrCycle = "2027-01-31")
         )).map { it.toEntity(uid, now) }
 
         dao.upsertAccounts(demoAccounts)
@@ -355,9 +356,9 @@ class RoomMasroufiRepository(
             .filter { it.isNotBlank() && it !in listOf("acc_cash", "acc_bank", "acc_wallet") }
 
         val cleanAccounts = listOf(
-            AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = 0.0, colorHex = "#10B981"),
-            AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = 0.0, colorHex = "#38BDF8"),
-            AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 0.0, colorHex = "#FBBF24")
+            AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.ZERO, colorHex = "#10B981"),
+            AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.ZERO, colorHex = "#38BDF8"),
+            AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.ZERO, colorHex = "#FBBF24")
         ).mapIndexed { idx, acc -> acc.toEntity(uid, sortOrder = idx, nowMs = now) }
 
         dao.resetUserToCleanAtomically(

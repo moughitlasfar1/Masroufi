@@ -78,6 +78,7 @@ import com.example.R
 import com.example.domain.PayCycleEngine
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.fontFamilyForLanguage
+import com.masroufi.core.Money
 import java.io.File
 import java.io.FileOutputStream
 
@@ -100,7 +101,7 @@ sealed class ShareCardPayload {
         val groupName: String,
         val turnNumber: Int,
         val totalMembers: Int,
-        val amountMad: Double,
+        val amountMad: Money,
         val recipientName: String,
         val payoutDate: String,
         val currencySymbol: String = "DH"
@@ -108,8 +109,8 @@ sealed class ShareCardPayload {
 
     data class SellefCard(
         val personName: String,
-        val totalBalanceMad: Double,
-        val remainingMad: Double,
+        val totalBalanceMad: Money,
+        val remainingMad: Money,
         val isLent: Boolean,
         val currencySymbol: String = "DH"
     ) : ShareCardPayload()
@@ -188,7 +189,7 @@ object ShareCardFormatter {
         is ShareCardPayload.SellefCard -> {
             val cur = payload.currencySymbol.ifBlank { "DH" }
             val totalText = "${PayCycleEngine.formatAmountOrMask(payload.totalBalanceMad, hideAmounts)} $cur"
-            val remText = "${PayCycleEngine.formatAmountOrMask(payload.remainingMad.coerceAtLeast(0.0), hideAmounts)} $cur"
+            val remText = "${PayCycleEngine.formatAmountOrMask(payload.remainingMad.coerceAtLeast(Money.ZERO), hideAmounts)} $cur"
             val person = payload.personName.ifBlank { "—" }
             when (language) {
                 ShareCardLanguage.AR -> ShareCardRenderedModel(

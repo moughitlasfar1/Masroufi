@@ -301,7 +301,8 @@ object QuickCaptureNotification {
             val presetIntent = Intent(appCtx, QuickCaptureActivity::class.java).apply {
                 action = MasroufiAppWidget.ACTION_QUICK_PRESET
                 putExtra(MasroufiAppWidget.EXTRA_PRESET_NAME, chosenPreset.name)
-                putExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, chosenPreset.amount)
+                putExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT_CENTIMES, chosenPreset.amount.centimes)
+                putExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, chosenPreset.amount.toBigDecimalDh().toDouble())
                 putExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE, chosenPreset.envelopeKey)
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }

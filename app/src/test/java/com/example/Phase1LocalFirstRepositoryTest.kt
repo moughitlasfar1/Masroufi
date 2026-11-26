@@ -20,6 +20,7 @@ import com.example.data.local.NoOpRemoteMirror
 import com.example.data.local.RemoteMirror
 import com.example.data.local.RoomMasroufiRepository
 import com.example.security.DatabaseKeyManager
+import com.masroufi.core.Money
 import com.masroufi.credit.data.RoomCreditRepository
 import com.masroufi.credit.data.SavedCreditEntity
 import com.masroufi.credit.domain.CreditCalculator
@@ -40,18 +41,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/**
- * Phase 1 Verification Gate:
- * 1. 100% offline CRUD across all domain entities (profile, accounts, envelopes, financial items,
- *    transactions, saved credits) using RoomMasroufiRepository + LocalRoomMasroufiDataSource +
- *    RoomCreditRepository with NoOpRemoteMirror and zero Firestore calls.
- * 2. Spy RemoteMirror receives post-commit callbacks with exact committed domain payloads ONLY
- *    after Room already persisted the change.
- * 3. Throwing RemoteMirror NEVER rolls back or crashes committed Room writes (main repo & credit repo).
- * 4. Local Mode (local_device_user) persistence + atomic adoption into Google uid preserves all
- *    6 tables with zero data loss, zero duplication, and idempotent replays.
- * 5. Isolated legacy FirestoreToRoomImporter still migrates legacy cloud data cleanly.
- */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class Phase1LocalFirstRepositoryTest {
@@ -104,7 +93,6 @@ class Phase1LocalFirstRepositoryTest {
                 remoteMirror = NoOpRemoteMirror
             )
 
-            // 1. Seed & Profile update
             repo.ensureSeeded(uid)
             val seededProfile = repo.observeProfile(uid).first()
             assertNotNull(seededProfile)
@@ -112,23 +100,21 @@ class Phase1LocalFirstRepositoryTest {
             assertEquals(5, repo.observeEnvelopes(uid).first().size)
             assertEquals(4, repo.observeFinancialItems(uid).first().size)
 
-            repo.saveProfile(seededProfile!!.copy(baseBudget = 12500.0, payCycleDay = 5, language = "darija"), uid)
+            repo.saveProfile(seededProfile!!.copy(baseBudget = Money.fromDh(12500), payCycleDay = 5, language = "darija"), uid)
             val updatedProfile = repo.observeProfile(uid).first()!!
-            assertEquals(12500.0, updatedProfile.baseBudget, 0.001)
+            assertEquals(Money.fromDh(12500), updatedProfile.baseBudget)
             assertEquals(5, updatedProfile.payCycleDay)
             assertEquals("darija", updatedProfile.language)
 
-            // 2. Account upsert & delete
             val accId = repo.upsertAccount(
-                AccountItem(id = "acc_cih", userId = uid, name = "CIH Code 30", kind = "bank", initialBalance = 4200.0),
+                AccountItem(id = "acc_cih", userId = uid, name = "CIH Code 30", kind = "bank", initialBalance = Money.fromDh(4200)),
                 uid
             )
             assertEquals("acc_cih", accId)
-            assertTrue(repo.observeAccounts(uid).first().any { it.id == "acc_cih" && it.initialBalance == 4200.0 })
+            assertTrue(repo.observeAccounts(uid).first().any { it.id == "acc_cih" && it.initialBalance == Money.fromDh(4200) })
             repo.deleteAccount("acc_cih", uid)
             assertTrue(repo.observeAccounts(uid).first().none { it.id == "acc_cih" })
 
-            // 3. Envelope upsert, atomic batch upsert & delete
             repo.upsertEnvelope(
                 EnvelopeConfig(id = "env_custom_1", userId = uid, key = "sante", nameFr = "Santé", percentage = 12.0),
                 uid
@@ -145,13 +131,12 @@ class Phase1LocalFirstRepositoryTest {
             repo.deleteEnvelope("env_custom_2", uid)
             assertTrue(repo.observeEnvelopes(uid).first().none { it.id == "env_custom_2" })
 
-            // 4. Transaction upsert, getById, minIsoDate filter & delete
             val txId = repo.upsertTransaction(
                 TransactionItem(
                     id = "tx_offline_1",
                     userId = uid,
                     type = "expense",
-                    amount = 240.5,
+                    amount = Money(24050L),
                     category = "marche",
                     envelopeKey = "marche",
                     accountId = "acc_cash",
@@ -161,19 +146,18 @@ class Phase1LocalFirstRepositoryTest {
                 uid
             )
             assertEquals("tx_offline_1", txId)
-            assertEquals(240.5, repo.getTransactionById(uid, txId)?.amount ?: 0.0, 0.001)
+            assertEquals(Money(24050L), repo.getTransactionById(uid, txId)?.amount)
             assertEquals(1, repo.observeTransactions(uid, minIsoDate = "2026-11-01").first().size)
             assertEquals(0, repo.observeTransactions(uid, minIsoDate = "2026-12-01").first().size)
             repo.deleteTransaction(txId, uid)
             assertNull(repo.getTransactionById(uid, txId))
 
-            // 5. Financial item + atomic item-and-transaction upsert + delete
-            val bill = FinancialItem(id = "bill_rent", userId = uid, itemType = "bill", name = "Loyer", amount = 3500.0)
+            val bill = FinancialItem(id = "bill_rent", userId = uid, itemType = "bill", name = "Loyer", amount = Money.fromDh(3500))
             val billTx = TransactionItem(
                 id = "tx_bill_rent_2026_11",
                 userId = uid,
                 type = "expense",
-                amount = 3500.0,
+                amount = Money.fromDh(3500),
                 category = "charges",
                 envelopeKey = "charges",
                 accountId = "acc_bank",
@@ -186,14 +170,13 @@ class Phase1LocalFirstRepositoryTest {
             repo.deleteFinancialItem("bill_rent", uid)
             assertTrue(repo.observeFinancialItems(uid).first().none { it.id == "bill_rent" })
 
-            // 6. Credit Simulator saved credits CRUD (100% Room-backed, works offline)
             val creditInput = CreditInput(
                 creditType = CreditType.AUTO,
-                loanAmount = 180_000.0,
-                downPayment = 30_000.0,
+                loanAmount = Money.fromDh(180_000),
+                downPayment = Money.fromDh(30_000),
                 durationMonths = 60,
                 annualInterestRateHt = 6.5,
-                monthlyNetIncome = 14_000.0
+                monthlyNetIncome = Money.fromDh(14_000)
             )
             val creditResult = CreditCalculator.calculate(creditInput, "fr")
             val saveCreditRes = creditRepo.saveCredit(creditInput, creditResult, linkToMonthlyExpenses = true)
@@ -202,7 +185,7 @@ class Phase1LocalFirstRepositoryTest {
             val observedCredits = creditRepo.observeSavedCredits().first()
             assertEquals(1, observedCredits.size)
             assertEquals(savedCreditId, observedCredits.first().id)
-            assertEquals(180_000.0, observedCredits.first().loanAmount, 0.01)
+            assertEquals(Money.fromDh(180_000), observedCredits.first().loanAmount)
             assertTrue(observedCredits.first().linkToMonthlyExpenses)
 
             assertTrue(creditRepo.deleteCredit(savedCreditId).isSuccess)
@@ -220,7 +203,7 @@ class Phase1LocalFirstRepositoryTest {
             val spyMirror = object : RemoteMirror {
                 override suspend fun onProfileUpserted(userId: String, profile: UserProfile) {
                     assertNotNull("Room must already contain profile before RemoteMirror runs", dao.getProfile(userId))
-                    events.add("profile:${profile.baseBudget}")
+                    events.add("profile:${profile.baseBudget.centimes}")
                 }
 
                 override suspend fun onTransactionUpserted(userId: String, transaction: TransactionItem) {
@@ -309,7 +292,7 @@ class Phase1LocalFirstRepositoryTest {
             val repo = RoomMasroufiRepository(dao = dao, remoteMirror = spyMirror, userIdProvider = { uid })
             val creditRepo = RoomCreditRepository(dao = dao, userIdProvider = { uid }, remoteMirror = spyMirror)
 
-            repo.saveProfile(UserProfile(userId = uid, baseBudget = 9000.0), uid)
+            repo.saveProfile(UserProfile(userId = uid, baseBudget = Money.fromDh(9000)), uid)
             repo.upsertAccount(AccountItem(id = "acc_1", userId = uid, name = "Cash"), uid)
             repo.deleteAccount("acc_1", uid)
             repo.upsertEnvelope(EnvelopeConfig(id = "env_1", userId = uid, key = "cafe", nameFr = "Café", percentage = 20.0), uid)
@@ -318,33 +301,33 @@ class Phase1LocalFirstRepositoryTest {
                 uid
             )
             repo.deleteEnvelope("env_1", uid)
-            repo.upsertTransaction(TransactionItem(id = "tx_1", userId = uid, amount = 40.0, isoDate = "2026-11-22"), uid)
+            repo.upsertTransaction(TransactionItem(id = "tx_1", userId = uid, amount = Money.fromDh(40), isoDate = "2026-11-22"), uid)
             repo.deleteTransaction("tx_1", uid)
             repo.upsertFinancialItem(FinancialItem(id = "goal_1", userId = uid, itemType = "goal", name = "Vacances"), uid)
             repo.upsertItemAndTransactionAtomically(
-                FinancialItem(id = "goal_1", userId = uid, itemType = "goal", name = "Vacances", secondaryAmount = 500.0),
-                TransactionItem(id = "tx_goal_1", userId = uid, amount = 500.0, isoDate = "2026-11-22"),
+                FinancialItem(id = "goal_1", userId = uid, itemType = "goal", name = "Vacances", secondaryAmount = Money.fromDh(500)),
+                TransactionItem(id = "tx_goal_1", userId = uid, amount = Money.fromDh(500), isoDate = "2026-11-22"),
                 uid
             )
             repo.deleteFinancialItem("goal_1", uid)
             repo.resetToCleanAccount(listOf("tx_goal_1"), emptyList(), emptyList(), uid)
             repo.restoreFullBackupAtomically(
-                profile = UserProfile(userId = uid, baseBudget = 7500.0),
+                profile = UserProfile(userId = uid, baseBudget = Money.fromDh(7500)),
                 customPrefsItem = null,
                 accounts = emptyList(),
                 envelopes = emptyList(),
                 financialItems = emptyList(),
-                transactions = listOf(TransactionItem(id = "tx_restored_1", userId = uid, amount = 100.0, isoDate = "2026-11-20")),
+                transactions = listOf(TransactionItem(id = "tx_restored_1", userId = uid, amount = Money.fromDh(100), isoDate = "2026-11-20")),
                 userId = uid
             )
 
-            val input = CreditInput(loanAmount = 50_000.0, durationMonths = 24, monthlyNetIncome = 10_000.0)
+            val input = CreditInput(loanAmount = Money.fromDh(50_000), durationMonths = 24, monthlyNetIncome = Money.fromDh(10_000))
             val savedCreditId = creditRepo.saveCredit(input, CreditCalculator.calculate(input), false).getOrThrow()
             creditRepo.deleteCredit(savedCreditId).getOrThrow()
 
             assertEquals(
                 listOf(
-                    "profile:9000.0",
+                    "profile:900000",
                     "acc_upsert:acc_1",
                     "acc_delete:acc_1",
                     "env_upsert:env_1",
@@ -395,23 +378,22 @@ class Phase1LocalFirstRepositoryTest {
             val repo = RoomMasroufiRepository(dao = dao, remoteMirror = alwaysThrowingMirror, userIdProvider = { uid })
             val creditRepo = RoomCreditRepository(dao = dao, userIdProvider = { uid }, remoteMirror = alwaysThrowingMirror)
 
-            // Every single Room commit must succeed and remain persisted despite RemoteMirror throwing
             repo.ensureSeeded(uid)
             assertNotNull(dao.getProfile(uid))
 
-            repo.saveProfile(UserProfile(userId = uid, baseBudget = 8800.0), uid)
-            assertEquals(8800.0, dao.getProfile(uid)?.baseBudget ?: 0.0, 0.001)
+            repo.saveProfile(UserProfile(userId = uid, baseBudget = Money.fromDh(8800)), uid)
+            assertEquals(880_000L, dao.getProfile(uid)?.baseBudgetCentimes)
 
             val txId = repo.upsertTransaction(
-                TransactionItem(id = "tx_safe_1", userId = uid, amount = 199.0, desc = "Safe commit", isoDate = "2026-11-22"),
+                TransactionItem(id = "tx_safe_1", userId = uid, amount = Money.fromDh(199), desc = "Safe commit", isoDate = "2026-11-22"),
                 uid
             )
             assertEquals("tx_safe_1", txId)
-            assertEquals(199.0, dao.getTransactionById(uid, "tx_safe_1")?.amount ?: 0.0, 0.001)
+            assertEquals(19_900L, dao.getTransactionById(uid, "tx_safe_1")?.amountCentimes)
 
             repo.upsertItemAndTransactionAtomically(
-                FinancialItem(id = "item_safe_1", userId = uid, itemType = "bill", name = "Internet", amount = 250.0),
-                TransactionItem(id = "tx_safe_2", userId = uid, amount = 250.0, isoDate = "2026-11-22"),
+                FinancialItem(id = "item_safe_1", userId = uid, itemType = "bill", name = "Internet", amount = Money.fromDh(250)),
+                TransactionItem(id = "tx_safe_2", userId = uid, amount = Money.fromDh(250), isoDate = "2026-11-22"),
                 uid
             )
             assertEquals(2, dao.countTransactions(uid))
@@ -419,7 +401,7 @@ class Phase1LocalFirstRepositoryTest {
             repo.deleteTransaction("tx_safe_1", uid)
             assertEquals(1, dao.countTransactions(uid))
 
-            val creditInput = CreditInput(loanAmount = 100_000.0, durationMonths = 48, monthlyNetIncome = 12_000.0)
+            val creditInput = CreditInput(loanAmount = Money.fromDh(100_000), durationMonths = 48, monthlyNetIncome = Money.fromDh(12_000))
             val savedId = creditRepo.saveCredit(creditInput, CreditCalculator.calculate(creditInput), false).getOrThrow()
             assertEquals(1, dao.countSavedCredits(uid))
             assertTrue(creditRepo.deleteCredit(savedId).isSuccess)
@@ -441,7 +423,6 @@ class Phase1LocalFirstRepositoryTest {
                 }
             }
 
-            // Phase A: User operates completely offline in Local Mode
             val localFacade = LocalRoomMasroufiDataSource(
                 context = context,
                 remoteMirror = spyMirror,
@@ -455,24 +436,23 @@ class Phase1LocalFirstRepositoryTest {
 
             localFacade.ensureSeeded(localUid)
             localFacade.saveProfile(
-                UserProfile(userId = localUid, baseBudget = 11500.0, payCycleDay = 10, language = "ar", isDarkTheme = true),
+                UserProfile(userId = localUid, baseBudget = Money.fromDh(11500), payCycleDay = 10, language = "ar", isDarkTheme = true),
                 localUid
             )
             localFacade.upsertTransaction(
-                TransactionItem(id = "tx_local_1", userId = localUid, amount = 85.0, desc = "Local coffee", isoDate = "2026-11-20"),
+                TransactionItem(id = "tx_local_1", userId = localUid, amount = Money.fromDh(85), desc = "Local coffee", isoDate = "2026-11-20"),
                 localUid
             )
             localFacade.upsertTransaction(
-                TransactionItem(id = "tx_local_2", userId = localUid, amount = 420.0, desc = "Local groceries", isoDate = "2026-11-21"),
+                TransactionItem(id = "tx_local_2", userId = localUid, amount = Money.fromDh(420), desc = "Local groceries", isoDate = "2026-11-21"),
                 localUid
             )
-            val creditInput = CreditInput(loanAmount = 90_000.0, durationMonths = 36, monthlyNetIncome = 11_500.0)
+            val creditInput = CreditInput(loanAmount = Money.fromDh(90_000), durationMonths = 36, monthlyNetIncome = Money.fromDh(11_500))
             val localCreditId = localCreditRepo.saveCredit(creditInput, CreditCalculator.calculate(creditInput), true).getOrThrow()
 
             assertEquals(2, dao.countTransactions(localUid))
             assertEquals(1, dao.countSavedCredits(localUid))
 
-            // Phase B: User signs in with Google -> ensureSeeded(googleUid) atomically adopts ALL local rows
             val googleFacade = LocalRoomMasroufiDataSource(
                 context = context,
                 remoteMirror = spyMirror,
@@ -486,7 +466,6 @@ class Phase1LocalFirstRepositoryTest {
 
             googleFacade.ensureSeeded(googleUid)
 
-            // All local rows now belong to googleUid; zero orphaned local_device_user rows remain
             assertEquals(0, dao.countProfiles(localUid))
             assertEquals(0, dao.countAccounts(localUid))
             assertEquals(0, dao.countEnvelopes(localUid))
@@ -496,7 +475,7 @@ class Phase1LocalFirstRepositoryTest {
 
             val adoptedProfile = googleFacade.observeProfile(googleUid).first()
             assertNotNull(adoptedProfile)
-            assertEquals(11500.0, adoptedProfile!!.baseBudget, 0.001)
+            assertEquals(Money.fromDh(11500), adoptedProfile!!.baseBudget)
             assertEquals(10, adoptedProfile.payCycleDay)
             assertEquals("ar", adoptedProfile.language)
             assertTrue(adoptedProfile.isDarkTheme)
@@ -512,14 +491,11 @@ class Phase1LocalFirstRepositoryTest {
             assertEquals(googleUid, adoptedMirrorEvent!!.second)
             assertTrue(adoptedMirrorEvent!!.third >= 15)
 
-            // Phase C: Idempotent replay -> re-calling adoptLocalDataIntoUser does nothing and duplicates nothing
             val secondAdoptionCount = googleFacade.adoptLocalDataIntoUser(localUid, googleUid)
             assertEquals(0, secondAdoptionCount)
             assertEquals(2, googleFacade.observeTransactions(googleUid).first().size)
             assertEquals(1, googleCreditRepo.observeSavedCredits().first().size)
 
-            // Phase D: If user later switches back to Local Mode on same device, seeding Local Mode
-            // must NEVER overwrite or steal googleUid's accounts/envelopes/presets
             localFacade.ensureSeeded(localUid)
             assertEquals(3, googleFacade.observeAccounts(googleUid).first().size)
             assertEquals(5, googleFacade.observeEnvelopes(googleUid).first().size)
@@ -537,14 +513,14 @@ class Phase1LocalFirstRepositoryTest {
             val legacyServer = object : FirestoreImportSource {
                 override suspend fun fetchUserSnapshotFromServer(userId: String): FirestoreUserSnapshot {
                     return FirestoreUserSnapshot(
-                        profile = UserProfile(id = uid, userId = uid, baseBudget = 9800.0, payCycleDay = 1, language = "fr"),
-                        accounts = listOf(AccountItem(id = "acc_cash", userId = uid, name = "Cash", initialBalance = 500.0)),
+                        profile = UserProfile(id = uid, userId = uid, baseBudget = Money.fromLegacyDoubleDh(9800.0), payCycleDay = 1, language = "fr"),
+                        accounts = listOf(AccountItem(id = "acc_cash", userId = uid, name = "Cash", initialBalance = Money.fromLegacyDoubleDh(500.0))),
                         transactions = listOf(
-                            TransactionItem(id = "tx_legacy_1", userId = uid, amount = 150.0, desc = "Legacy Cloud Tx", isoDate = "2026-10-15")
+                            TransactionItem(id = "tx_legacy_1", userId = uid, amount = Money.fromLegacyDoubleDh(19.99), desc = "Legacy Cloud Tx", isoDate = "2026-10-15")
                         ),
                         envelopes = listOf(EnvelopeConfig(id = "env_cafe", userId = uid, key = "cafe", nameFr = "Café", percentage = 20.0)),
-                        financialItems = listOf(FinancialItem(id = "bill_legacy", userId = uid, itemType = "bill", name = "Fibre", amount = 250.0)),
-                        credits = listOf(SavedCreditEntity(id = "cred_legacy", userId = uid, type = "CONSOMMATION", loanAmount = 40_000.0, durationMonths = 24, monthlyPayment = 1800.0))
+                        financialItems = listOf(FinancialItem(id = "bill_legacy", userId = uid, itemType = "bill", name = "Fibre", amount = Money.fromLegacyDoubleDh(250.0))),
+                        credits = listOf(SavedCreditEntity(id = "cred_legacy", userId = uid, type = "CONSOMMATION", loanAmount = Money.fromLegacyDoubleDh(40_000.0), durationMonths = 24, monthlyPayment = Money.fromLegacyDoubleDh(1800.0)))
                     )
                 }
             }
@@ -558,15 +534,17 @@ class Phase1LocalFirstRepositoryTest {
             )
             assertTrue(importResult is FirestoreImportResult.Success)
 
-            // Normal local-first repositories immediately read imported data AND accept offline writes
             val repo = RoomMasroufiRepository(dao = dao, remoteMirror = NoOpRemoteMirror, userIdProvider = { uid })
             val creditRepo = RoomCreditRepository(dao = dao, userIdProvider = { uid }, remoteMirror = NoOpRemoteMirror)
 
-            assertEquals(listOf("tx_legacy_1"), repo.observeTransactions(uid).first().map { it.id })
+            val importedTxs = repo.observeTransactions(uid).first()
+            assertEquals(listOf("tx_legacy_1"), importedTxs.map { it.id })
+            assertEquals(Money(1999L), importedTxs.first().amount)
+            assertEquals(1999L, dao.getTransactionById(uid, "tx_legacy_1")?.amountCentimes)
             assertEquals(listOf("cred_legacy"), creditRepo.observeSavedCredits().first().map { it.id })
 
             repo.upsertTransaction(
-                TransactionItem(id = "tx_post_import_local", userId = uid, amount = 45.0, desc = "New Local Tx", isoDate = "2026-11-22"),
+                TransactionItem(id = "tx_post_import_local", userId = uid, amount = Money.fromDh(45), desc = "New Local Tx", isoDate = "2026-11-22"),
                 uid
             )
             assertEquals(2, repo.observeTransactions(uid).first().size)

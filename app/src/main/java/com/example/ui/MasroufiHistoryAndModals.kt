@@ -54,6 +54,8 @@ import com.example.security.AppSecurityManager
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,25 +66,35 @@ fun AddFinancialItemSheet(
     state: DashboardState,
     onDismiss: () -> Unit,
     onSaveItem: (FinancialItem) -> Unit,
-    onSaveAccount: (String, String, String, Double, String) -> Unit,
+    onSaveAccount: (String, String, String, Money, String) -> Unit,
     onDeleteAccount: ((String) -> Unit)? = null,
     onDeleteItem: ((String) -> Unit)? = null
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
+    fun Money.toEditableString(): String =
+        if (centimes % 100L == 0L) (centimes / 100L).toString() else toCanonicalDecimalString()
+
     var name by remember {
         mutableStateOf(existingAccount?.name ?: existingItem?.name ?: "")
     }
     var amountText by remember {
         mutableStateOf(
             when {
-                existingAccount != null -> existingAccount.initialBalance.toString()
-                existingItem != null -> existingItem.amount.toString()
+                existingAccount != null -> existingAccount.initialBalance.toEditableString()
+                existingItem != null -> existingItem.amount.toEditableString()
                 else -> ""
             }
         )
     }
     var secondaryText by remember {
-        mutableStateOf(existingItem?.secondaryAmount?.let { if (it > 0) it.toString() else "10" } ?: "10")
+        mutableStateOf(
+            when {
+                itemType == "daret" -> (existingItem?.resolvedDaretMembers() ?: 10).toString()
+                existingItem != null && existingItem.secondaryAmount.isPositive -> existingItem.secondaryAmount.toEditableString()
+                itemType == "goal" -> ""
+                else -> "10"
+            }
+        )
     }
     var dayOrTurnText by remember {
         mutableStateOf((existingItem?.dayOrTurn ?: 1).toString())
@@ -168,7 +180,7 @@ fun AddFinancialItemSheet(
                             selected = name.contains(tpl.name, ignoreCase = true),
                             onClick = {
                                 name = "${tpl.emoji} ${tpl.name}"
-                                amountText = tpl.defaultAmount.toInt().toString()
+                                amountText = tpl.defaultAmount.formatDhRounded(useGrouping = false)
                                 dayOrTurnText = tpl.defaultDueDay.toString()
                             },
                             label = { Text("${tpl.emoji} ${tpl.name} (J${tpl.defaultDueDay})", fontSize = 12.sp) }
@@ -193,7 +205,7 @@ fun AddFinancialItemSheet(
                             selected = name.contains(tpl.name, ignoreCase = true),
                             onClick = {
                                 name = "${tpl.emoji} ${tpl.name}"
-                                amountText = tpl.targetAmount.toInt().toString()
+                                amountText = tpl.targetAmount.formatDhRounded(useGrouping = false)
                                 dateOrDirText = tpl.targetIsoDate
                             },
                             label = { Text("${tpl.emoji} ${tpl.name}", fontSize = 12.sp) }
@@ -357,7 +369,7 @@ fun AddFinancialItemSheet(
                         FilterChip(
                             selected = amountText == target,
                             onClick = { amountText = target },
-                            label = { Text("${PayCycleEngine.formatDh(target.toDouble())} $cur") }
+                            label = { Text("${PayCycleEngine.formatDh(Money.fromDh(target.toLong()))} $cur") }
                         )
                     }
                 }
@@ -417,17 +429,31 @@ fun AddFinancialItemSheet(
                 Button(
                     onClick = {
                         val n = name.trim()
-                        val amt = amountText.replace(",", ".").toDoubleOrNull() ?: 0.0
-                        if (n.isNotEmpty() && (amt > 0.0 || itemType == "account")) {
+                        val amt = MoneyParser.parseMoroccanAmountToCentimes(amountText)?.let { Money.fromCentimes(it) } ?: Money.ZERO
+                        if (n.isNotEmpty() && (amt.isPositive || itemType == "account")) {
                             if (itemType == "account") {
                                 onSaveAccount(
                                     existingAccount?.id ?: "",
                                     n,
                                     selectedAccountKind,
-                                    amt.coerceAtLeast(0.0),
+                                    amt.coerceAtLeast(Money.ZERO),
                                     selectedAccountColor
                                 )
                             } else {
+                                val resolvedMembers = if (itemType == "daret") {
+                                    (secondaryText.trim().toIntOrNull() ?: existingItem?.resolvedDaretMembers() ?: 10).coerceAtLeast(2)
+                                } else {
+                                    existingItem?.daretMembers
+                                }
+                                val resolvedSecondary = when (itemType) {
+                                    "daret" -> Money.ZERO
+                                    "goal" -> MoneyParser.parseMoroccanAmountToCentimes(secondaryText)
+                                        ?.let { Money.fromCentimes(it) }
+                                        ?.coerceAtLeast(Money.ZERO)
+                                        ?: existingItem?.secondaryAmount
+                                        ?: Money.ZERO
+                                    else -> existingItem?.secondaryAmount ?: Money.ZERO
+                                }
                                 onSaveItem(
                                     FinancialItem(
                                         id = existingItem?.id ?: "",
@@ -438,12 +464,9 @@ fun AddFinancialItemSheet(
                                             "daret", "debt" -> itemSubtitleText.trim().ifBlank { existingItem?.subtitle ?: "" }
                                             else -> existingItem?.subtitle?.ifBlank { n } ?: n
                                         },
-                                        amount = amt.coerceAtLeast(0.01),
-                                        secondaryAmount = when (itemType) {
-                                            "daret" -> (secondaryText.replace(",", ".").toDoubleOrNull() ?: 10.0)
-                                            "goal" -> (secondaryText.takeIf { it != "10" || existingItem != null }?.replace(",", ".")?.toDoubleOrNull() ?: existingItem?.secondaryAmount ?: 0.0)
-                                            else -> existingItem?.secondaryAmount ?: 0.0
-                                        },
+                                        amount = amt.coerceAtLeast(Money.ONE_CENTIME),
+                                        secondaryAmount = resolvedSecondary,
+                                        daretMembers = resolvedMembers,
                                         dayOrTurn = (dayOrTurnText.toIntOrNull() ?: 1).coerceIn(1, 365),
                                         extraInt = existingItem?.extraInt ?: 0,
                                         dateOrCycle = when (itemType) {

@@ -41,6 +41,7 @@ import com.example.ui.theme.categoryVisualStyle
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
 import com.example.ui.theme.semanticTransferColor
+import com.masroufi.core.Money
 
 @Composable
 fun DashboardRecentTransactions(
@@ -55,7 +56,7 @@ fun DashboardRecentTransactions(
     val hide = state.hideAmounts
     val lang = state.profile.language
     val todayIso = remember { PayCycleEngine.todayIso() }
-    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
+    fun fmt(value: Money): String = PayCycleEngine.formatAmountOrMask(value, hide)
 
     ExpressiveGlassCard(
         tier = CardTier.STANDARD,

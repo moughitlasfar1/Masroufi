@@ -57,6 +57,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
 import com.masroufi.credit.domain.CreditCalculator
 import com.masroufi.credit.domain.CreditInput
 import com.masroufi.credit.domain.CreditResult
@@ -212,7 +214,7 @@ fun CreditHeroSummaryCard(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.testTag("credit_monthly_payment_value")
                     )
-                    if (input.deferredMonths > 0 && result.deferredMonthlyPayment > 0.0) {
+                    if (input.deferredMonths > 0 && result.deferredMonthlyPayment.isPositive) {
                         Text(
                             text = strings.deferredPaymentSubtitleFmt
                                 .replace("{months}", input.deferredMonths.toString())
@@ -457,6 +459,91 @@ fun CreditSyncedSliderField(
                     (sliderVal * 100.0).roundToLong() / 100.0
                 }
                 textState = formatEditableNumber(next, isInteger)
+                onValueChange(next)
+            },
+            valueRange = valueRange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("${testTagPrefix}_slider")
+        )
+    }
+}
+
+@Composable
+fun CreditSyncedMoneySliderField(
+    label: String,
+    value: Money,
+    valueRange: ClosedFloatingPointRange<Float>,
+    onValueChange: (Money) -> Unit,
+    modifier: Modifier = Modifier,
+    suffix: String = "MAD",
+    supportingSubtitle: String? = null,
+    errorText: String? = null,
+    testTagPrefix: String
+) {
+    fun formatMoneyEditable(money: Money): String {
+        return if (money.centimes % 100L == 0L) {
+            (money.centimes / 100L).toString()
+        } else {
+            money.toCanonicalDecimalString()
+        }
+    }
+
+    var textState by remember {
+        mutableStateOf(formatMoneyEditable(value))
+    }
+
+    LaunchedEffect(value) {
+        val parsedCentimes = MoneyParser.parseMoroccanAmountToCentimes(textState)
+        val deltaCentimes = if (parsedCentimes != null) abs(parsedCentimes - value.centimes) else Long.MAX_VALUE
+        if (deltaCentimes >= 1L) {
+            textState = formatMoneyEditable(value)
+        }
+    }
+
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        OutlinedTextField(
+            value = textState,
+            onValueChange = { raw ->
+                textState = raw
+                val parsedCentimes = MoneyParser.parseMoroccanAmountToCentimes(raw)
+                if (parsedCentimes != null) {
+                    onValueChange(Money.fromCentimes(parsedCentimes).coerceAtLeast(Money.ZERO))
+                } else if (raw.isBlank()) {
+                    onValueChange(Money.ZERO)
+                }
+            },
+            label = { Text(text = label) },
+            suffix = if (suffix.isNotBlank()) {
+                { Text(text = suffix, style = MaterialTheme.typography.labelMedium) }
+            } else null,
+            supportingText = when {
+                !errorText.isNullOrBlank() -> {
+                    { Text(text = errorText, color = MaterialTheme.colorScheme.error) }
+                }
+                !supportingSubtitle.isNullOrBlank() -> {
+                    { Text(text = supportingSubtitle) }
+                }
+                else -> null
+            },
+            isError = !errorText.isNullOrBlank(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("${testTagPrefix}_input")
+        )
+
+        val clampedSlider = value.toBigDecimalDh().toFloat().coerceIn(valueRange.start, valueRange.endInclusive)
+        Slider(
+            value = clampedSlider,
+            onValueChange = { sliderVal ->
+                val next = Money.fromDh(sliderVal.roundToLong().coerceAtLeast(0L))
+                textState = formatMoneyEditable(next)
                 onValueChange(next)
             },
             valueRange = valueRange,

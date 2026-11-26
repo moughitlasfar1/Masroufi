@@ -3,6 +3,7 @@ package com.masroufi.fiscal.data
 import android.content.Context
 import com.example.data.FinancialItem
 import com.example.security.SecureStore
+import com.masroufi.core.Money
 import com.masroufi.fiscal.domain.AnnualBillCalculator
 import com.masroufi.fiscal.domain.AnnualBillItem
 import com.masroufi.fiscal.domain.AnnualBillPreset
@@ -12,6 +13,7 @@ import com.masroufi.fiscal.domain.NisabStandard
 import com.masroufi.fiscal.domain.ZakatConfig
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigDecimal
 
 /**
  * Local-only, AES-256-GCM encrypted store (via Masroufi's [SecureStore]) for Annual Bills
@@ -60,7 +62,7 @@ object FiscalRepository {
                     put("id", b.id)
                     put("preset", b.preset.key)
                     put("title", b.title)
-                    put("annualAmountMad", b.annualAmountMad)
+                    put("annualAmountMad", b.annualAmountMad.toBigDecimalDh())
                     put("dueMonth", b.dueMonth)
                     put("dueYear", b.dueYear)
                     put("cvBand", b.cvBand?.key ?: "")
@@ -91,7 +93,7 @@ object FiscalRepository {
                     id = id,
                     preset = AnnualBillPreset.fromKey(obj.optString("preset", "custom")),
                     title = obj.optString("title", ""),
-                    annualAmountMad = obj.optDouble("annualAmountMad", 0.0).coerceAtLeast(0.0),
+                    annualAmountMad = (readJsonMoneyOrNull(obj, "annualAmountMad") ?: Money.ZERO).coerceAtLeast(Money.ZERO),
                     dueMonth = obj.optInt("dueMonth", 1).coerceIn(1, 12),
                     dueYear = obj.optInt("dueYear", 2026).coerceIn(2020, 2150),
                     cvBand = cvRaw.takeIf { it.isNotBlank() }?.let { FiscalRates.HorsepowerBand.fromKey(it) },
@@ -110,8 +112,8 @@ object FiscalRepository {
 
     fun serializeZakatConfigJson(config: ZakatConfig): String = JSONObject().apply {
         put("nisabStandard", config.nisabStandard.key)
-        put("goldPriceMadPerGram", config.goldPriceMadPerGram)
-        put("silverPriceMadPerGram", config.silverPriceMadPerGram)
+        put("goldPriceMadPerGram", config.goldPriceMadPerGram.toBigDecimalDh())
+        put("silverPriceMadPerGram", config.silverPriceMadPerGram.toBigDecimalDh())
         put("pricesAsOfIso", config.pricesAsOfIso)
         put("hawlStartIso", config.hawlStartIso)
         put("linkedAnnualBillId", config.linkedAnnualBillId)
@@ -119,10 +121,10 @@ object FiscalRepository {
 
     fun parseZakatConfigJson(raw: String): ZakatConfig {
         val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return ZakatConfig()
-        val gold = obj.optDouble("goldPriceMadPerGram", FiscalRates.DEFAULT_GOLD_PRICE_MAD_PER_GRAM)
-            .takeIf { it.isFinite() && it > 0.0 } ?: FiscalRates.DEFAULT_GOLD_PRICE_MAD_PER_GRAM
-        val silver = obj.optDouble("silverPriceMadPerGram", FiscalRates.DEFAULT_SILVER_PRICE_MAD_PER_GRAM)
-            .takeIf { it.isFinite() && it > 0.0 } ?: FiscalRates.DEFAULT_SILVER_PRICE_MAD_PER_GRAM
+        val gold = readJsonMoneyOrNull(obj, "goldPriceMadPerGram")
+            ?.takeIf { it.isPositive } ?: FiscalRates.DEFAULT_GOLD_PRICE_MAD_PER_GRAM
+        val silver = readJsonMoneyOrNull(obj, "silverPriceMadPerGram")
+            ?.takeIf { it.isPositive } ?: FiscalRates.DEFAULT_SILVER_PRICE_MAD_PER_GRAM
         return ZakatConfig(
             nisabStandard = NisabStandard.fromKey(obj.optString("nisabStandard", NisabStandard.GOLD_85G.key)),
             goldPriceMadPerGram = gold,
@@ -134,13 +136,26 @@ object FiscalRepository {
         )
     }
 
+    private fun readJsonMoneyOrNull(obj: JSONObject, key: String): Money? {
+        if (!obj.has(key) || obj.isNull(key)) return null
+        return when (val raw = obj.opt(key)) {
+            is BigDecimal -> Money.fromMajorUnits(raw)
+            is Number -> {
+                val d = raw.toDouble()
+                if (d.isFinite()) Money.fromLegacyDoubleDh(d) else null
+            }
+            is String -> Money.fromDhString(raw)
+            else -> null
+        }
+    }
+
     /**
      * Builds the backing Masroufi Savings Goal (`itemType = "goal"`) and linked monthly
      * recurring contribution (`itemType = "bill"`) for an [AnnualBillItem].
      */
     fun buildBackingGoalAndRecurringBill(
         bill: AnnualBillItem,
-        existingGoalSavedAmount: Double,
+        existingGoalSavedAmount: Money,
         payCycleDay: Int,
         strings: FiscalUiStrings,
         currentYear: Int,
@@ -177,7 +192,7 @@ object FiscalRepository {
             name = "${strings.recurringReservePrefix} · ${bill.title}",
             subtitle = "${strings.annualBillsTitle} · $monthLabel ${bill.dueYear}",
             amount = breakdown.monthlyReserveMad,
-            secondaryAmount = 0.0,
+            secondaryAmount = Money.ZERO,
             dayOrTurn = payCycleDay.coerceIn(1, 28),
             extraInt = 0,
             dateOrCycle = ""

@@ -82,7 +82,8 @@ import com.example.ui.theme.distinctEnvelopeColor
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
 import com.example.ui.theme.semanticTransferColor
-import kotlin.math.abs
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
 import kotlin.math.roundToInt
 
 @Composable
@@ -413,7 +414,7 @@ fun HistoryScreen(
             }
 
             if (state.upcomingTransactions.isNotEmpty()) {
-                val upcomingExpenses = state.upcomingTransactions.filter { it.type == "expense" }.sumOf { it.amount }
+                val upcomingExpenses = state.upcomingTransactions.filter { it.type == "expense" }.sumMoney { it.amount }
                 val isDark = state.profile.isDarkTheme
                 val expColor = semanticExpenseColor(isDark)
                 val isUpcomingExpanded = hasActiveFilter || expandedDayGroupKey == "__upcoming__"
@@ -522,8 +523,8 @@ fun HistoryScreen(
             }
 
             groupedByDay.forEach { (dayIso, dayTxs) ->
-                val dayExpenses = dayTxs.filter { it.type == "expense" }.sumOf { it.amount }
-                val dayIncomes = dayTxs.filter { it.type == "income" }.sumOf { it.amount }
+                val dayExpenses = dayTxs.filter { it.type == "expense" }.sumMoney { it.amount }
+                val dayIncomes = dayTxs.filter { it.type == "income" }.sumMoney { it.amount }
                 val dayNet = dayIncomes - dayExpenses
                 val isDark = state.profile.isDarkTheme
                 val incColor = semanticIncomeColor(isDark)
@@ -590,12 +591,12 @@ fun HistoryScreen(
                             }
                             val totalLabel = if (hide) {
                                 "•••• $cur"
-                            } else if (dayExpenses > 0 && dayIncomes == 0.0) {
+                            } else if (dayExpenses.isPositive && dayIncomes == Money.ZERO) {
                                 "-${PayCycleEngine.formatDh(dayExpenses)} $cur"
-                            } else if (dayNet >= 0) {
+                            } else if (!dayNet.isNegative) {
                                 "+${PayCycleEngine.formatDh(dayNet)} $cur"
                             } else {
-                                "-${PayCycleEngine.formatDh(abs(dayNet))} $cur"
+                                "-${PayCycleEngine.formatDh(dayNet.abs())} $cur"
                             }
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -605,7 +606,7 @@ fun HistoryScreen(
                                     text = totalLabel,
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.ExtraBold,
-                                    color = if (dayNet > 0 && dayExpenses == 0.0) incColor else expColor,
+                                    color = if (dayNet.isPositive && dayExpenses == Money.ZERO) incColor else expColor,
                                     modifier = Modifier.testTag("history_day_total_$dayIso")
                                 )
                                 Icon(

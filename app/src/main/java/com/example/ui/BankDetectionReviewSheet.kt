@@ -511,7 +511,7 @@ fun BankDetectionReviewSheet(
                                             onClick = {
                                                 val masked = item.maskedSamplePreview.ifBlank {
                                                     BankMessageParser.maskSampleText(
-                                                        "Paiement par carte 1234 de ${item.amount} ${item.currency} chez ${item.merchant} le ${item.isoDate}"
+                                                        "Paiement par carte 1234 de ${item.amount.toCanonicalDecimalString()} ${item.currency} chez ${item.merchant} le ${item.isoDate}"
                                                     )
                                                 }
                                                 sampleMaskPreview = masked

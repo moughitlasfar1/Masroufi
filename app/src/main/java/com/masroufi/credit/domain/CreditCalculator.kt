@@ -1,145 +1,183 @@
 package com.masroufi.credit.domain
 
+import com.masroufi.core.Money
+import java.math.BigDecimal
+import java.math.MathContext
+import java.math.RoundingMode
 import java.util.Locale
 import kotlin.math.abs
-import kotlin.math.pow
 import kotlin.math.roundToLong
 
 object CreditCalculator {
     const val MOROCCAN_TVA_RATE = 0.10
-    const val MOROCCAN_SMIG_MAD = 3_045.0
-    const val MANDATORY_ADI_THRESHOLD_MAD = 10_000.0
+    val MOROCCAN_SMIG_MAD: Money = Money.fromDh(3_045)
+    val MANDATORY_ADI_THRESHOLD_MAD: Money = Money.fromDh(10_000)
     const val MAX_AGE_AT_FINAL_PAYMENT = 70.0
+
+    private val MC: MathContext = MathContext.DECIMAL128
+    private val HUNDRED_BD: BigDecimal = BigDecimal.valueOf(100L)
+    private val TWELVE_BD: BigDecimal = BigDecimal.valueOf(12L)
+    private val TVA_RATE_BD: BigDecimal = BigDecimal("0.10")
+    private val ONE_PLUS_TVA_BD: BigDecimal = BigDecimal("1.10")
 
     fun resolveMaxDti(input: CreditInput): Double {
         return if (input.creditType == CreditType.IMMOBILIER || input.hasExistingMortgage) {
             when {
-                input.monthlyNetIncome > 60_000.0 -> 60.0
-                input.monthlyNetIncome >= 35_000.0 -> 55.0
+                input.monthlyNetIncome > Money.fromDh(60_000) -> 60.0
+                input.monthlyNetIncome >= Money.fromDh(35_000) -> 55.0
                 else -> 50.0
             }
         } else {
-            if (input.monthlyNetIncome <= 15_000.0) 45.0 else 50.0
+            if (input.monthlyNetIncome <= Money.fromDh(15_000)) 45.0 else 50.0
         }
     }
 
     fun calculate(input: CreditInput, language: String = "fr"): CreditResult {
         val strings = CreditStrings.forLang(language)
-        val sanitizedLoan = input.loanAmount.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
-        val sanitizedDown = input.downPayment.takeIf { it.isFinite() }?.coerceIn(0.0, sanitizedLoan) ?: 0.0
-        val financedPrincipal = round2((sanitizedLoan - sanitizedDown).coerceAtLeast(0.0))
+        val sanitizedLoan = input.loanAmount.coerceAtLeast(Money.ZERO)
+        val sanitizedDown = input.downPayment.coerceIn(Money.ZERO, sanitizedLoan)
+        val financedPrincipal = (sanitizedLoan - sanitizedDown).coerceAtLeast(Money.ZERO)
+        val principalBd = financedPrincipal.toBigDecimalDh()
 
         val totalMonths = input.durationMonths.coerceAtLeast(1)
         val deferredMonths = input.deferredMonths.coerceIn(0, (totalMonths - 1).coerceAtLeast(0))
         val amortizedMonths = (totalMonths - deferredMonths).coerceAtLeast(1)
 
         val rateHt = input.annualInterestRateHt.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
-        val monthlyRateHt = (rateHt / 100.0) / 12.0
-        val tvaFactor = if (input.applyInterestTva) 1.0 + MOROCCAN_TVA_RATE else 1.0
-        val effectiveMonthlyRate = monthlyRateHt * tvaFactor
+        val monthlyRateHt = BigDecimal.valueOf(rateHt)
+            .divide(HUNDRED_BD, MC)
+            .divide(TWELVE_BD, MC)
+        val tvaFactor = if (input.applyInterestTva) ONE_PLUS_TVA_BD else BigDecimal.ONE
+        val effectiveMonthlyRate = monthlyRateHt.multiply(tvaFactor, MC)
 
         val insRate = input.insuranceRate.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
-        val monthlyInsurance = financedPrincipal * (insRate / 100.0) / 12.0
+        val monthlyInsuranceBd = principalBd
+            .multiply(BigDecimal.valueOf(insRate), MC)
+            .divide(HUNDRED_BD, MC)
+            .divide(TWELVE_BD, MC)
+        val monthlyInsuranceMoney = Money.fromMajorUnits(monthlyInsuranceBd, RoundingMode.HALF_UP)
 
         val schedule = ArrayList<AmortizationRow>(totalMonths)
-        var remainingBalance = financedPrincipal
-        var totalInterestHt = 0.0
-        var totalTva = 0.0
-        var totalInsurance = 0.0
+        var remainingBalanceBd = principalBd
+        var totalInterestHtBd = BigDecimal.ZERO
+        var totalTvaBd = BigDecimal.ZERO
+        var totalInsuranceBd = BigDecimal.ZERO
 
         // 1. Optional partial grace period (différé partiel: interest TTC + ADI insurance only)
-        val rawDeferredPayment = if (deferredMonths > 0 && financedPrincipal > 0.0) {
-            val defInterestHt = financedPrincipal * monthlyRateHt
-            val defTva = if (input.applyInterestTva) defInterestHt * MOROCCAN_TVA_RATE else 0.0
-            defInterestHt + defTva + monthlyInsurance
+        val rawDeferredPaymentBd = if (deferredMonths > 0 && financedPrincipal.isPositive) {
+            val defInterestHt = principalBd.multiply(monthlyRateHt, MC)
+            val defTva = if (input.applyInterestTva) defInterestHt.multiply(TVA_RATE_BD, MC) else BigDecimal.ZERO
+            defInterestHt.add(defTva, MC).add(monthlyInsuranceBd, MC)
         } else {
-            0.0
+            BigDecimal.ZERO
         }
 
         for (month in 1..deferredMonths) {
-            val interestHt = financedPrincipal * monthlyRateHt
-            val tva = if (input.applyInterestTva) interestHt * MOROCCAN_TVA_RATE else 0.0
-            val payment = interestHt + tva + monthlyInsurance
-            totalInterestHt += interestHt
-            totalTva += tva
-            totalInsurance += monthlyInsurance
+            val interestHt = principalBd.multiply(monthlyRateHt, MC)
+            val tva = if (input.applyInterestTva) interestHt.multiply(TVA_RATE_BD, MC) else BigDecimal.ZERO
+            val payment = interestHt.add(tva, MC).add(monthlyInsuranceBd, MC)
+            totalInterestHtBd = totalInterestHtBd.add(interestHt, MC)
+            totalTvaBd = totalTvaBd.add(tva, MC)
+            totalInsuranceBd = totalInsuranceBd.add(monthlyInsuranceBd, MC)
             schedule.add(
                 AmortizationRow(
                     month = month,
                     isDeferred = true,
-                    payment = round2(payment),
-                    principal = 0.0,
-                    interestHt = round2(interestHt),
-                    tvaOnInterest = round2(tva),
-                    insurance = round2(monthlyInsurance),
-                    remainingBalance = round2(remainingBalance)
+                    payment = Money.fromMajorUnits(payment, RoundingMode.HALF_UP),
+                    principal = Money.ZERO,
+                    interestHt = Money.fromMajorUnits(interestHt, RoundingMode.HALF_UP),
+                    tvaOnInterest = Money.fromMajorUnits(tva, RoundingMode.HALF_UP),
+                    insurance = monthlyInsuranceMoney,
+                    remainingBalance = Money.fromMajorUnits(remainingBalanceBd, RoundingMode.HALF_UP)
                 )
             )
         }
 
         // 2. Standard amortized installments over remaining months
-        val standardAnnuityExclInsurance = when {
-            financedPrincipal <= 0.0 -> 0.0
-            effectiveMonthlyRate == 0.0 -> financedPrincipal / amortizedMonths.toDouble()
+        val amortizedMonthsBd = BigDecimal.valueOf(amortizedMonths.toLong())
+        val standardAnnuityExclInsuranceBd = when {
+            !financedPrincipal.isPositive -> BigDecimal.ZERO
+            effectiveMonthlyRate.signum() == 0 -> principalBd.divide(amortizedMonthsBd, MC)
             else -> {
-                val growth = (1.0 + effectiveMonthlyRate).pow(amortizedMonths.toDouble())
-                financedPrincipal * (effectiveMonthlyRate * growth) / (growth - 1.0)
+                val growth = BigDecimal.ONE.add(effectiveMonthlyRate, MC).pow(amortizedMonths, MC)
+                val numerator = principalBd.multiply(effectiveMonthlyRate, MC).multiply(growth, MC)
+                val denominator = growth.subtract(BigDecimal.ONE, MC)
+                numerator.divide(denominator, MC)
             }
         }
-        val rawMonthlyPayment = if (financedPrincipal <= 0.0) 0.0 else standardAnnuityExclInsurance + monthlyInsurance
+        val rawMonthlyPaymentBd = if (!financedPrincipal.isPositive) {
+            BigDecimal.ZERO
+        } else {
+            standardAnnuityExclInsuranceBd.add(monthlyInsuranceBd, MC)
+        }
 
         for (i in 1..amortizedMonths) {
             val monthIndex = deferredMonths + i
             val isLastMonth = i == amortizedMonths
-            val interestTtc = if (financedPrincipal <= 0.0) 0.0 else remainingBalance * effectiveMonthlyRate
-            val interestHt = if (input.applyInterestTva) interestTtc / (1.0 + MOROCCAN_TVA_RATE) else interestTtc
-            val tva = interestTtc - interestHt
+            val interestTtc = if (!financedPrincipal.isPositive) {
+                BigDecimal.ZERO
+            } else {
+                remainingBalanceBd.multiply(effectiveMonthlyRate, MC)
+            }
+            val interestHt = if (input.applyInterestTva) {
+                interestTtc.divide(ONE_PLUS_TVA_BD, MC)
+            } else {
+                interestTtc
+            }
+            val tva = interestTtc.subtract(interestHt, MC)
 
-            val principal = when {
-                financedPrincipal <= 0.0 -> 0.0
-                isLastMonth -> remainingBalance
-                effectiveMonthlyRate == 0.0 -> (financedPrincipal / amortizedMonths.toDouble()).coerceIn(0.0, remainingBalance)
-                else -> (standardAnnuityExclInsurance - interestTtc).coerceIn(0.0, remainingBalance)
+            val rawPrincipal = when {
+                !financedPrincipal.isPositive -> BigDecimal.ZERO
+                isLastMonth -> remainingBalanceBd
+                effectiveMonthlyRate.signum() == 0 -> principalBd.divide(amortizedMonthsBd, MC)
+                else -> standardAnnuityExclInsuranceBd.subtract(interestTtc, MC)
+            }
+            val principal = rawPrincipal.coerceInBd(BigDecimal.ZERO, remainingBalanceBd)
+
+            remainingBalanceBd = if (isLastMonth) {
+                BigDecimal.ZERO
+            } else {
+                remainingBalanceBd.subtract(principal, MC).max(BigDecimal.ZERO)
             }
 
-            remainingBalance = (remainingBalance - principal).coerceAtLeast(0.0)
-            if (isLastMonth) {
-                remainingBalance = 0.0
-            }
-
-            val rowPayment = principal + interestTtc + monthlyInsurance
-            totalInterestHt += interestHt
-            totalTva += tva
-            totalInsurance += monthlyInsurance
+            val rowPayment = principal.add(interestTtc, MC).add(monthlyInsuranceBd, MC)
+            totalInterestHtBd = totalInterestHtBd.add(interestHt, MC)
+            totalTvaBd = totalTvaBd.add(tva, MC)
+            totalInsuranceBd = totalInsuranceBd.add(monthlyInsuranceBd, MC)
 
             schedule.add(
                 AmortizationRow(
                     month = monthIndex,
                     isDeferred = false,
-                    payment = round2(rowPayment),
-                    principal = round2(principal),
-                    interestHt = round2(interestHt),
-                    tvaOnInterest = round2(tva),
-                    insurance = round2(monthlyInsurance),
-                    remainingBalance = round2(remainingBalance)
+                    payment = Money.fromMajorUnits(rowPayment, RoundingMode.HALF_UP),
+                    principal = Money.fromMajorUnits(principal, RoundingMode.HALF_UP),
+                    interestHt = Money.fromMajorUnits(interestHt, RoundingMode.HALF_UP),
+                    tvaOnInterest = Money.fromMajorUnits(tva, RoundingMode.HALF_UP),
+                    insurance = monthlyInsuranceMoney,
+                    remainingBalance = Money.fromMajorUnits(remainingBalanceBd, RoundingMode.HALF_UP)
                 )
             )
         }
 
-        val monthlyPayment = round2(rawMonthlyPayment)
-        val deferredMonthlyPayment = round2(rawDeferredPayment)
-        val roundedInterestHt = round2(totalInterestHt)
-        val roundedTva = round2(totalTva)
-        val roundedInsurance = round2(totalInsurance)
-        val totalCost = round2(roundedInterestHt + roundedTva + roundedInsurance)
-        val totalRepayment = round2(financedPrincipal + totalCost)
+        val monthlyPayment = Money.fromMajorUnits(rawMonthlyPaymentBd, RoundingMode.HALF_UP)
+        val deferredMonthlyPayment = Money.fromMajorUnits(rawDeferredPaymentBd, RoundingMode.HALF_UP)
+        val roundedInterestHt = Money.fromMajorUnits(totalInterestHtBd, RoundingMode.HALF_UP)
+        val roundedTva = Money.fromMajorUnits(totalTvaBd, RoundingMode.HALF_UP)
+        val roundedInsurance = Money.fromMajorUnits(totalInsuranceBd, RoundingMode.HALF_UP)
+        val totalCost = roundedInterestHt + roundedTva + roundedInsurance
+        val totalRepayment = financedPrincipal + totalCost
 
-        val income = input.monthlyNetIncome.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
-        val existingDebt = input.existingMonthlyDebt.takeIf { it.isFinite() }?.coerceAtLeast(0.0) ?: 0.0
+        val income = input.monthlyNetIncome.coerceAtLeast(Money.ZERO)
+        val existingDebt = input.existingMonthlyDebt.coerceAtLeast(Money.ZERO)
         val totalMonthlyCharge = monthlyPayment + existingDebt
         val dtiRatio = when {
-            income > 0.0 -> round2((totalMonthlyCharge / income) * 100.0)
-            totalMonthlyCharge > 0.0 -> 100.0
+            income.isPositive -> round2(
+                totalMonthlyCharge.toBigDecimalDh()
+                    .multiply(HUNDRED_BD, MC)
+                    .divide(income.toBigDecimalDh(), MC)
+                    .toDouble()
+            )
+            totalMonthlyCharge.isPositive -> 100.0
             else -> 0.0
         }
         val maxAllowedDti = resolveMaxDti(input)
@@ -167,7 +205,7 @@ object CreditCalculator {
             if (ceiling != null && financedPrincipal > ceiling) {
                 add(strings.warnConsoCeiling)
             }
-            if (income > 0.0 && income < MOROCCAN_SMIG_MAD) {
+            if (income.isPositive && income < MOROCCAN_SMIG_MAD) {
                 add(strings.warnBelowSmig)
             }
             if (requiresMandatoryAdi && insRate <= 0.0) {
@@ -196,25 +234,11 @@ object CreditCalculator {
     }
 
     /**
-     * Formats numbers using Moroccan/French grouping, e.g., `12 500,00 MAD`.
+     * Formats monetary amounts using Moroccan/French grouping, e.g., `12 500,00 MAD`.
      */
-    fun formatMad(amount: Double): String {
-        val safe = if (amount.isFinite()) amount else 0.0
-        val sign = if (safe < -0.004) "-" else ""
-        val totalCents = (abs(safe) * 100.0).roundToLong()
-        val wholePart = totalCents / 100L
-        val centsPart = totalCents % 100L
-        val groupedWhole = groupWithSpaces(wholePart)
-        val centsText = String.format(Locale.US, "%02d", centsPart)
-        return "$sign$groupedWhole,$centsText MAD"
-    }
+    fun formatMad(amount: Money): String = amount.formatDhExact("MAD")
 
-    fun formatMadCompact(amount: Double): String {
-        val safe = if (amount.isFinite()) amount else 0.0
-        val sign = if (safe < -0.5) "-" else ""
-        val wholePart = abs(safe).roundToLong()
-        return "$sign${groupWithSpaces(wholePart)} MAD"
-    }
+    fun formatMadCompact(amount: Money): String = amount.formatDhRounded("MAD")
 
     fun formatPercent(value: Double): String {
         val safe = if (value.isFinite()) value else 0.0
@@ -234,22 +258,10 @@ object CreditCalculator {
         }
     }
 
-    private fun groupWithSpaces(value: Long): String {
-        val digits = value.toString()
-        if (digits.length <= 3) return digits
-        val sb = StringBuilder(digits.length + digits.length / 3)
-        val rem = digits.length % 3
-        if (rem > 0) {
-            sb.append(digits, 0, rem)
-            if (digits.length > rem) sb.append(' ')
-        }
-        var i = rem
-        while (i < digits.length) {
-            sb.append(digits, i, i + 3)
-            i += 3
-            if (i < digits.length) sb.append(' ')
-        }
-        return sb.toString()
+    private fun BigDecimal.coerceInBd(min: BigDecimal, max: BigDecimal): BigDecimal {
+        if (this < min) return min
+        if (this > max) return max
+        return this
     }
 
     private fun round2(value: Double): Double {

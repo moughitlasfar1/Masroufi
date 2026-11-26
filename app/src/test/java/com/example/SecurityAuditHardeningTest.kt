@@ -11,12 +11,14 @@ import com.example.security.SecureStore
 import com.example.ui.generateSignInNonce
 import com.example.ui.verifyIdTokenNonce
 import com.example.voice.MoonshineVoiceController
+import com.example.widget.AssistantAmountValidation
 import com.example.widget.AssistantEntryValidator
 import com.example.widget.MasroufiWidgetStore
 import com.example.widget.QuickCaptureReplayGuard
 import com.example.widget.WidgetSnapshot
 import com.example.widget.WidgetStyle
 import com.example.domain.VoiceParsedTransaction
+import com.masroufi.core.Money
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -49,12 +51,15 @@ class SecurityAuditHardeningTest {
     @Test
     fun `S2 AssistantEntryValidator enforces amount bounds, control-char stripping, 60-char cap, and 10s rate limit`() {
         // Amount bounds: strictly (0, 100_000]
-        assertEquals(null, AssistantEntryValidator.validateAmountOrNull(null))
-        assertEquals(45.5, AssistantEntryValidator.validateAmountOrNull("45,5")!!, 0.001)
-        assertTrue(AssistantEntryValidator.validateAmountOrNull("0")!!.isNaN())
-        assertTrue(AssistantEntryValidator.validateAmountOrNull("-25")!!.isNaN())
-        assertTrue(AssistantEntryValidator.validateAmountOrNull("100001")!!.isNaN())
-        assertTrue(AssistantEntryValidator.validateAmountOrNull("abc")!!.isNaN())
+        assertEquals(AssistantAmountValidation.Missing, AssistantEntryValidator.validateAmount(null))
+        assertEquals(
+            AssistantAmountValidation.Valid(Money(4550L)),
+            AssistantEntryValidator.validateAmount("45,5")
+        )
+        assertEquals(AssistantAmountValidation.Invalid, AssistantEntryValidator.validateAmount("0"))
+        assertEquals(AssistantAmountValidation.Invalid, AssistantEntryValidator.validateAmount("-25"))
+        assertEquals(AssistantAmountValidation.Invalid, AssistantEntryValidator.validateAmount("100001"))
+        assertEquals(AssistantAmountValidation.Invalid, AssistantEntryValidator.validateAmount("abc"))
 
         // Control chars stripped & length capped at 60
         val dirty = "Café\u0000\u0007\n\u202E" + "x".repeat(100)
@@ -75,7 +80,7 @@ class SecurityAuditHardeningTest {
         val batch = listOf(
             VoiceParsedTransaction(
                 rawTranscript = "Café 15",
-                amount = 15.0,
+                amount = Money.fromDh(15),
                 description = "Café",
                 envelopeKey = "cafe",
                 categoryName = "Café & Sorties"
@@ -113,16 +118,16 @@ class SecurityAuditHardeningTest {
         val legacyPrefs = context.getSharedPreferences("masroufi_widget_prefs", Context.MODE_PRIVATE)
         val snap = WidgetSnapshot(
             snapshotDateIso = "2026-11-19",
-            todaySpend = 123.0,
-            safeToSpendToday = 456.0,
-            remainingBudget = 4560.0,
+            todaySpend = Money.fromDh(123),
+            safeToSpendToday = Money.fromDh(456),
+            remainingBudget = Money.fromDh(4560),
             daysRemainingInCycle = 10
         )
         legacyPrefs.edit().putString("full_widget_snapshot_json", snap.toJson().toString()).commit()
 
         // Saving/loading migrates to SecureStore and removes plaintext fields
         val loaded = MasroufiWidgetStore.loadSnapshot(context, "2026-11-19")
-        assertEquals(123.0, loaded.todaySpend, 0.01)
+        assertEquals(Money.fromDh(123), loaded.todaySpend)
         assertFalse("Legacy plaintext JSON must be removed after migration", legacyPrefs.contains("full_widget_snapshot_json"))
 
         MasroufiWidgetStore.saveWidgetSnapshot(context, snap)

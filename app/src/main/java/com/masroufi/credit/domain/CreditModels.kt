@@ -1,12 +1,14 @@
 package com.masroufi.credit.domain
 
+import com.masroufi.core.Money
+
 enum class CreditType(
     val label: String,
     val defaultRateHt: Double,
     val maxMonths: Int,
     val extendedMaxMonths: Int,
     val maxDeferredMonths: Int,
-    val standardCeiling: Double?
+    val standardCeiling: Money?
 ) {
     CONSOMMATION(
         label = "Consommation",
@@ -14,7 +16,7 @@ enum class CreditType(
         maxMonths = 84,
         extendedMaxMonths = 120,
         maxDeferredMonths = 3,
-        standardCeiling = 500_000.0
+        standardCeiling = Money.fromDh(500_000)
     ),
     AUTO(
         label = "Auto (Neuve)",
@@ -40,14 +42,14 @@ enum class CreditType(
 
 data class CreditInput(
     val creditType: CreditType = CreditType.CONSOMMATION,
-    val loanAmount: Double = 100_000.0,
-    val downPayment: Double = 0.0,
+    val loanAmount: Money = Money.fromDh(100_000),
+    val downPayment: Money = Money.ZERO,
     val durationMonths: Int = 60,
     val deferredMonths: Int = 0,
     val annualInterestRateHt: Double = CreditType.CONSOMMATION.defaultRateHt,
     val applyInterestTva: Boolean = true,
-    val monthlyNetIncome: Double = 10_000.0,
-    val existingMonthlyDebt: Double = 0.0,
+    val monthlyNetIncome: Money = Money.fromDh(10_000),
+    val existingMonthlyDebt: Money = Money.ZERO,
     val hasExistingMortgage: Boolean = false,
     val isEligibleFor120Months: Boolean = false,
     val borrowerAge: Int = 30,
@@ -57,23 +59,23 @@ data class CreditInput(
 data class AmortizationRow(
     val month: Int,
     val isDeferred: Boolean,
-    val payment: Double,
-    val principal: Double,
-    val interestHt: Double,
-    val tvaOnInterest: Double,
-    val insurance: Double,
-    val remainingBalance: Double
+    val payment: Money,
+    val principal: Money,
+    val interestHt: Money,
+    val tvaOnInterest: Money,
+    val insurance: Money,
+    val remainingBalance: Money
 )
 
 data class CreditResult(
-    val financedPrincipal: Double,
-    val monthlyPayment: Double,
-    val deferredMonthlyPayment: Double,
-    val totalInterestHt: Double,
-    val totalTva: Double,
-    val totalInsurance: Double,
-    val totalCost: Double,
-    val totalRepayment: Double,
+    val financedPrincipal: Money,
+    val monthlyPayment: Money,
+    val deferredMonthlyPayment: Money,
+    val totalInterestHt: Money,
+    val totalTva: Money,
+    val totalInsurance: Money,
+    val totalCost: Money,
+    val totalRepayment: Money,
     val debtToIncomeRatio: Double,
     val maxAllowedDti: Double,
     val isOverIndebted: Boolean,

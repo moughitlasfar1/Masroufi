@@ -161,7 +161,7 @@ class EncryptedDatabasePhase1aTest {
         dao1.upsertProfile(
             UserProfileEntity(
                 userId = uid,
-                baseBudget = 12500.0,
+                baseBudgetCentimes = 1_250_000L,
                 payCycleDay = 28,
                 rolloverEnabled = true,
                 language = "darija",
@@ -178,7 +178,7 @@ class EncryptedDatabasePhase1aTest {
                 name = "CIH Bank",
                 kind = "bank",
                 currency = "MAD",
-                initialBalance = 8500.0,
+                initialBalanceCentimes = 850_000L,
                 colorHex = "#2563EB",
                 sortOrder = 1,
                 createdAtEpochMs = 1000L,
@@ -190,7 +190,7 @@ class EncryptedDatabasePhase1aTest {
                 id = "tx_1",
                 userId = uid,
                 type = "expense",
-                amount = 145.50,
+                amountCentimes = 14_550L,
                 category = "alimentation",
                 envelopeKey = "alimentation",
                 accountId = "acc_cih",
@@ -224,7 +224,7 @@ class EncryptedDatabasePhase1aTest {
                 itemType = "bill",
                 name = "Fibre Orange",
                 subtitle = "Monthly",
-                amount = 249.0,
+                amountCentimes = 24_900L,
                 dayOrTurn = 5,
                 dateOrCycle = "2026-11",
                 createdAtEpochMs = 1000L,
@@ -236,16 +236,16 @@ class EncryptedDatabasePhase1aTest {
                 id = "cred_auto",
                 userId = uid,
                 type = "AUTO",
-                loanAmount = 180000.0,
-                downPayment = 30000.0,
-                financedPrincipal = 150000.0,
+                loanAmountCentimes = 18_000_000L,
+                downPaymentCentimes = 3_000_000L,
+                financedPrincipalCentimes = 15_000_000L,
                 durationMonths = 60,
                 deferredMonths = 0,
                 annualInterestRateHt = 5.5,
                 applyInterestTva = true,
                 insuranceRate = 0.4,
-                monthlyPayment = 2940.25,
-                totalCost = 176415.0,
+                monthlyPaymentCentimes = 294_025L,
+                totalCostCentimes = 17_641_500L,
                 debtToIncomeRatio = 23.5,
                 maxAllowedDti = 45.0,
                 linkToMonthlyExpenses = true,
@@ -272,12 +272,12 @@ class EncryptedDatabasePhase1aTest {
         assertNotNull("Database should reopen cleanly", db2)
         val dao2 = db2!!.masroufiDao()
 
-        assertEquals(12500.0, dao2.getProfile(uid)?.baseBudget ?: 0.0, 0.001)
+        assertEquals(1_250_000L, dao2.getProfile(uid)?.baseBudgetCentimes)
         assertEquals("darija", dao2.observeProfile(uid).first()?.language)
         assertEquals(1, dao2.countAccounts(uid))
         assertEquals("CIH Bank", dao2.observeAccounts(uid).first().single().name)
         assertEquals(1, dao2.countTransactions(uid))
-        assertEquals(145.50, dao2.observeTransactions(uid).first().single().amount, 0.001)
+        assertEquals(14_550L, dao2.observeTransactions(uid).first().single().amountCentimes)
         assertEquals(1, dao2.countEnvelopes(uid))
         assertEquals(1, dao2.countFinancialItems(uid))
         assertEquals(1, dao2.countSavedCredits(uid))
@@ -291,18 +291,18 @@ class EncryptedDatabasePhase1aTest {
             val db = MasroufiDatabaseProvider.getOrOpen(context, testDbName, customFactory = factory)!!
             val dao = db.masroufiDao()
 
-            dao.upsertProfile(UserProfileEntity(userId = "user_a", baseBudget = 5000.0))
-            dao.upsertTransaction(TransactionEntity(id = "tx_a1", userId = "user_a", amount = 100.0))
-            dao.upsertProfile(UserProfileEntity(userId = "user_b", baseBudget = 9000.0))
-            dao.upsertTransaction(TransactionEntity(id = "tx_b1", userId = "user_b", amount = 250.0))
+            dao.upsertProfile(UserProfileEntity(userId = "user_a", baseBudgetCentimes = 500_000L))
+            dao.upsertTransaction(TransactionEntity(id = "tx_a1", userId = "user_a", amountCentimes = 10_000L))
+            dao.upsertProfile(UserProfileEntity(userId = "user_b", baseBudgetCentimes = 900_000L))
+            dao.upsertTransaction(TransactionEntity(id = "tx_b1", userId = "user_b", amountCentimes = 25_000L))
 
             dao.replaceAllUserData(
                 userId = "user_a",
-                profile = UserProfileEntity(userId = "user_a", baseBudget = 7500.0),
+                profile = UserProfileEntity(userId = "user_a", baseBudgetCentimes = 750_000L),
                 accounts = listOf(AccountEntity(id = "acc_new", userId = "user_a", name = "Cash")),
                 transactions = listOf(
-                    TransactionEntity(id = "tx_a2", userId = "user_a", amount = 42.0),
-                    TransactionEntity(id = "tx_a3", userId = "user_a", amount = 58.0)
+                    TransactionEntity(id = "tx_a2", userId = "user_a", amountCentimes = 4_200L),
+                    TransactionEntity(id = "tx_a3", userId = "user_a", amountCentimes = 5_800L)
                 ),
                 envelopes = emptyList(),
                 financialItems = emptyList(),
@@ -310,12 +310,12 @@ class EncryptedDatabasePhase1aTest {
             )
 
             // user_a fully replaced
-            assertEquals(7500.0, dao.getProfile("user_a")?.baseBudget ?: 0.0, 0.001)
+            assertEquals(750_000L, dao.getProfile("user_a")?.baseBudgetCentimes)
             assertEquals(2, dao.countTransactions("user_a"))
             assertEquals(setOf("tx_a2", "tx_a3"), dao.getTransactions("user_a").map { it.id }.toSet())
 
             // user_b untouched
-            assertEquals(9000.0, dao.getProfile("user_b")?.baseBudget ?: 0.0, 0.001)
+            assertEquals(900_000L, dao.getProfile("user_b")?.baseBudgetCentimes)
             assertEquals(1, dao.countTransactions("user_b"))
             assertEquals("tx_b1", dao.getTransactions("user_b").single().id)
         }
@@ -327,7 +327,7 @@ class EncryptedDatabasePhase1aTest {
             // Open once so the DB file exists on disk
             val firstDb = MasroufiDatabaseProvider.getOrOpen(context, testDbName, customFactory = factory)
             assertNotNull(firstDb)
-            firstDb!!.masroufiDao().upsertProfile(UserProfileEntity(userId = "u1", baseBudget = 6400.0))
+            firstDb!!.masroufiDao().upsertProfile(UserProfileEntity(userId = "u1", baseBudgetCentimes = 640_000L))
             MasroufiDatabaseProvider.close()
 
             // Simulate AndroidKeyStore loss by removing the wrapped key while DB file stays on disk

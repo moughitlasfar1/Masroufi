@@ -7,6 +7,14 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import com.example.security.AppSecurityManager
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
+
+sealed interface AssistantAmountValidation {
+    data object Missing : AssistantAmountValidation
+    data class Valid(val amount: Money) : AssistantAmountValidation
+    data object Invalid : AssistantAmountValidation
+}
 
 /**
  * Pure validation and rate-limiting rules for external Google Assistant / deep-link requests.
@@ -14,7 +22,7 @@ import com.example.security.AppSecurityManager
  * and 10-second rate limiting without an emulator.
  */
 object AssistantEntryValidator {
-    const val MAX_AMOUNT: Double = 100_000.0
+    val MAX_AMOUNT: Money = Money.fromDh(100_000)
     const val MAX_TEXT_LENGTH: Int = 60
     const val RATE_LIMIT_WINDOW_MS: Long = 10_000L
 
@@ -42,17 +50,19 @@ object AssistantEntryValidator {
     }
 
     /**
-     * Validates an optional amount string. Returns null if missing, or the validated amount
-     * if strictly within (0.0, MAX_AMOUNT]; returns Double.NaN if provided but invalid/out of range.
+     * Validates an optional amount string strictly via [MoneyParser] (zero Double parsing).
+     * Returns [AssistantAmountValidation.Missing] if null/blank, [AssistantAmountValidation.Valid]
+     * if strictly within (0, MAX_AMOUNT], or [AssistantAmountValidation.Invalid] otherwise.
      */
-    fun validateAmountOrNull(rawAmount: String?): Double? {
-        if (rawAmount.isNullOrBlank()) return null
-        val cleaned = rawAmount.replace(",", ".").replace(Regex("""[^\d.\-]"""), "")
-        val parsed = cleaned.toDoubleOrNull() ?: return Double.NaN
-        if (!parsed.isFinite() || parsed <= 0.0 || parsed > MAX_AMOUNT) {
-            return Double.NaN
+    fun validateAmount(rawAmount: String?): AssistantAmountValidation {
+        if (rawAmount.isNullOrBlank()) return AssistantAmountValidation.Missing
+        val parsedCentimes = MoneyParser.parseMoroccanAmountToCentimes(rawAmount)
+            ?: return AssistantAmountValidation.Invalid
+        val parsed = Money.fromCentimes(parsedCentimes)
+        if (!parsed.isPositive || parsed > MAX_AMOUNT) {
+            return AssistantAmountValidation.Invalid
         }
-        return parsed
+        return AssistantAmountValidation.Valid(parsed)
     }
 
     /**
@@ -133,10 +143,13 @@ class AssistantEntryActivity : Activity() {
             ?: incoming.extras?.get(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_AMOUNT)?.toString()?.takeIf { it.isNotBlank() }
             ?: dataUri?.getQueryParameter("amount")
 
-        val validatedAmount = AssistantEntryValidator.validateAmountOrNull(rawAmountStr)
-        if (validatedAmount != null && validatedAmount.isNaN()) {
-            // Invalid or out-of-range amount (> 100,000 or <= 0) — reject safely
-            return null
+        val validatedAmount: Money? = when (val validation = AssistantEntryValidator.validateAmount(rawAmountStr)) {
+            AssistantAmountValidation.Missing -> null
+            is AssistantAmountValidation.Valid -> validation.amount
+            AssistantAmountValidation.Invalid -> {
+                // Invalid or out-of-range amount (> 100,000 or <= 0) — reject safely
+                return null
+            }
         }
 
         val rawMerchant = incoming.getStringExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_MERCHANT)
@@ -169,7 +182,10 @@ class AssistantEntryActivity : Activity() {
                 else -> GoogleAssistantExpenseBridge.ACTION_ASSISTANT_ADD_EXPENSE
             }
             if (validatedAmount != null) {
-                putExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_AMOUNT, validatedAmount.toString())
+                putExtra(
+                    GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_AMOUNT,
+                    validatedAmount.toCanonicalDecimalString()
+                )
             }
             if (cleanMerchant.isNotBlank()) {
                 putExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_MERCHANT, cleanMerchant)

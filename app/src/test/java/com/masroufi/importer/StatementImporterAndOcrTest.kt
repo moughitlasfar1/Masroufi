@@ -6,12 +6,12 @@ import com.example.data.AccountItem
 import com.example.data.EnvelopeConfig
 import com.example.data.TransactionItem
 import com.example.domain.PayCycleEngine
+import com.masroufi.core.Money
 import com.masroufi.importer.data.ImporterMappingStore
 import com.masroufi.importer.domain.AmountColumnMode
 import com.masroufi.importer.domain.BankProfile
 import com.masroufi.importer.domain.CsvColumnMapping
 import com.masroufi.importer.domain.CsvStatementParser
-import com.masroufi.importer.domain.ImporterConstants
 import com.masroufi.importer.domain.PdfStatementParser
 import com.masroufi.importer.domain.ReceiptParser
 import com.masroufi.importer.domain.StatementPipeline
@@ -19,7 +19,6 @@ import java.nio.charset.Charset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -28,13 +27,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/**
- * Comprehensive verification suite for Masroufi's 3-phase Bank Statement Importer & Receipt OCR:
- * - Phase 1: Moroccan CSV exports (UTF-8 BOM, Windows-1252, `;` / `,`, quoted fields, split & signed amounts, saved mappings)
- * - Shared pipeline: label cleaning, ATM transfer rule, learned categories, deterministic IDs, duplicate flagging
- * - Phase 2: Receipt OCR text extraction (total, date, merchant, Arabic-only hint)
- * - Phase 3: Moroccan PDF statement text parsing across BCP, CIH, Attijariwafa, BMCE, and CFG / Société Générale
- */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class StatementImporterAndOcrTest {
@@ -61,8 +53,6 @@ class StatementImporterAndOcrTest {
         ImporterMappingStore.clearAll(context)
         PayCycleEngine.importLearnedCategoriesJson("{}", merge = false)
     }
-
-    // ── Phase 1: CSV Encoding, Delimiters, Numbers, Dates, Profiles & Saved Mappings ──
 
     @Test
     fun `CSV detects UTF-8 BOM and Windows-1252 French accents without corruption`() {
@@ -99,12 +89,11 @@ class StatementImporterAndOcrTest {
         assertEquals(AmountColumnMode.SPLIT_DEBIT_CREDIT, inspection.suggestedMapping.amountMode)
 
         val rows = CsvStatementParser.extractRows(inspection.allRawRows, inspection.suggestedMapping, inspection.headerRowIndex)
-        // SOLDE ANTERIEUR must be filtered out
         assertEquals(3, rows.size)
         assertEquals("2026-05-03", rows[0].isoDate)
-        assertEquals(420.75, rows[0].debitMad!!, 0.001)
-        assertEquals(500.0, rows[1].debitMad!!, 0.001)
-        assertEquals(11500.0, rows[2].creditMad!!, 0.001)
+        assertEquals(Money(42075L), rows[0].debitMad)
+        assertEquals(Money.fromDh(500), rows[1].debitMad)
+        assertEquals(Money.fromDh(11500), rows[2].creditMad)
     }
 
     @Test
@@ -125,9 +114,9 @@ class StatementImporterAndOcrTest {
         val rows = CsvStatementParser.extractRows(inspection.allRawRows, inspection.suggestedMapping, inspection.headerRowIndex)
         assertEquals(3, rows.size)
         assertEquals("PAIEMENT TPE \"PAUL, ANFA\"", rows[0].rawLabel)
-        assertEquals(85.50, rows[0].debitMad!!, 0.001)
-        assertEquals(249.00, rows[1].debitMad!!, 0.001)
-        assertEquals(3200.00, rows[2].creditMad!!, 0.001)
+        assertEquals(Money(8550L), rows[0].debitMad)
+        assertEquals(Money.fromDh(249), rows[1].debitMad)
+        assertEquals(Money.fromDh(3200), rows[2].creditMad)
     }
 
     @Test
@@ -157,8 +146,6 @@ class StatementImporterAndOcrTest {
         assertEquals(2, inspection.suggestedMapping.labelCol)
     }
 
-    // ── Shared Pipeline: ATM Rule, Learned Category, Deterministic IDs, Duplicate Flagging ──
-
     @Test
     fun `Shared pipeline converts Retrait GAB to bank-to-cash transfer, uses learned categories, and flags duplicates unticked`() {
         PayCycleEngine.learnCategoryForDescription("kiosk zaki", "transport")
@@ -176,12 +163,11 @@ class StatementImporterAndOcrTest {
         val insp = CsvStatementParser.inspectCsv(csv.toByteArray(Charsets.UTF_8))
         val rows = CsvStatementParser.extractRows(insp.allRawRows, insp.suggestedMapping, insp.headerRowIndex)
 
-        // Pre-existing transaction matching Marjane on 2026-05-06 for 315.50 DH
         val existingTxs = listOf(
             TransactionItem(
                 id = "tx_manual_1",
                 type = "expense",
-                amount = 315.50,
+                amount = Money(31550L),
                 category = "marche",
                 envelopeKey = "marche",
                 accountId = "acc_bank",
@@ -200,7 +186,6 @@ class StatementImporterAndOcrTest {
         )
         assertEquals(5, candidates.size)
 
-        // 1. ATM withdrawal -> transfer from acc_bank to acc_cash
         val atm = candidates[0]
         assertTrue(atm.isAtmTransfer)
         assertEquals("transfer", atm.txType)
@@ -208,25 +193,21 @@ class StatementImporterAndOcrTest {
         assertEquals("acc_cash", atm.toAccountId)
         assertEquals("Retrait GAB", atm.cleanedLabel)
 
-        // 2. Learned category overrides fallback
         val learned = candidates[1]
         assertEquals("transport", learned.envelopeKey)
         assertEquals("KIOSK ZAKI", learned.cleanedLabel)
 
-        // 3. Probable duplicate flagged & unticked by default
         val dup = candidates[2]
         assertTrue(dup.isProbableDuplicate)
         assertFalse(dup.isSelected)
         assertEquals("marche", dup.envelopeKey)
 
-        // 4. Two identical same-day Glovo orders get distinct deterministic IDs
         val glovo1 = candidates[3]
         val glovo2 = candidates[4]
         assertEquals("cafe", glovo1.envelopeKey)
         assertTrue(glovo1.deterministicId.startsWith("tx_imp_"))
         assertNotEquals(glovo1.deterministicId, glovo2.deterministicId)
 
-        // Re-running on same statement produces identical deterministic IDs
         val rerun = StatementPipeline.buildCandidates(
             rows = rows,
             existingTransactions = existingTxs,
@@ -237,7 +218,6 @@ class StatementImporterAndOcrTest {
         )
         assertEquals(candidates.map { it.deterministicId }, rerun.map { it.deterministicId })
 
-        // Converting selected rows excludes unticked duplicate and preserves historical dates
         val txs = StatementPipeline.toTransactionItems(candidates, userId = "u1")
         assertEquals(4, txs.size)
         assertTrue(txs.none { it.deterministicIdEquals(dup.deterministicId) })
@@ -246,8 +226,6 @@ class StatementImporterAndOcrTest {
     }
 
     private fun TransactionItem.deterministicIdEquals(other: String): Boolean = this.id == other
-
-    // ── Phase 2: Receipt OCR Parser ──
 
     @Test
     fun `ReceiptParser extracts Moroccan supermarket total, date, and merchant while ignoring change rendered`() {
@@ -268,7 +246,7 @@ class StatementImporterAndOcrTest {
         """.trimIndent()
 
         val parsed = ReceiptParser.parse(marjaneReceipt, todayIso = "2026-05-20")
-        assertEquals(245.80, parsed.totalAmountMad!!, 0.001)
+        assertEquals(Money(24580L), parsed.totalAmountMad)
         assertEquals("2026-05-14", parsed.isoDate)
         assertEquals("MARJANE HOLDING SA", parsed.merchantName)
         assertFalse(parsed.arabicWeakHint)
@@ -287,7 +265,7 @@ class StatementImporterAndOcrTest {
         """.trimIndent()
 
         val parsedCafe = ReceiptParser.parse(cafeReceipt, todayIso = "2026-05-20")
-        assertEquals(38.0, parsedCafe.totalAmountMad!!, 0.001)
+        assertEquals(Money.fromDh(38), parsedCafe.totalAmountMad)
         assertEquals("2026-05-19", parsedCafe.isoDate)
         assertEquals("CAFE BIANCA ANFA", parsedCafe.merchantName)
 
@@ -295,8 +273,6 @@ class StatementImporterAndOcrTest {
         assertTrue(arabicOnly.arabicWeakHint)
         assertNull(arabicOnly.totalAmountMad)
     }
-
-    // ── Phase 3: PDF Statement Parser across Moroccan Banks ──
 
     @Test
     fun `PdfStatementParser parses multi-line Moroccan bank PDFs and infers debit vs credit from running balance and keywords`() {
@@ -318,22 +294,18 @@ class StatementImporterAndOcrTest {
         assertEquals(BankProfile.BMCE, parsed.detectedBankProfile)
         assertEquals(4, parsed.rows.size)
 
-        // Row 0: multi-line description merged cleanly
         assertEquals("2026-05-02", parsed.rows[0].isoDate)
         assertTrue(parsed.rows[0].rawLabel.contains("ONCF"))
         assertTrue(parsed.rows[0].rawLabel.contains("CASA VOYAGEURS"))
-        assertEquals(120.0, parsed.rows[0].debitMad!!, 0.001)
+        assertEquals(Money.fromDh(120), parsed.rows[0].debitMad)
         assertNull(parsed.rows[0].creditMad)
 
-        // Row 1: Retrait GAB
-        assertEquals(400.0, parsed.rows[1].debitMad!!, 0.001)
+        assertEquals(Money.fromDh(400), parsed.rows[1].debitMad)
 
-        // Row 2: Credit detected via running balance increase (+2500 -> 11980) & keyword
         assertNull(parsed.rows[2].debitMad)
-        assertEquals(2500.0, parsed.rows[2].creditMad!!, 0.001)
+        assertEquals(Money.fromDh(2500), parsed.rows[2].creditMad)
 
-        // Row 3: Debit detected via running balance decrease (-210.50 -> 11769.50)
-        assertEquals(210.50, parsed.rows[3].debitMad!!, 0.001)
+        assertEquals(Money(21050L), parsed.rows[3].debitMad)
     }
 
     @Test
@@ -346,8 +318,8 @@ class StatementImporterAndOcrTest {
         val cihRes = PdfStatementParser.parseText(cihSample)
         assertEquals(BankProfile.CIH, cihRes.detectedBankProfile)
         assertEquals(2, cihRes.rows.size)
-        assertEquals(145.0, cihRes.rows[0].debitMad!!, 0.001)
-        assertEquals(4000.0, cihRes.rows[1].creditMad!!, 0.001)
+        assertEquals(Money.fromDh(145), cihRes.rows[0].debitMad)
+        assertEquals(Money.fromDh(4000), cihRes.rows[1].creditMad)
 
         val sgSample = """
             SOCIETE GENERALE MAROC (SGMB)
@@ -357,7 +329,7 @@ class StatementImporterAndOcrTest {
         val sgRes = PdfStatementParser.parseText(sgSample)
         assertEquals(BankProfile.CFG_SG, sgRes.detectedBankProfile)
         assertEquals(2, sgRes.rows.size)
-        assertEquals(350.0, sgRes.rows[0].debitMad!!, 0.001)
-        assertEquals(1200.0, sgRes.rows[1].creditMad!!, 0.001)
+        assertEquals(Money.fromDh(350), sgRes.rows[0].debitMad)
+        assertEquals(Money.fromDh(1200), sgRes.rows[1].creditMad)
     }
 }

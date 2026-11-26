@@ -4,8 +4,11 @@ import com.example.domain.PayCycleEngine
 import com.example.domain.ProjectionAlertLevel
 import com.example.domain.Translations
 import com.example.ui.DashboardState
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
 import org.json.JSONArray
 import org.json.JSONObject
+import java.math.BigDecimal
 import java.util.Calendar
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -28,8 +31,8 @@ enum class WidgetKind(val key: String) {
 data class WidgetEnvelopeItem(
     val key: String,
     val name: String,
-    val spent: Double,
-    val totalAvailable: Double,
+    val spent: Money,
+    val totalAvailable: Money,
     val usagePercent: Int,
     val hasCap: Boolean,
     val isOver90Percent: Boolean
@@ -41,7 +44,7 @@ data class WidgetReminderItem(
     val kind: String, // "bill" or "daret"
     val title: String,
     val subtitle: String,
-    val amount: Double,
+    val amount: Money,
     val dueDay: Int,
     val dueWithinDays: Int,
     val actionLabel: String
@@ -50,21 +53,21 @@ data class WidgetReminderItem(
 data class WidgetGoalItem(
     val id: String,
     val name: String,
-    val savedAmount: Double,
-    val targetAmount: Double,
+    val savedAmount: Money,
+    val targetAmount: Money,
     val progressPercent: Int
 )
 
 data class WidgetPresetItem(
     val id: String,
     val name: String,
-    val amount: Double,
+    val amount: Money,
     val envelopeKey: String
 )
 
 data class WidgetUsualShortcutItem(
     val desc: String,
-    val amount: Double,
+    val amount: Money,
     val envelopeKey: String,
     val categoryName: String = "",
     val accountId: String = "acc_cash",
@@ -147,18 +150,18 @@ data class WidgetStyle(
  */
 data class WidgetSnapshot(
     val snapshotDateIso: String = PayCycleEngine.todayIso(),
-    val todaySpend: Double = 0.0,
-    val safePool: Double = 0.0,
-    val safeToSpendToday: Double = 0.0,
-    val remainingBudget: Double = 0.0,
-    val cycleExpenses: Double = 0.0,
-    val totalAvailableBudget: Double = 6400.0,
+    val todaySpend: Money = Money.ZERO,
+    val safePool: Money = Money.ZERO,
+    val safeToSpendToday: Money = Money.ZERO,
+    val remainingBudget: Money = Money.ZERO,
+    val cycleExpenses: Money = Money.ZERO,
+    val totalAvailableBudget: Money = Money.fromDh(6400),
     val daysRemainingInCycle: Int = 15,
     val alertLevel: String = "NONE", // "NONE", "AMBER", "RED"
     val envelopes: List<WidgetEnvelopeItem> = emptyList(),
     val reminders: List<WidgetReminderItem> = emptyList(),
     val primaryGoal: WidgetGoalItem? = null,
-    val weekDaysSpend: List<Double> = List(7) { 0.0 },
+    val weekDaysSpend: List<Money> = List(7) { Money.ZERO },
     val presets: List<WidgetPresetItem> = emptyList(),
     val usualShortcuts: List<WidgetUsualShortcutItem> = emptyList(),
     val smartSuggestionsEnabled: Boolean = true,
@@ -192,11 +195,11 @@ data class WidgetSnapshot(
     }
 
     /**
-     * Automatically resets today's spend to 0.0 if the calendar date has crossed midnight
+     * Automatically resets today's spend to 0.00 DH if the calendar date has crossed midnight
      * since [snapshotDateIso] was recorded, even if the main app is closed.
      */
-    fun effectiveTodaySpend(nowIso: String = PayCycleEngine.todayIso()): Double {
-        return if (snapshotDateIso == nowIso) todaySpend else 0.0
+    fun effectiveTodaySpend(nowIso: String = PayCycleEngine.todayIso()): Money {
+        return if (snapshotDateIso == nowIso) todaySpend else Money.ZERO
     }
 
     /**
@@ -208,31 +211,31 @@ data class WidgetSnapshot(
             .toInt()
             .coerceAtLeast(1)
         val newDaysRemaining = max(1, daysRemainingInCycle - daysDelta)
-        val recomputedSafeToday = if (remainingBudget > 0.0) {
-            PayCycleEngine.roundMoney(remainingBudget / newDaysRemaining.toDouble())
-        } else 0.0
+        val recomputedSafeToday = if (remainingBudget.isPositive) {
+            remainingBudget.divideBy(newDaysRemaining.toLong())
+        } else Money.ZERO
         return copy(
             snapshotDateIso = nowIso,
-            todaySpend = 0.0,
+            todaySpend = Money.ZERO,
             daysRemainingInCycle = newDaysRemaining,
             safeToSpendToday = recomputedSafeToday,
             updatedAtMillis = System.currentTimeMillis()
         )
     }
 
-    fun effectiveSafePool(): Double {
-        if (safePool > 0.0) return safePool
-        return PayCycleEngine.roundMoney(max(0.0, safeToSpendToday * daysRemainingInCycle.coerceAtLeast(1)))
+    fun effectiveSafePool(): Money {
+        if (safePool.isPositive) return safePool
+        return (safeToSpendToday * daysRemainingInCycle.coerceAtLeast(1).toLong()).coerceAtLeast(Money.ZERO)
     }
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("snapshotDateIso", snapshotDateIso)
-        put("todaySpend", todaySpend)
-        put("safePool", safePool)
-        put("safeToSpendToday", safeToSpendToday)
-        put("remainingBudget", remainingBudget)
-        put("cycleExpenses", cycleExpenses)
-        put("totalAvailableBudget", totalAvailableBudget)
+        put("todaySpend", todaySpend.toBigDecimalDh())
+        put("safePool", safePool.toBigDecimalDh())
+        put("safeToSpendToday", safeToSpendToday.toBigDecimalDh())
+        put("remainingBudget", remainingBudget.toBigDecimalDh())
+        put("cycleExpenses", cycleExpenses.toBigDecimalDh())
+        put("totalAvailableBudget", totalAvailableBudget.toBigDecimalDh())
         put("daysRemainingInCycle", daysRemainingInCycle)
         put("alertLevel", alertLevel)
         put("monthEndForecastMessage", monthEndForecastMessage)
@@ -253,8 +256,8 @@ data class WidgetSnapshot(
                 put(JSONObject().apply {
                     put("key", env.key)
                     put("name", env.name)
-                    put("spent", env.spent)
-                    put("totalAvailable", env.totalAvailable)
+                    put("spent", env.spent.toBigDecimalDh())
+                    put("totalAvailable", env.totalAvailable.toBigDecimalDh())
                     put("usagePercent", env.usagePercent)
                     put("hasCap", env.hasCap)
                     put("isOver90Percent", env.isOver90Percent)
@@ -270,7 +273,7 @@ data class WidgetSnapshot(
                     put("kind", rem.kind)
                     put("title", rem.title)
                     put("subtitle", rem.subtitle)
-                    put("amount", rem.amount)
+                    put("amount", rem.amount.toBigDecimalDh())
                     put("dueDay", rem.dueDay)
                     put("dueWithinDays", rem.dueWithinDays)
                     put("actionLabel", rem.actionLabel)
@@ -282,14 +285,14 @@ data class WidgetSnapshot(
             put("primaryGoal", JSONObject().apply {
                 put("id", primaryGoal.id)
                 put("name", primaryGoal.name)
-                put("savedAmount", primaryGoal.savedAmount)
-                put("targetAmount", primaryGoal.targetAmount)
+                put("savedAmount", primaryGoal.savedAmount.toBigDecimalDh())
+                put("targetAmount", primaryGoal.targetAmount.toBigDecimalDh())
                 put("progressPercent", primaryGoal.progressPercent)
             })
         }
 
         put("weekDaysSpend", JSONArray().apply {
-            weekDaysSpend.forEach { put(it) }
+            weekDaysSpend.forEach { put(it.toBigDecimalDh()) }
         })
 
         put("presets", JSONArray().apply {
@@ -297,7 +300,7 @@ data class WidgetSnapshot(
                 put(JSONObject().apply {
                     put("id", p.id)
                     put("name", p.name)
-                    put("amount", p.amount)
+                    put("amount", p.amount.toBigDecimalDh())
                     put("envelopeKey", p.envelopeKey)
                 })
             }
@@ -308,7 +311,7 @@ data class WidgetSnapshot(
             usualShortcuts.forEach { s ->
                 put(JSONObject().apply {
                     put("desc", s.desc)
-                    put("amount", s.amount)
+                    put("amount", s.amount.toBigDecimalDh())
                     put("envelopeKey", s.envelopeKey)
                     put("categoryName", s.categoryName)
                     put("accountId", s.accountId)
@@ -319,6 +322,15 @@ data class WidgetSnapshot(
     }
 
     companion object {
+        private fun parseJsonMoney(raw: Any?, default: Money = Money.ZERO): Money = when (raw) {
+            null, JSONObject.NULL -> default
+            is BigDecimal -> runCatching { Money.fromMajorUnits(raw) }.getOrDefault(default)
+            is Number -> runCatching { Money.fromMajorUnits(BigDecimal(raw.toString())) }
+                .getOrElse { runCatching { Money.fromLegacyDoubleDh(raw.toDouble()) }.getOrDefault(default) }
+            is String -> Money.fromDhString(raw) ?: default
+            else -> default
+        }
+
         /**
          * Single canonical builder converting [DashboardState] into [WidgetSnapshot].
          */
@@ -327,13 +339,14 @@ data class WidgetSnapshot(
             nowIso: String = PayCycleEngine.todayIso(),
             appLockEnabled: Boolean = false,
             smartSuggestionsEnabled: Boolean = true,
-            editedAmountOverrides: Map<String, Double> = emptyMap()
+            editedAmountOverrides: Map<String, Money> = emptyMap()
         ): WidgetSnapshot {
             val lang = state.profile.language.ifBlank { "fr" }
             val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
             val todaySpend = state.allTransactions
                 .filter { it.type == "expense" && it.isoDate == nowIso }
-                .sumOf { it.amount }
+                .map { it.amount }
+                .sumMoney()
 
             val currentDayOfMonth = nowIso.split("-").getOrNull(2)?.toIntOrNull()
                 ?: Calendar.getInstance().get(Calendar.DAY_OF_MONTH)
@@ -342,8 +355,8 @@ data class WidgetSnapshot(
                 WidgetEnvelopeItem(
                     key = env.config.key,
                     name = env.config.localizedName(lang),
-                    spent = PayCycleEngine.roundMoney(env.spent),
-                    totalAvailable = PayCycleEngine.roundMoney(env.totalAvailable),
+                    spent = env.spent,
+                    totalAvailable = env.totalAvailable,
                     usagePercent = env.usagePercent,
                     hasCap = env.config.hasCap,
                     isOver90Percent = env.config.hasCap && env.usagePercent >= 90
@@ -364,7 +377,7 @@ data class WidgetSnapshot(
                     kind = rem.kind,
                     title = rem.title,
                     subtitle = rem.subtitle,
-                    amount = PayCycleEngine.roundMoney(rem.amount),
+                    amount = rem.amount,
                     dueDay = dueDay,
                     dueWithinDays = dueWithin,
                     actionLabel = rem.actionLabel
@@ -372,14 +385,14 @@ data class WidgetSnapshot(
             }
 
             val firstGoal = state.goals.firstOrNull()?.let { g ->
-                val target = g.amount.coerceAtLeast(1.0)
-                val saved = g.secondaryAmount.coerceAtLeast(0.0)
-                val pct = ((saved / target) * 100.0).roundToInt().coerceIn(0, 100)
+                val target = g.amount.coerceAtLeast(Money.fromDh(1))
+                val saved = g.secondaryAmount.coerceAtLeast(Money.ZERO)
+                val pct = ((saved.centimes.toDouble() / target.centimes.toDouble()) * 100.0).roundToInt().coerceIn(0, 100)
                 WidgetGoalItem(
                     id = g.id,
                     name = g.name,
-                    savedAmount = PayCycleEngine.roundMoney(saved),
-                    targetAmount = PayCycleEngine.roundMoney(target),
+                    savedAmount = saved,
+                    targetAmount = target,
                     progressPercent = pct
                 )
             }
@@ -389,15 +402,15 @@ data class WidgetSnapshot(
                     WidgetPresetItem(
                         id = p.id,
                         name = p.name,
-                        amount = PayCycleEngine.roundMoney(p.amount),
+                        amount = p.amount,
                         envelopeKey = p.subtitle.ifBlank { "cafe" }
                     )
                 }
             } else {
                 listOf(
-                    WidgetPresetItem("preset_cafe", "Café", 15.0, "cafe"),
-                    WidgetPresetItem("preset_taxi", "Taxi", 20.0, "transport"),
-                    WidgetPresetItem("preset_khobz", "Marché", 30.0, "charges")
+                    WidgetPresetItem("preset_cafe", "Café", Money.fromDh(15), "cafe"),
+                    WidgetPresetItem("preset_taxi", "Taxi", Money.fromDh(20), "transport"),
+                    WidgetPresetItem("preset_khobz", "Marché", Money.fromDh(30), "charges")
                 )
             }
 
@@ -428,19 +441,19 @@ data class WidgetSnapshot(
 
             return WidgetSnapshot(
                 snapshotDateIso = nowIso,
-                todaySpend = PayCycleEngine.roundMoney(todaySpend),
-                safePool = PayCycleEngine.roundMoney(state.safePool),
-                safeToSpendToday = PayCycleEngine.roundMoney(state.safeToSpendToday),
-                remainingBudget = PayCycleEngine.roundMoney(state.remainingBudget),
-                cycleExpenses = PayCycleEngine.roundMoney(state.cycleExpenses),
-                totalAvailableBudget = PayCycleEngine.roundMoney(state.totalAvailableBudget),
+                todaySpend = todaySpend,
+                safePool = state.safePool,
+                safeToSpendToday = state.safeToSpendToday,
+                remainingBudget = state.remainingBudget,
+                cycleExpenses = state.cycleExpenses,
+                totalAvailableBudget = state.totalAvailableBudget,
                 daysRemainingInCycle = state.daysRemaining.coerceAtLeast(1),
                 alertLevel = alertStr,
                 envelopes = envItems,
                 reminders = remItems,
                 primaryGoal = firstGoal,
                 weekDaysSpend = state.weekDaysSpend.take(7).let { list ->
-                    if (list.size == 7) list else List(7) { idx -> list.getOrElse(idx) { 0.0 } }
+                    if (list.size == 7) list else List(7) { idx -> list.getOrElse(idx) { Money.ZERO } }
                 },
                 presets = presetItems,
                 usualShortcuts = usualItems,
@@ -467,8 +480,8 @@ data class WidgetSnapshot(
                         WidgetEnvelopeItem(
                             key = item.optString("key", "autre"),
                             name = item.optString("name", "Autre"),
-                            spent = item.optDouble("spent", 0.0),
-                            totalAvailable = item.optDouble("totalAvailable", 0.0),
+                            spent = parseJsonMoney(item.opt("spent"), Money.ZERO),
+                            totalAvailable = parseJsonMoney(item.opt("totalAvailable"), Money.ZERO),
                             usagePercent = item.optInt("usagePercent", 0),
                             hasCap = item.optBoolean("hasCap", true),
                             isOver90Percent = item.optBoolean("isOver90Percent", false)
@@ -489,7 +502,7 @@ data class WidgetSnapshot(
                             kind = item.optString("kind", "bill"),
                             title = item.optString("title", ""),
                             subtitle = item.optString("subtitle", ""),
-                            amount = item.optDouble("amount", 0.0),
+                            amount = parseJsonMoney(item.opt("amount"), Money.ZERO),
                             dueDay = item.optInt("dueDay", 1),
                             dueWithinDays = item.optInt("dueWithinDays", 5),
                             actionLabel = item.optString("actionLabel", "Payer")
@@ -503,17 +516,17 @@ data class WidgetSnapshot(
                 WidgetGoalItem(
                     id = goalObj.optString("id", ""),
                     name = goalObj.optString("name", ""),
-                    savedAmount = goalObj.optDouble("savedAmount", 0.0),
-                    targetAmount = goalObj.optDouble("targetAmount", 1.0),
+                    savedAmount = parseJsonMoney(goalObj.opt("savedAmount"), Money.ZERO),
+                    targetAmount = parseJsonMoney(goalObj.opt("targetAmount"), Money.fromDh(1)),
                     progressPercent = goalObj.optInt("progressPercent", 0)
                 )
             } else null
 
             val weekArr = obj.optJSONArray("weekDaysSpend")
             val week = if (weekArr != null && weekArr.length() > 0) {
-                List(7) { idx -> weekArr.optDouble(idx, 0.0) }
+                List(7) { idx -> parseJsonMoney(weekArr.opt(idx), Money.ZERO) }
             } else {
-                List(7) { 0.0 }
+                List(7) { Money.ZERO }
             }
 
             val presetArr = obj.optJSONArray("presets")
@@ -525,7 +538,7 @@ data class WidgetSnapshot(
                         WidgetPresetItem(
                             id = item.optString("id", "p_$i"),
                             name = item.optString("name", "Café"),
-                            amount = item.optDouble("amount", 15.0),
+                            amount = parseJsonMoney(item.opt("amount"), Money.fromDh(15)),
                             envelopeKey = item.optString("envelopeKey", "cafe")
                         )
                     )
@@ -540,7 +553,7 @@ data class WidgetSnapshot(
                     usuals.add(
                         WidgetUsualShortcutItem(
                             desc = item.optString("desc", ""),
-                            amount = item.optDouble("amount", 0.0),
+                            amount = parseJsonMoney(item.opt("amount"), Money.ZERO),
                             envelopeKey = item.optString("envelopeKey", "cafe"),
                             categoryName = item.optString("categoryName", ""),
                             accountId = item.optString("accountId", "acc_cash"),
@@ -550,18 +563,18 @@ data class WidgetSnapshot(
                 }
             }
 
-            val parsedSafeToday = obj.optDouble("safeToSpendToday", 0.0)
+            val parsedSafeToday = parseJsonMoney(obj.opt("safeToSpendToday"), Money.ZERO)
             val parsedDaysRem = obj.optInt("daysRemainingInCycle", 15).coerceAtLeast(1)
-            val parsedSafePool = obj.optDouble("safePool", parsedSafeToday * parsedDaysRem)
+            val parsedSafePool = parseJsonMoney(obj.opt("safePool"), parsedSafeToday * parsedDaysRem.toLong())
 
             return WidgetSnapshot(
                 snapshotDateIso = obj.optString("snapshotDateIso", PayCycleEngine.todayIso()),
-                todaySpend = obj.optDouble("todaySpend", 0.0),
+                todaySpend = parseJsonMoney(obj.opt("todaySpend"), Money.ZERO),
                 safePool = parsedSafePool,
                 safeToSpendToday = parsedSafeToday,
-                remainingBudget = obj.optDouble("remainingBudget", 0.0),
-                cycleExpenses = obj.optDouble("cycleExpenses", 0.0),
-                totalAvailableBudget = obj.optDouble("totalAvailableBudget", 6400.0),
+                remainingBudget = parseJsonMoney(obj.opt("remainingBudget"), Money.ZERO),
+                cycleExpenses = parseJsonMoney(obj.opt("cycleExpenses"), Money.ZERO),
+                totalAvailableBudget = parseJsonMoney(obj.opt("totalAvailableBudget"), Money.fromDh(6400)),
                 daysRemainingInCycle = parsedDaysRem,
                 alertLevel = obj.optString("alertLevel", "NONE"),
                 envelopes = envs,

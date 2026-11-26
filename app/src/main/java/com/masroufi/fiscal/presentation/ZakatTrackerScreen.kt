@@ -56,6 +56,7 @@ import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.ExpressiveAnimatedProgressBar
 import com.example.ui.theme.ExpressiveGlassCard
+import com.masroufi.core.Money
 import com.masroufi.fiscal.domain.FiscalStrings
 import com.masroufi.fiscal.domain.HawlStatus
 import com.masroufi.fiscal.domain.NisabStandard
@@ -70,10 +71,10 @@ import com.masroufi.fiscal.domain.ZakatConfig
  */
 @Composable
 fun ZakatTrackerScreen(
-    accountsTotalMad: Double,
-    savingsTotalMad: Double,
-    shortTermDebtsOwedMad: Double,
-    alreadyReservedMad: Double,
+    accountsTotalMad: Money,
+    savingsTotalMad: Money,
+    shortTermDebtsOwedMad: Money,
+    alreadyReservedMad: Money,
     initialConfig: ZakatConfig,
     language: String,
     currencySymbol: String,
@@ -81,7 +82,7 @@ fun ZakatTrackerScreen(
     isDarkTheme: Boolean,
     onBack: () -> Unit,
     onSaveConfig: (ZakatConfig) -> Unit,
-    onCreateMonthlyReserve: (zakatDueMad: Double, hawlDueIso: String) -> Unit
+    onCreateMonthlyReserve: (zakatDueMad: Money, hawlDueIso: String) -> Unit
 ) {
     BackHandler(onBack = onBack)
 
@@ -89,9 +90,12 @@ fun ZakatTrackerScreen(
     val cur = currencySymbol.ifBlank { "DH" }
     val todayIso = remember { PayCycleEngine.todayIso() }
 
+    fun formatEditableMoney(m: Money): String =
+        if (m.centimes % 100L == 0L) (m.centimes / 100L).toString() else m.toCanonicalDecimalString()
+
     var nisabStandard by remember(initialConfig) { mutableStateOf(initialConfig.nisabStandard) }
-    var goldPriceText by remember(initialConfig) { mutableStateOf(initialConfig.goldPriceMadPerGram.toString()) }
-    var silverPriceText by remember(initialConfig) { mutableStateOf(initialConfig.silverPriceMadPerGram.toString()) }
+    var goldPriceText by remember(initialConfig) { mutableStateOf(formatEditableMoney(initialConfig.goldPriceMadPerGram)) }
+    var silverPriceText by remember(initialConfig) { mutableStateOf(formatEditableMoney(initialConfig.silverPriceMadPerGram)) }
     var pricesAsOfIso by remember(initialConfig) { mutableStateOf(initialConfig.pricesAsOfIso) }
     var hawlStartText by remember(initialConfig) {
         mutableStateOf(initialConfig.hawlStartIso.ifBlank { todayIso })
@@ -99,9 +103,9 @@ fun ZakatTrackerScreen(
 
     val liveConfig = remember(nisabStandard, goldPriceText, silverPriceText, pricesAsOfIso, hawlStartText, initialConfig) {
         val goldParsed = PayCycleEngine.parseFlexibleAmount(goldPriceText)
-            .takeIf { it > 0.0 } ?: initialConfig.goldPriceMadPerGram
+            .takeIf { it.isPositive } ?: initialConfig.goldPriceMadPerGram
         val silverParsed = PayCycleEngine.parseFlexibleAmount(silverPriceText)
-            .takeIf { it > 0.0 } ?: initialConfig.silverPriceMadPerGram
+            .takeIf { it.isPositive } ?: initialConfig.silverPriceMadPerGram
         initialConfig.copy(
             nisabStandard = nisabStandard,
             goldPriceMadPerGram = goldParsed,
@@ -122,7 +126,7 @@ fun ZakatTrackerScreen(
         )
     }
 
-    fun fmt(v: Double): String = "${PayCycleEngine.formatAmountOrMask(v, hideAmounts)} $cur"
+    fun fmt(v: Money): String = "${PayCycleEngine.formatAmountOrMask(v, hideAmounts)} $cur"
 
     val (statusLabel, statusColor) = when (result.status) {
         HawlStatus.BELOW_NISAB -> strings.zakatStatusBelowNisab to MaterialTheme.colorScheme.onSurfaceVariant
@@ -305,7 +309,7 @@ fun ZakatTrackerScreen(
                                 onSaveConfig(liveConfig)
                                 onCreateMonthlyReserve(result.zakatDueMad, result.hawlDueDateIso)
                             },
-                            enabled = result.zakatDueMad > 0.0,
+                            enabled = result.zakatDueMad.isPositive,
                             shape = RoundedCornerShape(16.dp),
                             contentPadding = PaddingValues(vertical = 14.dp),
                             modifier = Modifier
@@ -320,7 +324,7 @@ fun ZakatTrackerScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(strings.zakatSetAsideMonthlyBtn, fontWeight = FontWeight.ExtraBold)
                         }
-                        if (result.zakatDueMad > 0.0) {
+                        if (result.zakatDueMad.isPositive) {
                             Text(
                                 text = strings.zakatSetAsideHintFmt
                                     .replace("{monthly}", fmt(result.monthlyReserveSuggestionMad))

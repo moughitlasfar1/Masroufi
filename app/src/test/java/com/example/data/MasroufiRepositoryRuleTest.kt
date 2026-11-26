@@ -2,6 +2,7 @@ package com.example.data
 
 import com.example.base.FirestoreEmulatorTestBase
 import com.google.firebase.firestore.FirebaseFirestoreException
+import com.masroufi.core.Money
 import java.util.UUID
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -25,7 +26,7 @@ class MasroufiRepositoryRuleTest : FirestoreEmulatorTestBase() {
                     id = uniqueId,
                     userId = aliceUid,
                     type = "expense",
-                    amount = 35.0,
+                    amount = Money.fromDh(35),
                     category = "Café & Sorties",
                     envelopeKey = "cafe",
                     accountId = "acc_cash",
@@ -40,7 +41,7 @@ class MasroufiRepositoryRuleTest : FirestoreEmulatorTestBase() {
         val emitted = withTimeout(FLOW_TIMEOUT_MS) {
             repository.observeTransactions(aliceUid).first { list -> list.any { it.id == uniqueId } }
         }
-        assertTrue(emitted.any { it.id == uniqueId && it.amount == 35.0 })
+        assertTrue(emitted.any { it.id == uniqueId && it.amount == Money.fromDh(35) })
     }
 
     @Test
@@ -55,7 +56,7 @@ class MasroufiRepositoryRuleTest : FirestoreEmulatorTestBase() {
                     id = uniqueId,
                     userId = aliceUid,
                     type = "expense",
-                    amount = 120.0,
+                    amount = Money.fromDh(120),
                     category = "Transport & Carburant",
                     envelopeKey = "transport",
                     accountId = "acc_bank",
@@ -114,7 +115,7 @@ class MasroufiRepositoryRuleTest : FirestoreEmulatorTestBase() {
                     id = uniqueId,
                     userId = aliceUid,
                     type = "transfer",
-                    amount = 250.0,
+                    amount = Money.fromDh(250),
                     category = "Transfert",
                     envelopeKey = "autre",
                     accountId = "acc_bank",
@@ -135,13 +136,13 @@ class MasroufiRepositoryRuleTest : FirestoreEmulatorTestBase() {
         // Update preserving createdAt succeeds under SEC-08 rules
         withTimeout(DEFAULT_TIMEOUT_MS) {
             repository.upsertTransaction(
-                fetched!!.copy(amount = 300.0, desc = "Retrait GAB Mis à jour")
+                fetched!!.copy(amount = Money.fromDh(300), desc = "Retrait GAB Mis à jour")
             )
         }
         val updated = withTimeout(DEFAULT_TIMEOUT_MS) {
             repository.getTransactionById(aliceUid, uniqueId)
         }
-        assertEquals(300.0, updated?.amount ?: 0.0, 0.01)
+        assertEquals(Money.fromDh(300), updated?.amount)
     }
 
     private companion object {

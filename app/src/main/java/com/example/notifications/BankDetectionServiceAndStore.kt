@@ -27,6 +27,8 @@ import com.example.domain.PayCycleEngine
 import com.example.domain.VoiceParsedTransaction
 import com.example.security.SecureStore
 import com.example.widget.MasroufiWidgetStore
+import com.masroufi.core.Money
+import java.math.BigDecimal
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,7 +42,7 @@ import java.util.concurrent.TimeUnit
 
 data class DetectedBankTransaction(
     val id: String,
-    val amount: Double,
+    val amount: Money,
     val currency: String,
     val direction: String, // "expense", "income", or "transfer"
     val merchant: String,
@@ -59,7 +61,8 @@ data class DetectedBankTransaction(
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
-        put("amount", amount)
+        put("amountCentimes", amount.centimes)
+        put("amount", amount.toBigDecimalDh())
         put("currency", currency)
         put("direction", direction)
         put("merchant", merchant)
@@ -79,25 +82,38 @@ data class DetectedBankTransaction(
     }
 
     companion object {
-        fun fromJson(obj: JSONObject): DetectedBankTransaction = DetectedBankTransaction(
-            id = obj.optString("id", "det_${System.currentTimeMillis()}"),
-            amount = obj.optDouble("amount", 0.0),
-            currency = obj.optString("currency", "DH"),
-            direction = obj.optString("direction", "expense"),
-            merchant = obj.optString("merchant", ""),
-            isoDate = obj.optString("isoDate", PayCycleEngine.todayIso()),
-            sourcePackage = obj.optString("sourcePackage", "generic"),
-            sourceAppLabel = obj.optString("sourceAppLabel", "Banque"),
-            dedupeHash = obj.optString("dedupeHash", ""),
-            confidence = obj.optDouble("confidence", 0.8),
-            needsReview = obj.optBoolean("needsReview", false),
-            suggestedEnvelopeKey = obj.optString("suggestedEnvelopeKey", "autre"),
-            suggestedCategoryName = obj.optString("suggestedCategoryName", "Autre"),
-            maskedSamplePreview = "",
-            possibleDuplicateTxId = obj.optString("possibleDuplicateTxId", ""),
-            createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis()),
-            senderTrustKey = obj.optString("senderTrustKey", "")
-        )
+        fun fromJson(obj: JSONObject): DetectedBankTransaction {
+            val parsedAmount = if (obj.has("amountCentimes") && !obj.isNull("amountCentimes")) {
+                Money.fromCentimes(obj.optLong("amountCentimes", 0L))
+            } else {
+                when (val raw = obj.opt("amount")) {
+                    is BigDecimal -> runCatching { Money.fromMajorUnits(raw) }.getOrDefault(Money.ZERO)
+                    is Number -> runCatching { Money.fromMajorUnits(BigDecimal(raw.toString())) }
+                        .getOrElse { runCatching { Money.fromLegacyDoubleDh(raw.toDouble()) }.getOrDefault(Money.ZERO) }
+                    is String -> Money.fromDhString(raw) ?: Money.ZERO
+                    else -> Money.ZERO
+                }
+            }
+            return DetectedBankTransaction(
+                id = obj.optString("id", "det_${System.currentTimeMillis()}"),
+                amount = parsedAmount,
+                currency = obj.optString("currency", "DH"),
+                direction = obj.optString("direction", "expense"),
+                merchant = obj.optString("merchant", ""),
+                isoDate = obj.optString("isoDate", PayCycleEngine.todayIso()),
+                sourcePackage = obj.optString("sourcePackage", "generic"),
+                sourceAppLabel = obj.optString("sourceAppLabel", "Banque"),
+                dedupeHash = obj.optString("dedupeHash", ""),
+                confidence = obj.optDouble("confidence", 0.8),
+                needsReview = obj.optBoolean("needsReview", false),
+                suggestedEnvelopeKey = obj.optString("suggestedEnvelopeKey", "autre"),
+                suggestedCategoryName = obj.optString("suggestedCategoryName", "Autre"),
+                maskedSamplePreview = "",
+                possibleDuplicateTxId = obj.optString("possibleDuplicateTxId", ""),
+                createdAtMillis = obj.optLong("createdAtMillis", System.currentTimeMillis()),
+                senderTrustKey = obj.optString("senderTrustKey", "")
+            )
+        }
     }
 }
 
@@ -139,6 +155,7 @@ object BankDetectionStore {
     private const val KEY_IGNORED_MERCHANTS = "ignored_merchants_set"
     private const val KEY_AUTO_CONFIRM_ENABLED = "auto_confirm_enabled"
     private const val KEY_AUTO_CONFIRM_CAP = "auto_confirm_max_cap"
+    private const val KEY_AUTO_CONFIRM_CAP_CENTIMES = "auto_confirm_max_cap_centimes"
 
     // S4: SecureStore keys for sensitive bank-detection queues and hashes
     private const val SECURE_KEY_PENDING = "bank_detect_pending_json_v1"
@@ -215,11 +232,25 @@ object BankDetectionStore {
         prefs(context).edit().putBoolean(KEY_AUTO_CONFIRM_ENABLED, enabled).apply()
     }
 
-    fun getAutoConfirmMaxAmount(context: Context): Double =
-        prefs(context).getFloat(KEY_AUTO_CONFIRM_CAP, 200f).toDouble()
+    fun getAutoConfirmMaxAmount(context: Context): Money {
+        val p = prefs(context)
+        if (p.contains(KEY_AUTO_CONFIRM_CAP_CENTIMES)) {
+            return Money.fromCentimes(p.getLong(KEY_AUTO_CONFIRM_CAP_CENTIMES, 20_000L))
+        }
+        if (p.contains(KEY_AUTO_CONFIRM_CAP)) {
+            return runCatching {
+                Money.fromLegacyDoubleDh(p.getFloat(KEY_AUTO_CONFIRM_CAP, 200f).toDouble())
+            }.getOrDefault(Money.fromDh(200))
+        }
+        return Money.fromDh(200)
+    }
 
-    fun setAutoConfirmMaxAmount(context: Context, maxAmount: Double) {
-        prefs(context).edit().putFloat(KEY_AUTO_CONFIRM_CAP, maxAmount.toFloat().coerceAtLeast(10f)).apply()
+    fun setAutoConfirmMaxAmount(context: Context, maxAmount: Money) {
+        val clamped = maxAmount.coerceAtLeast(Money.fromDh(10))
+        prefs(context).edit()
+            .putLong(KEY_AUTO_CONFIRM_CAP_CENTIMES, clamped.centimes)
+            .remove(KEY_AUTO_CONFIRM_CAP)
+            .apply()
     }
 
     fun getIgnoredMerchants(context: Context): Set<String> = synchronized(storeLock) {
@@ -701,7 +732,7 @@ object BankDetectionStore {
             context = context,
             items = listOf(
                 VoiceParsedTransaction(
-                    rawTranscript = "$baseLabel ${item.amount}",
+                    rawTranscript = "$baseLabel ${item.amount.toCanonicalDecimalString()}",
                     amount = item.amount,
                     description = descText,
                     envelopeKey = if (item.direction == "transfer") "autre" else item.suggestedEnvelopeKey,

@@ -79,10 +79,12 @@ import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.AccentSkyBlue
 import com.example.ui.theme.ExpressiveGlassCard
 import com.example.ui.theme.ExpressiveGlassSurface
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
+import com.masroufi.core.sumMoney
 import java.util.Calendar
 import java.util.Locale
 import java.util.TimeZone
-import kotlin.math.abs
 
 data class RecentCategoryShortcut(
     val envelopeKey: String,
@@ -91,7 +93,7 @@ data class RecentCategoryShortcut(
 
 data class UsualSpendShortcut(
     val desc: String,
-    val amount: Double,
+    val amount: Money,
     val envelopeKey: String,
     val accountId: String = "acc_cash",
     val categoryName: String = "",
@@ -100,7 +102,7 @@ data class UsualSpendShortcut(
     val latestIsoDate: String = ""
 ) {
     val description: String get() = desc
-    val typicalAmount: Double get() = amount
+    val typicalAmount: Money get() = amount
     val matchCount: Int get() = occurrences
 }
 
@@ -129,7 +131,7 @@ fun computeTimeAwareShortcuts(
     nowHour: Int,
     isWeekend: Boolean,
     nowIso: String = PayCycleEngine.todayIso(),
-    editedAmountOverrides: Map<String, Double> = emptyMap(),
+    editedAmountOverrides: Map<String, Money> = emptyMap(),
     minMatchesForChip: Int = 4,
     minTransactionsForWarmStart: Int = 15
 ): List<UsualSpendShortcut> {
@@ -146,7 +148,7 @@ fun computeTimeAwareShortcuts(
     )
 
     val eligible = state.allTransactions.mapNotNull { tx ->
-        if (tx.type != "expense" || tx.amount <= 0.0 || tx.isoDate.isBlank()) return@mapNotNull null
+        if (tx.type != "expense" || !tx.amount.isPositive || tx.isoDate.isBlank()) return@mapNotNull null
         val txEpoch = PayCycleEngine.parseEpochDays(tx.isoDate)
         val ageDays = (nowEpoch - txEpoch).toInt()
         if (ageDays !in 0..90) return@mapNotNull null
@@ -187,14 +189,14 @@ fun computeTimeAwareShortcuts(
             latestTx.localizedCategory(lang, envConfigs)
         }
 
-        // Typical amount: learned 3-edit override if present, otherwise mode of rounded amounts tie-broken by recency
-        val amountGroups = sortedByRecent.groupBy { PayCycleEngine.roundMoney(it.tx.amount) }
+        // Typical amount: learned 3-edit override if present, otherwise mode of exact centime amounts tie-broken by recency
+        val amountGroups = sortedByRecent.groupBy { it.tx.amount }
         val modeAmt = amountGroups.entries.sortedWith(
-            compareByDescending<Map.Entry<Double, List<TxWithContext>>> { it.value.size }
+            compareByDescending<Map.Entry<Money, List<TxWithContext>>> { it.value.size }
                 .thenBy { it.value.minOf { ctx -> ctx.ageDays } }
                 .thenByDescending { it.value.first().tx.id }
         ).first().key
-        val typicalAmt = editedAmountOverrides[descKey]?.takeIf { it > 0.0 } ?: modeAmt
+        val typicalAmt = editedAmountOverrides[descKey]?.takeIf { it.isPositive } ?: modeAmt
 
         var totalScore = 0.0
         for (ctx in items) {
@@ -242,7 +244,7 @@ fun computeTimeAwareShortcuts(
     currentHour: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
     minTransactionsForWarmStart: Int = 15,
     minMatchesForChip: Int = 4,
-    editedAmountOverrides: Map<String, Double> = emptyMap()
+    editedAmountOverrides: Map<String, Money> = emptyMap()
 ): List<UsualSpendShortcut> = computeTimeAwareShortcuts(
     state = state,
     nowHour = currentHour,
@@ -526,15 +528,16 @@ fun VoiceDarijaEntrySection(
  * Evaluates simple keypad calculator expressions such as "12+8" or "45.5+14,5" into their sum (60.0),
  * falling back to [PayCycleEngine.parseFlexibleAmount] for plain numbers.
  */
-fun evaluateKeypadExpression(raw: String): Double {
+fun evaluateKeypadExpression(raw: String): Money {
     val cleaned = raw.trim()
-    if (cleaned.isEmpty()) return 0.0
+    if (cleaned.isEmpty()) return Money.ZERO
     if (cleaned.contains("+")) {
         return cleaned
             .split("+")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .sumOf { PayCycleEngine.parseFlexibleAmount(it) }
+            .map { PayCycleEngine.parseFlexibleAmount(it) }
+            .sumMoney()
     }
     return PayCycleEngine.parseFlexibleAmount(cleaned)
 }
@@ -553,9 +556,9 @@ fun LargeNumericKeypadSection(
     onSelectCategoryShortcut: (RecentCategoryShortcut, Boolean) -> Unit,
     onVoiceMicClick: (() -> Unit)? = null,
     txType: String = "expense",
-    effectiveExpenseAmount: Double? = null,
+    effectiveExpenseAmount: Money? = null,
     baseCurrencySymbol: String = currencySymbol,
-    safePool: Double = 0.0,
+    safePool: Money = Money.ZERO,
     daysRemaining: Int = 30,
     selectedEnvelopeStatus: EnvelopeStatus? = null,
     hideAmounts: Boolean = false,
@@ -572,11 +575,11 @@ fun LargeNumericKeypadSection(
     val showTimeAwareRow = smartSuggestionsEnabled && txType == "expense" && isAmountEmpty && timeAwareShortcuts.isNotEmpty() && onSelectTimeAwareShortcut != null
     var whyThisShortcut by remember { mutableStateOf<TimeAwareShortcut?>(null) }
 
-    fun formatEvaluatedValue(v: Double): String {
-        return if (v % 1.0 == 0.0) {
-            v.toInt().toString()
+    fun formatEvaluatedValue(v: Money): String {
+        return if (v.centimes % 100L == 0L) {
+            (v.centimes / 100L).toString()
         } else {
-            String.format(Locale.US, "%.2f", v)
+            v.toCanonicalDecimalString()
         }
     }
 
@@ -588,7 +591,7 @@ fun LargeNumericKeypadSection(
             "⌫" -> if (current.isNotEmpty()) onAmountChange(current.dropLast(1))
             "=" -> {
                 val evaluated = evaluateKeypadExpression(current)
-                if (evaluated > 0.0) {
+                if (evaluated.isPositive) {
                     onAmountChange(formatEvaluatedValue(evaluated))
                 }
             }
@@ -615,7 +618,7 @@ fun LargeNumericKeypadSection(
     fun addQuickIncrement(delta: Int) {
         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         val currentVal = evaluateKeypadExpression(amountText)
-        val nextVal = currentVal + delta
+        val nextVal = currentVal + Money.fromDh(delta.toLong())
         onAmountChange(formatEvaluatedValue(nextVal))
     }
 
@@ -706,7 +709,7 @@ fun LargeNumericKeypadSection(
                     }
 
                     // Feature 1: Live "Can I afford this?" colour-coded line under the amount (expenses only)
-                    if (smartSuggestionsEnabled && txType == "expense" && parsedExpenseAmount > 0.0) {
+                    if (smartSuggestionsEnabled && txType == "expense" && parsedExpenseAmount.isPositive) {
                         val impact = PayCycleEngine.computePurchaseImpact(
                             amount = parsedExpenseAmount,
                             safePool = safePool,
@@ -1031,13 +1034,13 @@ fun LargeNumericKeypadSection(
 fun QuickOnboarding30sSheet(
     state: DashboardState,
     onDismiss: () -> Unit,
-    onCompleteOnboarding: (Double, Int, List<Triple<String, Double, String>>) -> Unit
+    onCompleteOnboarding: (Money, Int, List<Triple<String, Double, String>>) -> Unit
 ) {
     val lang = state.profile.language
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
 
     var salaryText by remember {
-        mutableStateOf(state.profile.baseBudget.safeRoundToInt().toString())
+        mutableStateOf(state.profile.baseBudget.formatDhRounded(useGrouping = false))
     }
     var payDayText by remember {
         mutableStateOf(state.profile.payCycleDay.toString())
@@ -1307,7 +1310,7 @@ fun QuickOnboarding30sSheet(
 
             Button(
                 onClick = {
-                    val sal = salaryText.replace(",", ".").toDoubleOrNull() ?: 6400.0
+                    val sal = MoneyParser.parseMoroccanAmountToCentimes(salaryText)?.let { Money.fromCentimes(it) }?.takeIf { it.isPositive } ?: Money.fromDh(6400)
                     val day = (payDayText.toIntOrNull() ?: 1).coerceIn(1, 28)
                     val p1 = (env1Pct.replace(",", ".").toDoubleOrNull() ?: 50.0).coerceIn(5.0, 90.0)
                     val p2 = (env2Pct.replace(",", ".").toDoubleOrNull() ?: 30.0).coerceIn(5.0, 90.0)
@@ -1349,7 +1352,7 @@ fun SplitBillToSellefSheet(
     onDismiss: () -> Unit,
     onSplitBill: (
         billTitle: String,
-        totalAmount: Double,
+        totalAmount: Money,
         friendsNamesCsv: String,
         includeSelf: Boolean,
         recordFullExpenseNow: Boolean
@@ -1368,9 +1371,9 @@ fun SplitBillToSellefSheet(
     val parsedFriends = remember(friendsCsv) {
         friendsCsv.split(",", ";", "\n").map { it.trim() }.filter { it.isNotBlank() }.distinct()
     }
-    val totalVal = totalAmountText.replace(",", ".").toDoubleOrNull() ?: 0.0
+    val totalVal = MoneyParser.parseMoroccanAmountToCentimes(totalAmountText)?.let { Money.fromCentimes(it) } ?: Money.ZERO
     val divisor = (if (includeSelf) parsedFriends.size + 1 else parsedFriends.size).coerceAtLeast(1)
-    val perPerson = if (totalVal > 0.0) totalVal / divisor else 0.0
+    val perPerson = if (totalVal.isPositive) totalVal.divideBy(divisor.toLong()) else Money.ZERO
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1529,7 +1532,7 @@ fun SplitBillToSellefSheet(
 
             Button(
                 onClick = {
-                    if (totalVal > 0.0 && parsedFriends.isNotEmpty()) {
+                    if (totalVal.isPositive && parsedFriends.isNotEmpty()) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onSplitBill(
                             billTitle,

@@ -11,6 +11,8 @@ import com.example.data.local.RoomMasroufiRepository
 import com.example.data.local.TransactionEntity
 import com.example.domain.PayCycleEngine
 import com.example.security.DatabaseKeyManager
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.system.measureNanoTime
@@ -26,15 +28,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
-/**
- * Phase 0 (Step 0.1) — Baseline Performance Harness (5,000 transactions across 12 months).
- *
- * Measures and logs three core timings on v1.2.1 without brittle ms assertions:
- * 1. Bulk insert of 5,000 realistic Moroccan transactions into Room.
- * 2. Full history query (ordered DESC) + Room-entity-to-domain mapping via RoomMasroufiRepository.
- * 3. Typical PayCycleEngine dashboard computation (cycle window, account balances, envelopes with
- *    rollover, overspend projection, and recurring subscription detection) over all 5,000 rows.
- */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class Phase0BaselinePerfTest {
@@ -76,11 +69,11 @@ class Phase0BaselinePerfTest {
             userIdProvider = { testUserId }
         )
 
-        val nowMs = 1_795_564_800_000L // deterministic baseline timestamp (2026-11-25)
+        val nowMs = 1_795_564_800_000L
         val accounts = listOf(
-            AccountItem(id = "acc_cash", userId = testUserId, name = "Espèces (Cash)", kind = "cash", initialBalance = 2500.0),
-            AccountItem(id = "acc_bank", userId = testUserId, name = "CIH Bank", kind = "bank", initialBalance = 18000.0),
-            AccountItem(id = "acc_wallet", userId = testUserId, name = "Portefeuille Mobile", kind = "wallet", initialBalance = 900.0)
+            AccountItem(id = "acc_cash", userId = testUserId, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.fromDh(2500)),
+            AccountItem(id = "acc_bank", userId = testUserId, name = "CIH Bank", kind = "bank", initialBalance = Money.fromDh(18000)),
+            AccountItem(id = "acc_wallet", userId = testUserId, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.fromDh(900))
         )
         val envelopes = listOf(
             EnvelopeConfig(id = "env_transport", userId = testUserId, key = "transport", nameFr = "Transport", percentage = 20.0, hasCap = true),
@@ -101,24 +94,21 @@ class Phase0BaselinePerfTest {
         )
         assertEquals(5_000, seedEntities.size)
 
-        // 1. Measure bulk insert time (Room @Insert upsertTransactions)
         val bulkInsertNs = measureNanoTime {
             dao.upsertTransactions(seedEntities)
         }
         val persistedCount = dao.countTransactions(testUserId)
         assertEquals("All 5,000 transactions must be persisted", 5_000, persistedCount)
 
-        // 2. Measure full history query (ORDER BY isoDate DESC, createdAtEpochMs DESC) + entity-to-domain mapping
         var domainTransactions = emptyList<com.example.data.TransactionItem>()
         val queryAndMapNs = measureNanoTime {
             domainTransactions = repo.observeTransactions(testUserId).first()
         }
         assertEquals("Full history query must return 5,000 mapped domain transactions", 5_000, domainTransactions.size)
 
-        // 3. Measure typical PayCycleEngine dashboard computation over all 5,000 transactions
         var balancesCount = 0
         var envelopesCount = 0
-        var currentCycleSpend = 0.0
+        var currentCycleSpend = Money.ZERO
         var recurringCount = 0
         val engineNs = measureNanoTime {
             val currentWindow = PayCycleEngine.computeWindow(
@@ -134,7 +124,7 @@ class Phase0BaselinePerfTest {
             val balances = PayCycleEngine.computeAccountBalances(accounts, domainTransactions)
             val computedEnvelopes = PayCycleEngine.computeEnvelopes(
                 envelopes = envelopes,
-                baseBudget = 12_000.0,
+                baseBudget = Money.fromDh(12_000),
                 rolloverEnabled = true,
                 currentWindow = currentWindow,
                 previousWindow = previousWindow,
@@ -146,12 +136,12 @@ class Phase0BaselinePerfTest {
                     it.isoDate >= currentWindow.startIso &&
                     it.isoDate <= "2026-11-25"
             }
-            val spentSoFar = cycleTxs.sumOf { it.amount }
+            val spentSoFar = cycleTxs.sumMoney { it.amount }
             PayCycleEngine.computeOverspendProjection(
                 window = currentWindow,
-                totalAvailableBudget = 12_000.0,
+                totalAvailableBudget = Money.fromDh(12_000),
                 spentSoFar = spentSoFar,
-                scheduledBills = 1_250.0,
+                scheduledBills = Money.fromDh(1_250),
                 pastOrTodayCycleTransactions = cycleTxs,
                 bills = emptyList()
             )
@@ -167,17 +157,17 @@ class Phase0BaselinePerfTest {
         val engineMs = engineNs / 1_000_000.0
         val totalMs = bulkInsertMs + queryAndMapMs + engineMs
 
-        println("=== PHASE 0 BASELINE PERF (5,000 transactions / 12 months) ===")
+        println("=== PHASE 2 BASELINE PERF (5,000 transactions / 12 months, Money centimes) ===")
         println(String.format("Bulk insert (5,000 rows):             %.2f ms", bulkInsertMs))
         println(String.format("Full query + domain mapping (5,000):  %.2f ms", queryAndMapMs))
         println(String.format("PayCycleEngine compute (5,000 rows):  %.2f ms", engineMs))
         println(String.format("Total harness time:                   %.2f ms", totalMs))
-        println("Sanity -> count=$persistedCount, balances=$balancesCount, envelopes=$envelopesCount, cycleSpend=${String.format("%.2f", currentCycleSpend)} DH, recurringDetected=$recurringCount")
-        println("==============================================================")
+        println("Sanity -> count=$persistedCount, balances=$balancesCount, envelopes=$envelopesCount, cycleSpend=${currentCycleSpend.toCanonicalDecimalString()} DH, recurringDetected=$recurringCount")
+        println("============================================================================")
 
         assertEquals(3, balancesCount)
         assertEquals(5, envelopesCount)
-        assertTrue("Current cycle spend must be positive", currentCycleSpend > 0.0)
+        assertTrue("Current cycle spend must be positive", currentCycleSpend.isPositive)
     }
 
     private fun buildDeterministicTransactions(
@@ -211,12 +201,11 @@ class Phase0BaselinePerfTest {
             val ts = baseEpochMs - (daysAgo * 86_400_000L) - ((index % 1000) * 1_000L)
 
             when {
-                // Realistic monthly recurring subscription (12th of each month)
                 index < 12 -> TransactionEntity(
                     id = "tx_perf_sub_$index",
                     userId = userId,
                     type = "expense",
-                    amount = 95.0,
+                    amountCentimes = 9_500L,
                     category = "Charges & Marché",
                     envelopeKey = "charges",
                     accountId = "acc_bank",
@@ -227,12 +216,11 @@ class Phase0BaselinePerfTest {
                     createdAtEpochMs = ts,
                     updatedAtEpochMs = ts
                 )
-                // ~7% incomes (salary / freelance / bonus)
                 index % 15 == 0 -> TransactionEntity(
                     id = "tx_perf_$index",
                     userId = userId,
                     type = "income",
-                    amount = 2_500.0 + ((index % 7) * 450.0),
+                    amountCentimes = 250_000L + ((index % 7).toLong() * 45_000L),
                     category = "Revenu",
                     envelopeKey = "autre",
                     accountId = "acc_bank",
@@ -243,12 +231,11 @@ class Phase0BaselinePerfTest {
                     createdAtEpochMs = ts,
                     updatedAtEpochMs = ts
                 )
-                // ~5% bank-to-cash ATM transfers
                 index % 20 == 1 -> TransactionEntity(
                     id = "tx_perf_$index",
                     userId = userId,
                     type = "transfer",
-                    amount = 300.0 + ((index % 4) * 100.0),
+                    amountCentimes = 30_000L + ((index % 4).toLong() * 10_000L),
                     category = "Transfert",
                     envelopeKey = "autre",
                     accountId = "acc_bank",
@@ -259,15 +246,14 @@ class Phase0BaselinePerfTest {
                     createdAtEpochMs = ts,
                     updatedAtEpochMs = ts
                 )
-                // ~88% everyday expenses
                 else -> {
                     val (merchant, envKey, categoryName) = merchantCatalog[index % merchantCatalog.size]
-                    val amount = 12.0 + ((index * 37) % 420) + ((index % 4) * 0.25)
+                    val amountCentimes = 1_200L + (((index * 37) % 420).toLong() * 100L) + ((index % 4).toLong() * 25L)
                     TransactionEntity(
                         id = "tx_perf_$index",
                         userId = userId,
                         type = "expense",
-                        amount = amount,
+                        amountCentimes = amountCentimes,
                         category = categoryName,
                         envelopeKey = envKey,
                         accountId = accountIds[index % accountIds.size],

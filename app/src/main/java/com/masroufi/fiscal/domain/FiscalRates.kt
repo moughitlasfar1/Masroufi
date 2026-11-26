@@ -1,5 +1,7 @@
 package com.masroufi.fiscal.domain
 
+import com.masroufi.core.Money
+
 /**
  * Centralized Moroccan fiscal & Zakat reference values.
  *
@@ -47,14 +49,14 @@ object FiscalRates {
      * Returns the starter annual Vignette (TSAVA) amount in MAD, or `null` when the band is marked
      * `TODO` and requires manual user entry verified against DGI.
      */
-    fun vignetteAnnualAmountMad(band: HorsepowerBand, fuel: FuelType): Double? = when (band) {
+    fun vignetteAnnualAmountMad(band: HorsepowerBand, fuel: FuelType): Money? = when (band) {
         HorsepowerBand.UNDER_8_CV -> when (fuel) {
-            FuelType.ESSENCE -> 350.0
-            FuelType.DIESEL -> 700.0
+            FuelType.ESSENCE -> Money.fromDh(350)
+            FuelType.DIESEL -> Money.fromDh(700)
         }
         HorsepowerBand.CV_8_TO_10 -> when (fuel) {
-            FuelType.ESSENCE -> 650.0
-            FuelType.DIESEL -> 1_500.0
+            FuelType.ESSENCE -> Money.fromDh(650)
+            FuelType.DIESEL -> Money.fromDh(1_500)
         }
         // TODO(DGI): Do not invent rates for 11–14 CV; require manual user override until verified.
         HorsepowerBand.CV_11_TO_14 -> null
@@ -79,13 +81,13 @@ object FiscalRates {
      * Starter offline placeholder for gold price (MAD per gram).
      * Placeholder to verify locally — user edits directly in the Zakat screen.
      */
-    const val DEFAULT_GOLD_PRICE_MAD_PER_GRAM: Double = 900.0
+    val DEFAULT_GOLD_PRICE_MAD_PER_GRAM: Money = Money.fromDh(900)
 
     /**
      * Starter offline placeholder for silver price (MAD per gram).
      * Placeholder to verify locally — user edits directly in the Zakat screen.
      */
-    const val DEFAULT_SILVER_PRICE_MAD_PER_GRAM: Double = 11.0
+    val DEFAULT_SILVER_PRICE_MAD_PER_GRAM: Money = Money.fromDh(11)
 
     /** Effective "as of" date for the starter metal price placeholders. */
     const val DEFAULT_METAL_PRICES_AS_OF_ISO: String = "2026-01-01"

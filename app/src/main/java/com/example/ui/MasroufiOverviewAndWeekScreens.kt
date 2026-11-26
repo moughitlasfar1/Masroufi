@@ -80,6 +80,7 @@ import com.example.ui.theme.categoryVisualStyle
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
 import com.example.ui.theme.semanticWarningColor
+import com.masroufi.core.Money
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -153,7 +154,7 @@ internal fun computeHeroContextualStatusLine(
 ): String {
     val lang = state.profile.language
     val hide = state.hideAmounts
-    fun fmt(v: Double): String = PayCycleEngine.formatAmountOrMask(v, hide)
+    fun fmt(v: Money): String = PayCycleEngine.formatAmountOrMask(v, hide)
 
     if (state.cycleTransactions.isEmpty()) {
         return when (lang) {
@@ -166,7 +167,7 @@ internal fun computeHeroContextualStatusLine(
 
     val overEnvelope = state.envelopes.firstOrNull { it.usagePercent > 100 }
         ?: state.envelopes.maxByOrNull { it.usagePercent }?.takeIf { it.isOver90Percent || it.usagePercent >= 90 }
-    if (state.remainingBudget < 0 || overEnvelope != null) {
+    if (state.remainingBudget.isNegative || overEnvelope != null) {
         val catName = overEnvelope?.config?.localizedName(lang) ?: when (lang) {
             "ar" -> "الميزانية"
             "darija" -> "الميزانية"
@@ -247,7 +248,7 @@ fun OverviewScreen(
     val lang = state.profile.language
     val isDark = state.profile.isDarkTheme
     val hide = state.hideAmounts
-    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
+    fun fmt(value: Money): String = PayCycleEngine.formatAmountOrMask(value, hide)
     var expandedHomeSection by rememberSaveable { mutableStateOf<String?>(null) }
 
     val recentThree = remember(state.cycleTransactions) {
@@ -271,7 +272,7 @@ fun OverviewScreen(
 
     val topThreeCategories = remember(state.envelopes) {
         state.envelopes
-            .filter { it.spent > 0.0 }
+            .filter { it.spent.isPositive }
             .sortedByDescending { it.spent }
             .take(3)
     }
@@ -374,7 +375,7 @@ fun OverviewScreen(
 
         // 2. Single Contextual Line under the Hero
         item(key = "hero_contextual_status") {
-            val isAlert = state.remainingBudget < 0
+            val isAlert = state.remainingBudget.isNegative
             val stripColor = if (isAlert) semanticWarningColor(isDark) else MaterialTheme.colorScheme.primary
             Surface(
                 shape = MasroufiTokens.Shapes.innerTile,
@@ -474,14 +475,14 @@ fun OverviewScreen(
                 CompactKpiTile(
                     label = strings.remainingLabel,
                     amountText = "${fmt(netSavings)} $cur",
-                    amountColor = if (netSavings >= 0.0) semanticIncomeColor(isDark) else semanticExpenseColor(isDark),
+                    amountColor = if (netSavings >= Money.ZERO) semanticIncomeColor(isDark) else semanticExpenseColor(isDark),
                     modifier = Modifier.weight(1f)
                 )
             }
         }
 
         // 4. Mini Weekly Chart + Top 3 Categories (Tesler's Law single-open accordion, collapsed by default)
-        if (state.customPrefs.showWeekSummaryRow && (state.weekTotalSpend > 0.0 || topThreeCategories.isNotEmpty())) {
+        if (state.customPrefs.showWeekSummaryRow && (state.weekTotalSpend.isPositive || topThreeCategories.isNotEmpty())) {
             item(key = "home_mini_weekly_and_top_categories") {
                 val topCatSubtitle = topThreeCategories.firstOrNull()?.let { top ->
                     "${top.config.localizedName(lang)} · ${top.usagePercent}%"
@@ -500,7 +501,7 @@ fun OverviewScreen(
                     headerTestTag = "accordion_home_week_preview",
                     modifier = Modifier.testTag("home_mini_week_and_top_categories_card")
                 ) {
-                    val maxDay = (state.weekDaysSpend.maxOrNull() ?: 1.0).coerceAtLeast(1.0)
+                    val maxDay = (state.weekDaysSpend.maxOrNull() ?: Money.fromDh(1L)).coerceAtLeast(Money.fromDh(1L))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -509,7 +510,7 @@ fun OverviewScreen(
                         verticalAlignment = Alignment.Bottom
                     ) {
                         state.weekDaysSpend.forEachIndexed { idx, dayVal ->
-                            val ratio = (dayVal / maxDay).toFloat().safeFraction(0.10f, 1f)
+                            val ratio = (dayVal.centimes.toDouble() / maxDay.centimes.toDouble()).toFloat().safeFraction(0.10f, 1f)
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
@@ -523,7 +524,7 @@ fun OverviewScreen(
                                         .fillMaxHeight(ratio * 0.68f)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(
-                                            if (dayVal > 0.0) MaterialTheme.colorScheme.primary
+                                            if (dayVal.isPositive) MaterialTheme.colorScheme.primary
                                             else MaterialTheme.colorScheme.surfaceContainerHighest
                                         )
                                 )
@@ -545,10 +546,10 @@ fun OverviewScreen(
                             topThreeCategories.forEach { envStatus ->
                                 val catName = envStatus.config.localizedName(lang)
                                 val visual = categoryVisualStyle("${envStatus.config.key} $catName", isDark)
-                                val progress = if (envStatus.totalAvailable > 0.0) {
-                                    (envStatus.spent / envStatus.totalAvailable).toFloat().safeFraction(0f, 1f)
+                                val progress = if (envStatus.totalAvailable.isPositive) {
+                                    (envStatus.spent.centimes.toDouble() / envStatus.totalAvailable.centimes.toDouble()).toFloat().safeFraction(0f, 1f)
                                 } else {
-                                    (envStatus.spent / state.cycleExpenses.coerceAtLeast(1.0)).toFloat().safeFraction(0f, 1f)
+                                    (envStatus.spent.centimes.toDouble() / state.cycleExpenses.coerceAtLeast(Money.fromDh(1L)).centimes.toDouble()).toFloat().safeFraction(0f, 1f)
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -699,7 +700,7 @@ fun InsightsScreen(
     onOpenNewSeasonal: (FinancialItem?) -> Unit,
     onDeleteItem: (String) -> Unit,
     onShiftCycle: (Int) -> Unit = {},
-    onQuickCreateSeasonalTemplate: (String, Double, String) -> Unit = { _, _, _ -> },
+    onQuickCreateSeasonalTemplate: (String, Money, String) -> Unit = { _, _, _ -> },
     onConvertSubscriptionToBill: (DetectedSubscription) -> Unit = {},
     onDismissDetectedSubscription: (DetectedSubscription) -> Unit = {},
     onShareText: (String) -> Unit = {}
@@ -792,9 +793,9 @@ fun WeekScreen(
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val hide = state.hideAmounts
     val haptics = LocalHapticFeedback.current
-    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
-    val rawSpentMax = state.weekDaysSpend.maxOrNull() ?: 0.0
-    val rawFutureMax = state.weekDaysFutureSpend.maxOrNull() ?: 0.0
+    fun fmt(value: Money): String = PayCycleEngine.formatAmountOrMask(value, hide)
+    val rawSpentMax = (state.weekDaysSpend.maxOfOrNull { it.centimes } ?: 0L) / 100.0
+    val rawFutureMax = (state.weekDaysFutureSpend.maxOfOrNull { it.centimes } ?: 0L) / 100.0
     val rawMax = max(100.0, max(rawSpentMax, rawFutureMax))
     val maxVal = if (rawMax.isNaN() || rawMax.isInfinite()) 100.0 else max(100.0, rawMax)
     val step = listOf(50, 100, 200, 250, 500, 1000, 2000, 5000).firstOrNull { it * 4 >= maxVal }
@@ -805,7 +806,7 @@ fun WeekScreen(
     val lang = state.profile.language
     val isDark = state.profile.isDarkTheme
     val topCategories = remember(state.envelopes) {
-        state.envelopes.filter { it.spent > 0.0 }.sortedByDescending { it.spent }.take(5)
+        state.envelopes.filter { it.spent.isPositive }.sortedByDescending { it.spent }.take(5)
     }
 
     LazyColumn(
@@ -923,7 +924,7 @@ fun WeekScreen(
             ) {
                 if (selectedBarIndex in 0..6) {
                     val selectedDayLabel = strings.daysFull.getOrElse(selectedBarIndex) { "" }
-                    val selectedDayAmount = state.weekDaysSpend.getOrElse(selectedBarIndex) { 0.0 }
+                    val selectedDayAmount = state.weekDaysSpend.getOrElse(selectedBarIndex) { Money.ZERO }
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.primaryContainer,
@@ -972,16 +973,16 @@ fun WeekScreen(
                             verticalAlignment = Alignment.Bottom
                         ) {
                             state.weekDaysSpend.forEachIndexed { idx, value ->
-                                val futureVal = state.weekDaysFutureSpend.getOrElse(idx) { 0.0 }
-                                val isFutureOutlined = value <= 0.0 && futureVal > 0.0
+                                val futureVal = state.weekDaysFutureSpend.getOrElse(idx) { Money.ZERO }
+                                val isFutureOutlined = !value.isPositive && futureVal.isPositive
                                 val displayVal = if (isFutureOutlined) futureVal else value
-                                val rawRatio = (displayVal / ceilVal).toFloat().safeFraction(0.05f, 1f)
+                                val rawRatio = ((displayVal.centimes / 100.0) / ceilVal).toFloat().safeFraction(0.05f, 1f)
                                 val animatedRatio by animateFloatAsState(
                                     targetValue = rawRatio,
                                     animationSpec = ExpressiveMotion.fluidSpring(),
                                     label = "week_bar_$idx"
                                 )
-                                val isPeak = idx == state.mostExpensiveDayIndex && value > 0
+                                val isPeak = idx == state.mostExpensiveDayIndex && value.isPositive
                                 val isSelected = idx == selectedBarIndex
                                 val barShape = RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 5.dp, bottomEnd = 5.dp)
                                 Column(
@@ -996,9 +997,9 @@ fun WeekScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Bottom
                                 ) {
-                                    if (displayVal > 0) {
+                                    if (displayVal.isPositive) {
                                         Text(
-                                            text = if (hide) "••" else displayVal.safeRoundToInt().toString(),
+                                            text = if (hide) "••" else displayVal.formatDhRounded(useGrouping = false),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
@@ -1021,7 +1022,7 @@ fun WeekScreen(
                                                     Modifier.background(
                                                         Brush.verticalGradient(
                                                             colors = when {
-                                                                value <= 0 -> listOf(
+                                                                !value.isPositive -> listOf(
                                                                     MaterialTheme.colorScheme.surfaceContainerHighest,
                                                                     MaterialTheme.colorScheme.surfaceContainerHighest
                                                                 )
@@ -1077,7 +1078,7 @@ fun WeekScreen(
                         topCategories.forEach { envStatus ->
                             val catName = envStatus.config.localizedName(lang)
                             val visual = categoryVisualStyle("${envStatus.config.key} $catName", isDark)
-                            val progress = (envStatus.spent / state.cycleExpenses.coerceAtLeast(1.0)).toFloat().safeFraction(0f, 1f)
+                            val progress = (envStatus.spent.centimes.toDouble() / state.cycleExpenses.centimes.coerceAtLeast(100L).toDouble()).toFloat().safeFraction(0f, 1f)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,

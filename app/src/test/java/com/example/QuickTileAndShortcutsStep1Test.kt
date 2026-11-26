@@ -65,7 +65,7 @@ class QuickTileAndShortcutsStep1Test {
             }
         )
         assertNotNull(voiceBiiForward)
-        assertEquals("25.0", voiceBiiForward!!.getStringExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_AMOUNT))
+        assertEquals("25.00", voiceBiiForward!!.getStringExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_AMOUNT))
         assertEquals("Taxi", voiceBiiForward.getStringExtra(GoogleAssistantExpenseBridge.EXTRA_ASSISTANT_MERCHANT))
     }
 

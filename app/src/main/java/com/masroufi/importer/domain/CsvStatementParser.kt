@@ -1,6 +1,8 @@
 package com.masroufi.importer.domain
 
 import com.example.domain.PayCycleEngine
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.Charset
@@ -27,7 +29,6 @@ object CsvStatementParser {
     private val WINDOWS_1252: Charset = Charset.forName("windows-1252")
     private val DATE_DMY_REGEX = Regex("^(\\d{1,2})[/\\-.](\\d{1,2})[/\\-.](\\d{2,4})$")
     private val DATE_ISO_REGEX = Regex("^(\\d{4})[/\\-.](\\d{1,2})[/\\-.](\\d{1,2})$")
-    private val CURRENCY_TOKEN_REGEX = Regex("(?i)\\b(mad|dhs?|dirhams?)\\b|د\\.م\\.?")
 
     private val DATE_HEADER_KEYWORDS = listOf("date op", "date operation", "date valeur", "date comptable", "date")
     private val LABEL_HEADER_KEYWORDS = listOf("libelle", "operation", "designation", "motif", "description", "intitule", "nature", "label")
@@ -165,65 +166,9 @@ object CsvStatementParser {
         return rows
     }
 
-    fun parseMoroccanAmount(raw: String?): Double? {
+    fun parseMoroccanAmount(raw: String?): Money? {
         if (raw.isNullOrBlank()) return null
-        var cleaned = raw.trim()
-            .replace('\u00A0', ' ')
-            .replace('\u202F', ' ')
-            .replace('\u2009', ' ')
-            .replace("'", "")
-        cleaned = CURRENCY_TOKEN_REGEX.replace(cleaned, "").trim()
-        if (cleaned.isEmpty() || cleaned == "-" || cleaned == "--") return null
-
-        var negative = false
-        if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
-            negative = true
-            cleaned = cleaned.substring(1, cleaned.length - 1).trim()
-        }
-        if (cleaned.startsWith("-")) {
-            negative = true
-            cleaned = cleaned.substring(1).trim()
-        } else if (cleaned.endsWith("-")) {
-            negative = true
-            cleaned = cleaned.dropLast(1).trim()
-        } else if (cleaned.startsWith("+")) {
-            cleaned = cleaned.substring(1).trim()
-        }
-
-        // Strip internal thousands spaces
-        cleaned = cleaned.replace(" ", "")
-        if (cleaned.isEmpty()) return null
-
-        val lastComma = cleaned.lastIndexOf(',')
-        val lastDot = cleaned.lastIndexOf('.')
-
-        val normalized = when {
-            lastComma >= 0 && lastDot >= 0 -> {
-                if (lastComma > lastDot) {
-                    // European/Moroccan: 1.250,50 -> 1250.50
-                    cleaned.replace(".", "").replace(',', '.')
-                } else {
-                    // US/UK: 1,250.50 -> 1250.50
-                    cleaned.replace(",", "")
-                }
-            }
-            lastComma >= 0 -> {
-                val digitsAfter = cleaned.length - lastComma - 1
-                if (digitsAfter == 3 && cleaned.count { it == ',' } >= 1 && cleaned.substring(0, lastComma).all { it.isDigit() || it == ',' }) {
-                    // Ambiguous 1,250 -> thousands separator
-                    cleaned.replace(",", "")
-                } else {
-                    // Decimal comma: 120,50 or 120,5
-                    cleaned.replace(',', '.')
-                }
-            }
-            else -> cleaned
-        }
-
-        val value = normalized.toDoubleOrNull() ?: return null
-        if (value.isNaN() || value.isInfinite() || kotlin.math.abs(value) > 100_000_000.0) return null
-        val signed = if (negative) -kotlin.math.abs(value) else value
-        return PayCycleEngine.roundMoney(signed)
+        return MoneyParser.parseMoroccanAmountToCentimes(raw)?.let { Money.fromCentimes(it) }
     }
 
     fun parseStatementDate(raw: String?): String? {
@@ -351,8 +296,8 @@ object CsvStatementParser {
 
             when (mapping.amountMode) {
                 AmountColumnMode.SPLIT_DEBIT_CREDIT -> {
-                    val debit = parseMoroccanAmount(row.getOrNull(mapping.debitCol))?.let { kotlin.math.abs(it) }?.takeIf { it > 0.0 }
-                    val credit = parseMoroccanAmount(row.getOrNull(mapping.creditCol))?.let { kotlin.math.abs(it) }?.takeIf { it > 0.0 }
+                    val debit = parseMoroccanAmount(row.getOrNull(mapping.debitCol))?.abs()?.takeIf { it.isPositive }
+                    val credit = parseMoroccanAmount(row.getOrNull(mapping.creditCol))?.abs()?.takeIf { it.isPositive }
                     if (debit == null && credit == null) continue
                     result.add(
                         StatementRow(
@@ -367,13 +312,13 @@ object CsvStatementParser {
                 }
                 AmountColumnMode.SINGLE_SIGNED -> {
                     val signed = parseMoroccanAmount(row.getOrNull(mapping.signedAmountCol))
-                    if (signed == null || kotlin.math.abs(signed) < 0.005) continue
+                    if (signed == null || signed.isZero) continue
                     result.add(
                         StatementRow(
                             isoDate = isoDate,
                             rawLabel = rawLabel,
-                            debitMad = if (signed < 0) kotlin.math.abs(signed) else null,
-                            creditMad = if (signed > 0) signed else null,
+                            debitMad = if (signed.isNegative) signed.abs() else null,
+                            creditMad = if (signed.isPositive) signed else null,
                             signedAmountMad = signed,
                             sourceLineNumber = idx + 1
                         )

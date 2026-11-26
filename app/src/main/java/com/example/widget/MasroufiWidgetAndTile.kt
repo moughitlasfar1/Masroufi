@@ -43,6 +43,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 import kotlin.math.max
@@ -119,8 +123,8 @@ object MasroufiWidgetStore {
 
     fun saveSnapshot(
         context: Context,
-        todaySpend: Double,
-        safeToSpendToday: Double,
+        todaySpend: Money,
+        safeToSpendToday: Money,
         currencySymbol: String,
         hideAmounts: Boolean,
         language: String
@@ -128,8 +132,8 @@ object MasroufiWidgetStore {
         val existing = loadSnapshot(context)
         val updated = existing.copy(
             snapshotDateIso = PayCycleEngine.todayIso(),
-            todaySpend = PayCycleEngine.roundMoney(todaySpend),
-            safeToSpendToday = PayCycleEngine.roundMoney(safeToSpendToday),
+            todaySpend = todaySpend,
+            safeToSpendToday = safeToSpendToday,
             currencySymbol = currencySymbol.ifBlank { "DH" },
             hideAmounts = hideAmounts,
             language = language.ifBlank { "fr" },
@@ -155,8 +159,8 @@ object MasroufiWidgetStore {
 
         val resolved = baseSnapshot ?: WidgetSnapshot(
             snapshotDateIso = nowIso,
-            todaySpend = prefs.getFloat(KEY_TODAY_SPEND, 0f).toDouble(),
-            safeToSpendToday = prefs.getFloat(KEY_SAFE_TODAY, 0f).toDouble(),
+            todaySpend = Money.fromLegacyDoubleDh(prefs.getFloat(KEY_TODAY_SPEND, 0f).toDouble()),
+            safeToSpendToday = Money.fromLegacyDoubleDh(prefs.getFloat(KEY_SAFE_TODAY, 0f).toDouble()),
             currencySymbol = prefs.getString(KEY_CURRENCY, "DH").orEmpty().ifBlank { "DH" },
             hideAmounts = prefs.getBoolean(KEY_HIDE_AMOUNTS, false),
             appLockEnabled = AppSecurityManager.isAppLockEnabled(appCtx),
@@ -228,8 +232,8 @@ object MasroufiWidgetStore {
 
         var learnedAny = false
         val createdTxs = items.mapIndexedNotNull { idx, item ->
-            val rounded = PayCycleEngine.roundMoney(item.amount)
-            if (rounded <= 0.0) return@mapIndexedNotNull null
+            val amount = item.amount
+            if (!amount.isPositive) return@mapIndexedNotNull null
             val resolvedType = item.txType.ifBlank { "expense" }
             if (resolvedType == "expense" && item.description.isNotBlank() && item.envelopeKey.isNotBlank()) {
                 PayCycleEngine.learnCategoryForDescription(item.description, item.envelopeKey)
@@ -242,7 +246,7 @@ object MasroufiWidgetStore {
                 id = "tx_qc_${baseMs}_$idx",
                 userId = uid,
                 type = resolvedType,
-                amount = rounded,
+                amount = amount,
                 category = normalizedCat,
                 envelopeKey = item.envelopeKey.ifBlank { "autre" },
                 accountId = if (isTransfer) "acc_bank" else defaultAccountId.ifBlank { "acc_cash" },
@@ -262,22 +266,20 @@ object MasroufiWidgetStore {
             }
         }
 
-        val addedExpenseTotal = PayCycleEngine.roundMoney(
-            createdTxs.filter { it.type == "expense" }.sumOf { it.amount }
-        )
-        val newTodaySpend = PayCycleEngine.roundMoney(currentSnapshot.effectiveTodaySpend(todayIso) + addedExpenseTotal)
-        val newCycleExpenses = PayCycleEngine.roundMoney(currentSnapshot.cycleExpenses + addedExpenseTotal)
-        val newRemainingBudget = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.remainingBudget - addedExpenseTotal))
-        val newSafePool = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.effectiveSafePool() - addedExpenseTotal))
+        val addedExpenseTotal = createdTxs.filter { it.type == "expense" }.map { it.amount }.sumMoney()
+        val newTodaySpend = currentSnapshot.effectiveTodaySpend(todayIso) + addedExpenseTotal
+        val newCycleExpenses = currentSnapshot.cycleExpenses + addedExpenseTotal
+        val newRemainingBudget = (currentSnapshot.remainingBudget - addedExpenseTotal).coerceAtLeast(Money.ZERO)
+        val newSafePool = (currentSnapshot.effectiveSafePool() - addedExpenseTotal).coerceAtLeast(Money.ZERO)
         val daysRem = currentSnapshot.daysRemainingInCycle.coerceAtLeast(1)
-        val newSafeToday = PayCycleEngine.roundMoney(max(0.0, newSafePool / daysRem))
+        val newSafeToday = newSafePool.divideBy(daysRem.toLong(), RoundingMode.HALF_UP).coerceAtLeast(Money.ZERO)
 
         val updatedEnvelopes = currentSnapshot.envelopes.map { env ->
-            val deltaForEnv = createdTxs.filter { it.type == "expense" && it.envelopeKey == env.key }.sumOf { it.amount }
-            if (deltaForEnv > 0.0) {
-                val nextSpent = PayCycleEngine.roundMoney(env.spent + deltaForEnv)
-                val nextPct = if (env.hasCap && env.totalAvailable > 0.0) {
-                    ((nextSpent / env.totalAvailable) * 100.0).toInt()
+            val deltaForEnv = createdTxs.filter { it.type == "expense" && it.envelopeKey == env.key }.map { it.amount }.sumMoney()
+            if (deltaForEnv.isPositive) {
+                val nextSpent = env.spent + deltaForEnv
+                val nextPct = if (env.hasCap && env.totalAvailable.isPositive) {
+                    ((nextSpent.centimes.toDouble() / env.totalAvailable.centimes.toDouble()) * 100.0).toInt()
                 } else 0
                 env.copy(
                     spent = nextSpent,
@@ -317,7 +319,8 @@ object MasroufiWidgetStore {
                         put("id", tx.id)
                         put("userId", tx.userId)
                         put("type", tx.type)
-                        put("amount", tx.amount)
+                        put("amountCentimes", tx.amount.centimes)
+                        put("amount", tx.amount.toBigDecimalDh())
                         put("category", tx.category)
                         put("envelopeKey", tx.envelopeKey)
                         put("accountId", tx.accountId)
@@ -373,17 +376,15 @@ object MasroufiWidgetStore {
         val currentSnapshot = loadSnapshot(appCtx)
         val todayIso = PayCycleEngine.todayIso()
 
-        val revertedExpenseTotal = PayCycleEngine.roundMoney(
-            createdTxs.filter { it.type == "expense" }.sumOf { it.amount }
-        )
+        val revertedExpenseTotal = createdTxs.filter { it.type == "expense" }.map { it.amount }.sumMoney()
         val daysRem = currentSnapshot.daysRemainingInCycle.coerceAtLeast(1)
-        val revertedSafePool = PayCycleEngine.roundMoney(currentSnapshot.effectiveSafePool() + revertedExpenseTotal)
+        val revertedSafePool = currentSnapshot.effectiveSafePool() + revertedExpenseTotal
         val updatedSnapshot = currentSnapshot.copy(
-            todaySpend = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.effectiveTodaySpend(todayIso) - revertedExpenseTotal)),
-            cycleExpenses = PayCycleEngine.roundMoney(max(0.0, currentSnapshot.cycleExpenses - revertedExpenseTotal)),
-            remainingBudget = PayCycleEngine.roundMoney(currentSnapshot.remainingBudget + revertedExpenseTotal),
+            todaySpend = (currentSnapshot.effectiveTodaySpend(todayIso) - revertedExpenseTotal).coerceAtLeast(Money.ZERO),
+            cycleExpenses = (currentSnapshot.cycleExpenses - revertedExpenseTotal).coerceAtLeast(Money.ZERO),
+            remainingBudget = currentSnapshot.remainingBudget + revertedExpenseTotal,
             safePool = revertedSafePool,
-            safeToSpendToday = PayCycleEngine.roundMoney(revertedSafePool / daysRem),
+            safeToSpendToday = revertedSafePool.divideBy(daysRem.toLong(), RoundingMode.HALF_UP),
             updatedAtMillis = System.currentTimeMillis()
         )
         saveWidgetSnapshot(appCtx, updatedSnapshot)
@@ -459,12 +460,22 @@ object MasroufiWidgetStore {
         val list = mutableListOf<TransactionItem>()
         for (i in 0 until arr.length()) {
             val obj = arr.optJSONObject(i) ?: continue
+            val parsedAmount = if (obj.has("amountCentimes") && !obj.isNull("amountCentimes")) {
+                Money.fromCentimes(obj.optLong("amountCentimes", 0L))
+            } else {
+                when (val rawVal = obj.opt("amount")) {
+                    is BigDecimal -> Money.fromMajorUnits(rawVal)
+                    is Number -> Money.fromLegacyDoubleDh(rawVal.toDouble())
+                    is String -> Money.fromDhString(rawVal) ?: Money.ZERO
+                    else -> Money.ZERO
+                }
+            }
             list.add(
                 TransactionItem(
                     id = obj.optString("id", "tx_qc_$i"),
                     userId = obj.optString("userId", "local_device_user"),
                     type = obj.optString("type", "expense"),
-                    amount = obj.optDouble("amount", 0.0),
+                    amount = parsedAmount,
                     category = obj.optString("category", "Autre"),
                     envelopeKey = obj.optString("envelopeKey", "autre"),
                     accountId = obj.optString("accountId", "acc_cash"),
@@ -490,11 +501,11 @@ object MasroufiWidgetStore {
             it.itemId == itemId && (kind.isBlank() || it.kind == kind)
         }
         val paidItem = current.reminders.firstOrNull { it.itemId == itemId }
-        val deltaAmt = paidItem?.amount ?: 0.0
+        val deltaAmt = paidItem?.amount ?: Money.ZERO
         val todayIso = PayCycleEngine.todayIso()
         val updated = current.copy(
             snapshotDateIso = todayIso,
-            todaySpend = if (deltaAmt > 0.0) PayCycleEngine.roundMoney(current.effectiveTodaySpend(todayIso) + deltaAmt) else current.todaySpend,
+            todaySpend = if (deltaAmt.isPositive) current.effectiveTodaySpend(todayIso) + deltaAmt else current.todaySpend,
             reminders = filteredReminders,
             updatedAtMillis = System.currentTimeMillis()
         )
@@ -554,7 +565,8 @@ object MasroufiWidgetStore {
                 val presetIntent = Intent(context, QuickCaptureActivity::class.java).apply {
                     action = MasroufiAppWidget.ACTION_QUICK_PRESET
                     putExtra(MasroufiAppWidget.EXTRA_PRESET_NAME, preset.name)
-                    putExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, preset.amount)
+                    putExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT_CENTIMES, preset.amount.centimes)
+                    putExtra(MasroufiAppWidget.EXTRA_PRESET_AMOUNT, preset.amount.toBigDecimalDh().toDouble())
                     putExtra(MasroufiAppWidget.EXTRA_PRESET_ENVELOPE, preset.envelopeKey)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
@@ -680,6 +692,7 @@ class MasroufiAppWidget : AppWidgetProvider() {
         const val ACTION_QUICK_PRESET = "com.aistudio.masroufi.ACTION_QUICK_PRESET"
         const val EXTRA_PRESET_NAME = "extra_preset_name"
         const val EXTRA_PRESET_AMOUNT = "extra_preset_amount"
+        const val EXTRA_PRESET_AMOUNT_CENTIMES = "extra_preset_amount_centimes"
         const val EXTRA_PRESET_ENVELOPE = "extra_preset_envelope"
         const val EXTRA_TARGET_TAB = "extra_target_tab"
 
@@ -931,7 +944,8 @@ class MasroufiAppWidget : AppWidgetProvider() {
                 Intent(context, QuickCaptureActivity::class.java).apply {
                     action = ACTION_QUICK_PRESET
                     putExtra(EXTRA_PRESET_NAME, p1.name)
-                    putExtra(EXTRA_PRESET_AMOUNT, p1.amount)
+                    putExtra(EXTRA_PRESET_AMOUNT_CENTIMES, p1.amount.centimes)
+                    putExtra(EXTRA_PRESET_AMOUNT, p1.amount.toBigDecimalDh().toDouble())
                     putExtra(EXTRA_PRESET_ENVELOPE, p1.envelopeKey)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
@@ -950,7 +964,8 @@ class MasroufiAppWidget : AppWidgetProvider() {
                 val btn2Intent = Intent(context, QuickCaptureActivity::class.java).apply {
                     action = ACTION_QUICK_PRESET
                     putExtra(EXTRA_PRESET_NAME, p2.name)
-                    putExtra(EXTRA_PRESET_AMOUNT, p2.amount)
+                    putExtra(EXTRA_PRESET_AMOUNT_CENTIMES, p2.amount.centimes)
+                    putExtra(EXTRA_PRESET_AMOUNT, p2.amount.toBigDecimalDh().toDouble())
                     putExtra(EXTRA_PRESET_ENVELOPE, p2.envelopeKey)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }

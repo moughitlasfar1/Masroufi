@@ -14,6 +14,7 @@ import com.example.domain.PayCycleEngine
 import com.example.domain.Translations
 import com.example.domain.VoiceDarijaParser
 import com.example.domain.VoiceParsedTransaction
+import com.masroufi.core.Money
 import java.util.Locale
 
 sealed interface AssistantExpenseResolution {
@@ -100,12 +101,9 @@ object GoogleAssistantExpenseBridge {
             ?: dataUri?.getQueryParameter("desc")
             ?: dataUri?.getQueryParameter("category")
 
-        val parsedStructuredAmount = rawAmountStr
-            ?.replace(",", ".")
-            ?.replace(Regex("""[^\d.]"""), "")
-            ?.toDoubleOrNull()
+        val parsedStructuredAmount = rawAmountStr?.let { Money.fromDhString(it) }
 
-        if (parsedStructuredAmount != null && parsedStructuredAmount > 0.0) {
+        if (parsedStructuredAmount != null && parsedStructuredAmount.isPositive) {
             val merchantOrDesc = rawMerchantStr?.trim().orEmpty().ifBlank {
                 when (language) {
                     "ar" -> "مصروف صوتي"
@@ -114,7 +112,7 @@ object GoogleAssistantExpenseBridge {
                     else -> "Dépense Assistant"
                 }
             }
-            val combinedPhrase = "$merchantOrDesc ${PayCycleEngine.roundMoney(parsedStructuredAmount)}"
+            val combinedPhrase = "$merchantOrDesc ${parsedStructuredAmount.toCanonicalDecimalString()}"
             val parsedFromPhrase = VoiceDarijaParser.parseMultiExpenses(combinedPhrase, envelopes, language)
             val items = if (parsedFromPhrase.isNotEmpty()) {
                 parsedFromPhrase
@@ -124,7 +122,7 @@ object GoogleAssistantExpenseBridge {
                 listOf(
                     VoiceParsedTransaction(
                         rawTranscript = combinedPhrase,
-                        amount = PayCycleEngine.roundMoney(parsedStructuredAmount),
+                        amount = parsedStructuredAmount,
                         description = merchantOrDesc,
                         envelopeKey = envKey,
                         categoryName = catName,
@@ -237,7 +235,7 @@ object GoogleAssistantExpenseBridge {
             // 2. Top 2 user presets bound for Google Assistant (respect hideAmounts & App Lock)
             val maskAmounts = snapshot.hideAmounts || snapshot.appLockEnabled
             snapshot.presets.take(2).forEachIndexed { idx, preset ->
-                val presetPhrase = "${preset.name} ${preset.amount.toInt()}"
+                val presetPhrase = "${preset.name} ${preset.amount.formatDhRounded(useGrouping = false)}"
                 val presetIntent = Intent(context, AssistantEntryActivity::class.java).apply {
                     action = ACTION_ASSISTANT_ADD_EXPENSE
                     putExtra(EXTRA_ASSISTANT_QUERY, presetPhrase)

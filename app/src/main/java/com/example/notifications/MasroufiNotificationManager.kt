@@ -30,6 +30,8 @@ import com.example.ui.DashboardState
 import com.example.widget.MasroufiAppWidget
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import com.masroufi.core.Money
+import java.math.BigDecimal
 import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -259,7 +261,7 @@ object MasroufiNotificationManager {
         }
         val todayEpoch = PayCycleEngine.parseEpochDays(todayIso)
         val validExpenses = transactions.mapNotNull { tx ->
-            if (tx.type != "expense" || tx.amount <= 0.0 || !PayCycleEngine.isValidIsoDate(tx.isoDate)) {
+            if (tx.type != "expense" || !tx.amount.isPositive || !PayCycleEngine.isValidIsoDate(tx.isoDate)) {
                 return@mapNotNull null
             }
             val ageDays = (todayEpoch - PayCycleEngine.parseEpochDays(tx.isoDate)).toInt()
@@ -319,20 +321,29 @@ object MasroufiNotificationManager {
         }
     }
 
+    private fun parseJsonMoney(raw: Any?, default: Money = Money.ZERO): Money = when (raw) {
+        null, JSONObject.NULL -> default
+        is BigDecimal -> runCatching { Money.fromMajorUnits(raw) }.getOrDefault(default)
+        is Number -> runCatching { Money.fromMajorUnits(BigDecimal(raw.toString())) }
+            .getOrElse { runCatching { Money.fromLegacyDoubleDh(raw.toDouble()) }.getOrDefault(default) }
+        is String -> Money.fromDhString(raw) ?: default
+        else -> default
+    }
+
     /**
      * Prompt 7.4: If the user edits a pre-filled shortcut amount 3 times, use the edited amount
      * as the new suggestion. Stored locally in SharedPreferences.
      */
-    fun getShortcutAmountOverrides(context: Context): Map<String, Double> {
+    fun getShortcutAmountOverrides(context: Context): Map<String, Money> {
         val raw = prefs(context).getString(KEY_SHORTCUT_AMOUNT_OVERRIDES_JSON, null) ?: return emptyMap()
         val obj = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
-        val result = mutableMapOf<String, Double>()
+        val result = mutableMapOf<String, Money>()
         val keys = obj.keys()
         while (keys.hasNext()) {
             val k = keys.next()
-            val v = obj.optDouble(k, 0.0)
-            if (k.isNotBlank() && v > 0.0) {
-                result[k] = PayCycleEngine.roundMoney(v)
+            val v = parseJsonMoney(obj.opt(k), Money.ZERO)
+            if (k.isNotBlank() && v.isPositive) {
+                result[k] = v
             }
         }
         return result
@@ -341,13 +352,11 @@ object MasroufiNotificationManager {
     fun recordShortcutAmountEdit(
         context: Context,
         desc: String,
-        suggestedAmount: Double,
-        savedAmount: Double
-    ): Double? {
+        suggestedAmount: Money,
+        savedAmount: Money
+    ): Money? {
         val normKey = desc.trim().lowercase(Locale.ROOT)
-        val roundedEdited = PayCycleEngine.roundMoney(savedAmount)
-        val roundedOriginal = PayCycleEngine.roundMoney(suggestedAmount)
-        if (normKey.isEmpty() || roundedEdited <= 0.0 || kotlin.math.abs(roundedEdited - roundedOriginal) < 0.01) {
+        if (normKey.isEmpty() || !savedAmount.isPositive || savedAmount == suggestedAmount) {
             return getShortcutAmountOverrides(context)[normKey]
         }
 
@@ -356,18 +365,18 @@ object MasroufiNotificationManager {
             JSONObject(p.getString(KEY_SHORTCUT_EDIT_HISTORY_JSON, "{}") ?: "{}")
         }.getOrDefault(JSONObject())
         val existingArr = historyObj.optJSONArray(normKey) ?: JSONArray()
-        val edits = mutableListOf<Double>()
+        val edits = mutableListOf<Money>()
         for (i in 0 until existingArr.length()) {
-            val v = existingArr.optDouble(i, 0.0)
-            if (v > 0.0) edits.add(PayCycleEngine.roundMoney(v))
+            val v = parseJsonMoney(existingArr.opt(i), Money.ZERO)
+            if (v.isPositive) edits.add(v)
         }
-        edits.add(roundedEdited)
+        edits.add(savedAmount)
         val trimmedEdits = edits.takeLast(12)
         val nextArr = JSONArray()
-        trimmedEdits.forEach { nextArr.put(it) }
+        trimmedEdits.forEach { nextArr.put(it.toBigDecimalDh()) }
         historyObj.put(normKey, nextArr)
 
-        var learnedOverride: Double? = null
+        var learnedOverride: Money? = null
         val overridesObj = runCatching {
             JSONObject(p.getString(KEY_SHORTCUT_AMOUNT_OVERRIDES_JSON, "{}") ?: "{}")
         }.getOrDefault(JSONObject())
@@ -376,11 +385,11 @@ object MasroufiNotificationManager {
             // Pick the mode of the edited amounts, tie-broken by the most recent edit
             val grouped = trimmedEdits.withIndex().groupBy({ it.value }, { it.index })
             val bestAmount = grouped.entries.sortedWith(
-                compareByDescending<Map.Entry<Double, List<Int>>> { it.value.size }
+                compareByDescending<Map.Entry<Money, List<Int>>> { it.value.size }
                     .thenByDescending { it.value.maxOrNull() ?: 0 }
             ).first().key
             learnedOverride = bestAmount
-            overridesObj.put(normKey, bestAmount)
+            overridesObj.put(normKey, bestAmount.toBigDecimalDh())
         }
 
         p.edit()
@@ -401,7 +410,7 @@ object MasroufiNotificationManager {
         recordVerifiedActiveDate(context, clean)
         runCatching {
             val snap = com.example.widget.MasroufiWidgetStore.loadSnapshot(context, clean)
-            if (snap.effectiveTodaySpend(clean) <= 0.0) {
+            if (!snap.effectiveTodaySpend(clean).isPositive) {
                 val nextStreak = snap.noSpendStreakDays.coerceAtLeast(1)
                 com.example.widget.MasroufiWidgetStore.saveWidgetSnapshot(
                     context,
@@ -524,7 +533,7 @@ object MasroufiNotificationManager {
                             put("id", bill.id)
                             put("name", bill.name)
                             put("subtitle", bill.subtitle)
-                            put("amount", bill.amount)
+                            put("amount", bill.amount.toBigDecimalDh())
                             put("dueDay", bill.dayOrTurn)
                             put("dateOrCycle", bill.dateOrCycle)
                         }
@@ -533,14 +542,14 @@ object MasroufiNotificationManager {
 
             val activeDaretsArr = JSONArray()
             state.darets.forEach { daret ->
-                val totalMembers = daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+                val totalMembers = daret.resolvedDaretMembers()
                 if (daret.extraInt < totalMembers) {
                     activeDaretsArr.put(
                         JSONObject().apply {
                             put("id", daret.id)
                             put("name", daret.name)
                             put("subtitle", daret.subtitle)
-                            put("amount", daret.amount)
+                            put("amount", daret.amount.toBigDecimalDh())
                             put("myTurn", daret.dayOrTurn)
                             put("paidRounds", daret.extraInt)
                             put("totalMembers", totalMembers)
@@ -558,7 +567,7 @@ object MasroufiNotificationManager {
                         JSONObject().apply {
                             put("name", env.config.localizedName(state.profile.language))
                             put("pct", env.usagePercent)
-                            put("spent", env.spent)
+                            put("spent", env.spent.toBigDecimalDh())
                         }
                     )
                 }
@@ -567,8 +576,8 @@ object MasroufiNotificationManager {
             if (todayTxCount > 0) {
                 resetEveningIgnoredStreak(context)
             }
-            val totalUsagePct = if (state.totalAvailableBudget > 0) {
-                ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).roundToInt()
+            val totalUsagePct = if (state.totalAvailableBudget.isPositive) {
+                ((state.cycleExpenses.centimes.toDouble() / state.totalAvailableBudget.centimes.toDouble()) * 100.0).roundToInt()
             } else 0
 
             val (userHour, userMinute) = getEveningReminderTime(context)
@@ -587,7 +596,7 @@ object MasroufiNotificationManager {
                 put("currency", cur)
                 put("cycleKey", cycleKey)
                 put("hideAmounts", hide)
-                put("safeToday", PayCycleEngine.roundMoney(state.safeToSpendToday))
+                put("safeToday", state.safeToSpendToday.toBigDecimalDh())
                 put("todayTxCount", todayTxCount)
                 put("pendingBankCount", pendingBankCount)
                 put("totalUsagePct", totalUsagePct)
@@ -675,7 +684,7 @@ object MasroufiNotificationManager {
                 val first = bills.getJSONObject(0)
                 val billId = first.optString("id", "")
                 val name = first.optString("name", "Facture")
-                val rawAmt = first.optDouble("amount", 0.0)
+                val rawAmt = parseJsonMoney(first.opt("amount"), Money.ZERO)
                 val amt = PayCycleEngine.formatCurrencyOrMask(rawAmt, cur, hide)
                 val day = first.optInt("dueDay", 1)
                 val title = when (lang) {
@@ -697,7 +706,8 @@ object MasroufiNotificationManager {
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, billId)
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_NAME, name)
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_SUBTITLE, first.optString("subtitle", name))
-                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, rawAmt)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT_CENTIMES, rawAmt.centimes)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, rawAmt.toBigDecimalDh().toDouble())
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_DUE_DAY, day)
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_DATE_OR_CYCLE, first.optString("dateOrCycle", ""))
                         putExtra(NotificationActionReceiver.EXTRA_CYCLE_KEY, cycleKey)
@@ -724,7 +734,7 @@ object MasroufiNotificationManager {
                 val first = darets.getJSONObject(0)
                 val daretId = first.optString("id", "")
                 val name = first.optString("name", "Daret")
-                val rawAmt = first.optDouble("amount", 0.0)
+                val rawAmt = parseJsonMoney(first.opt("amount"), Money.ZERO)
                 val amt = PayCycleEngine.formatCurrencyOrMask(rawAmt, cur, hide)
                 val myTurn = first.optInt("myTurn", 1)
                 val paid = first.optInt("paidRounds", 0)
@@ -748,7 +758,8 @@ object MasroufiNotificationManager {
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, daretId)
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_NAME, name)
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_SUBTITLE, first.optString("subtitle", ""))
-                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, rawAmt)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT_CENTIMES, rawAmt.centimes)
+                        putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, rawAmt.toBigDecimalDh().toDouble())
                         putExtra(NotificationActionReceiver.EXTRA_ITEM_DUE_DAY, myTurn)
                         putExtra(NotificationActionReceiver.EXTRA_DARET_PAID_ROUNDS, paid)
                         putExtra(NotificationActionReceiver.EXTRA_DARET_TOTAL_MEMBERS, total)
@@ -814,7 +825,7 @@ object MasroufiNotificationManager {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         val (targetHour, _) = getEffectiveEveningReminderTime(context)
         val todayTxCount = obj.optInt("todayTxCount", 0)
-        val safeToday = obj.optDouble("safeToday", 0.0)
+        val safeToday = parseJsonMoney(obj.opt("safeToday"), Money.ZERO)
         val lastShownIso = getLastEveningShownIso(context)
         val alreadyShownToday = lastShownIso == todayIso
         val alreadyConfirmedNothing = isNoSpendConfirmedForDate(context, todayIso)
@@ -1095,7 +1106,8 @@ object MasroufiNotificationManager {
                 action = NotificationActionReceiver.ACTION_BANK_UNDO_AUTO
                 putExtra(NotificationActionReceiver.EXTRA_NOTIF_ID, notifId)
                 putExtra(NotificationActionReceiver.EXTRA_ITEM_ID, createdTx.id)
-                putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, createdTx.amount)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT_CENTIMES, createdTx.amount.centimes)
+                putExtra(NotificationActionReceiver.EXTRA_ITEM_AMOUNT, createdTx.amount.toBigDecimalDh().toDouble())
                 putExtra(NotificationActionReceiver.EXTRA_ITEM_NAME, createdTx.desc)
                 putExtra(NotificationActionReceiver.EXTRA_ITEM_DATE_OR_CYCLE, createdTx.isoDate)
             }
@@ -1243,11 +1255,20 @@ class NotificationActionReceiver : BroadcastReceiver() {
         const val EXTRA_ITEM_NAME = "extra_item_name"
         const val EXTRA_ITEM_SUBTITLE = "extra_item_subtitle"
         const val EXTRA_ITEM_AMOUNT = "extra_item_amount"
+        const val EXTRA_ITEM_AMOUNT_CENTIMES = "extra_item_amount_centimes"
         const val EXTRA_ITEM_DUE_DAY = "extra_item_due_day"
         const val EXTRA_ITEM_DATE_OR_CYCLE = "extra_item_date_or_cycle"
         const val EXTRA_CYCLE_KEY = "extra_cycle_key"
         const val EXTRA_DARET_PAID_ROUNDS = "extra_daret_paid_rounds"
         const val EXTRA_DARET_TOTAL_MEMBERS = "extra_daret_total_members"
+
+        private fun extractAmountMoney(intent: Intent): Money {
+            if (intent.hasExtra(EXTRA_ITEM_AMOUNT_CENTIMES)) {
+                return Money.fromCentimes(intent.getLongExtra(EXTRA_ITEM_AMOUNT_CENTIMES, 0L))
+            }
+            val legacy = intent.getDoubleExtra(EXTRA_ITEM_AMOUNT, 0.0)
+            return if (legacy.isFinite()) Money.fromLegacyDoubleDh(legacy) else Money.ZERO
+        }
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -1294,7 +1315,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         if (action == ACTION_BANK_UNDO_AUTO) {
             val txId = intent.getStringExtra(EXTRA_ITEM_ID).orEmpty()
             val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, 4800)
-            val amount = intent.getDoubleExtra(EXTRA_ITEM_AMOUNT, 0.0)
+            val amount = extractAmountMoney(intent)
             val desc = intent.getStringExtra(EXTRA_ITEM_NAME).orEmpty()
             val isoDate = intent.getStringExtra(EXTRA_ITEM_DATE_OR_CYCLE).orEmpty().ifBlank { PayCycleEngine.todayIso() }
             if (txId.isNotBlank()) {
@@ -1321,7 +1342,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val notifId = intent.getIntExtra(EXTRA_NOTIF_ID, if (action == ACTION_MARK_BILL_PAID) 4001 else 4002)
         val name = intent.getStringExtra(EXTRA_ITEM_NAME).orEmpty().ifBlank { "Opération" }
         val subtitle = intent.getStringExtra(EXTRA_ITEM_SUBTITLE).orEmpty()
-        val amount = intent.getDoubleExtra(EXTRA_ITEM_AMOUNT, 0.0).coerceAtLeast(1.0)
+        val amount = extractAmountMoney(intent).coerceAtLeast(Money.fromDh(1))
         val dueDayOrTurn = intent.getIntExtra(EXTRA_ITEM_DUE_DAY, 1).coerceIn(1, 365)
         val existingDateOrCycle = intent.getStringExtra(EXTRA_ITEM_DATE_OR_CYCLE).orEmpty()
 
@@ -1359,8 +1380,8 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         itemType = "bill",
                         name = name.take(120),
                         subtitle = subtitle.take(250),
-                        amount = PayCycleEngine.roundMoney(amount),
-                        secondaryAmount = 0.0,
+                        amount = amount,
+                        secondaryAmount = Money.ZERO,
                         dayOrTurn = dueDayOrTurn,
                         extraInt = 0,
                         dateOrCycle = updatedCycles
@@ -1369,7 +1390,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         id = "tx_bill_${itemId}_$cycleKey",
                         userId = uid,
                         type = "expense",
-                        amount = PayCycleEngine.roundMoney(amount),
+                        amount = amount,
                         category = "charges",
                         envelopeKey = "charges",
                         accountId = "acc_bank",
@@ -1388,8 +1409,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         itemType = "daret",
                         name = name.take(120),
                         subtitle = subtitle.take(250),
-                        amount = PayCycleEngine.roundMoney(amount),
-                        secondaryAmount = totalMembers.toDouble(),
+                        amount = amount,
+                        secondaryAmount = Money.ZERO,
+                        daretMembers = totalMembers,
                         dayOrTurn = dueDayOrTurn,
                         extraInt = nextPaid,
                         dateOrCycle = existingDateOrCycle.take(250)
@@ -1398,7 +1420,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         id = "tx_daret_${itemId}_round_$nextPaid",
                         userId = uid,
                         type = "expense",
-                        amount = PayCycleEngine.roundMoney(amount),
+                        amount = amount,
                         category = "epargne",
                         envelopeKey = "epargne",
                         accountId = "acc_bank",

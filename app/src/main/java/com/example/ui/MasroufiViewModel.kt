@@ -20,6 +20,9 @@ import com.example.domain.PayCycleWindow
 import com.example.domain.SmartInsight
 import com.example.domain.SmartReminder
 import com.example.security.AppSecurityManager
+import com.masroufi.core.Money
+import com.masroufi.core.sumMoney
+import java.math.BigDecimal
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -42,7 +45,7 @@ data class FilterState(
     val selectedCategoryKey: String = "all",
     val selectedAccountId: String = "all",
     val selectedType: String = "all", // "all", "expense", "income", "transfer"
-    val minAmount: Double? = null
+    val minAmount: Money? = null
 )
 
 data class WhatIfSimulatorState(
@@ -105,7 +108,7 @@ object BackupSerializer {
         transactions.forEach { t ->
             sb.append(sanitizeCsvCell(t.id)).append(',')
                 .append(sanitizeCsvCell(t.type)).append(',')
-                .append(sanitizeCsvCell(t.amount.toString())).append(',')
+                .append(sanitizeCsvCell(t.amount.toCanonicalDecimalString())).append(',')
                 .append(sanitizeCsvCell(t.category)).append(',')
                 .append(sanitizeCsvCell(t.accountId)).append(',')
                 .append(sanitizeCsvCell(t.desc)).append(',')
@@ -118,15 +121,15 @@ object BackupSerializer {
         val root = JSONObject().apply {
             put("backupVersion", 2)
             put("exportedAtIso", PayCycleEngine.todayIso())
-            // Keep top-level keys for backward compatibility with v1 readers
-            put("baseBudget", state.profile.baseBudget)
+            // Keep top-level keys for backward compatibility with v1/v2 readers (exact BigDecimal DH)
+            put("baseBudget", state.profile.baseBudget.toBigDecimalDh())
             put("payCycleDay", state.profile.payCycleDay)
             put("rolloverEnabled", state.profile.rolloverEnabled)
 
             put(
                 "profile",
                 JSONObject().apply {
-                    put("baseBudget", state.profile.baseBudget)
+                    put("baseBudget", state.profile.baseBudget.toBigDecimalDh())
                     put("payCycleDay", state.profile.payCycleDay)
                     put("rolloverEnabled", state.profile.rolloverEnabled)
                     put("language", state.profile.language)
@@ -162,7 +165,7 @@ object BackupSerializer {
                         put("id", a.id)
                         put("name", a.name)
                         put("kind", a.kind)
-                        put("initialBalance", a.initialBalance)
+                        put("initialBalance", a.initialBalance.toBigDecimalDh())
                         put("colorHex", a.colorHex)
                     }
                 )
@@ -197,8 +200,15 @@ object BackupSerializer {
                         put("itemType", item.itemType)
                         put("name", item.name)
                         put("subtitle", item.subtitle)
-                        put("amount", item.amount)
-                        put("secondaryAmount", item.secondaryAmount)
+                        put("amount", item.amount.toBigDecimalDh())
+                        if (item.itemType == "daret") {
+                            val members = item.resolvedDaretMembers()
+                            put("daretMembers", members)
+                            // Backward-compatible mirror for legacy v2 readers
+                            put("secondaryAmount", members)
+                        } else {
+                            put("secondaryAmount", item.secondaryAmount.toBigDecimalDh())
+                        }
                         put("dayOrTurn", item.dayOrTurn)
                         put("extraInt", item.extraInt)
                         put("dateOrCycle", item.dateOrCycle)
@@ -213,7 +223,7 @@ object BackupSerializer {
                     JSONObject().apply {
                         put("id", t.id)
                         put("type", t.type)
-                        put("amount", t.amount)
+                        put("amount", t.amount.toBigDecimalDh())
                         put("category", t.category)
                         put("envelopeKey", t.envelopeKey)
                         put("accountId", t.accountId)
@@ -253,6 +263,39 @@ object BackupSerializer {
         return value
     }
 
+    private fun readMoneyFromJson(
+        obj: JSONObject,
+        key: String,
+        default: Money,
+        min: Money,
+        max: Money,
+        fieldLabel: String
+    ): Money {
+        if (!obj.has(key) || obj.isNull(key)) {
+            require(default in min..max) {
+                "Valeur numérique '$fieldLabel' hors limites (${default.toCanonicalDecimalString()})."
+            }
+            return default
+        }
+        val raw = obj.opt(key)
+        val parsed = when (raw) {
+            is BigDecimal -> runCatching { Money.fromMajorUnits(raw) }.getOrNull()
+            is Number -> {
+                val asDouble = raw.toDouble()
+                if (!asDouble.isFinite()) null
+                else runCatching { Money.fromMajorUnits(BigDecimal(raw.toString())) }
+                    .getOrElse { runCatching { Money.fromLegacyDoubleDh(asDouble) }.getOrNull() }
+            }
+            is String -> Money.fromDhString(raw)
+            else -> null
+        } ?: throw IllegalArgumentException("Valeur numérique '$fieldLabel' invalide ($raw).")
+
+        require(parsed in min..max) {
+            "Valeur numérique '$fieldLabel' hors limites (${parsed.toCanonicalDecimalString()})."
+        }
+        return parsed
+    }
+
     fun decodeBackup(rawJson: String, currentUserId: String, fallbackProfile: UserProfile): ParsedBackupPayload {
         val rawBytes = rawJson.toByteArray(Charsets.UTF_8).size
         require(rawBytes <= AppSecurityManager.MAX_BACKUP_FILE_BYTES) {
@@ -282,13 +325,13 @@ object BackupSerializer {
 
         val profileObj = obj.optJSONObject("profile")
         val rawBudget = if (profileObj != null && profileObj.has("baseBudget")) {
-            profileObj.getDouble("baseBudget")
+            readMoneyFromJson(profileObj, "baseBudget", fallbackProfile.baseBudget, Money.ZERO, Money.MAX_STORABLE, "baseBudget")
         } else if (obj.has("baseBudget")) {
-            obj.getDouble("baseBudget")
+            readMoneyFromJson(obj, "baseBudget", fallbackProfile.baseBudget, Money.ZERO, Money.MAX_STORABLE, "baseBudget")
         } else {
             fallbackProfile.baseBudget
         }
-        val validBudget = requireFiniteInRange(rawBudget, 0.0, 100_000_000.0, "baseBudget").coerceAtLeast(100.0)
+        val validBudget = rawBudget.coerceAtLeast(Money.fromDh(100))
 
         val rawPayDay = if (profileObj != null && profileObj.has("payCycleDay")) {
             profileObj.getInt("payCycleDay")
@@ -371,10 +414,12 @@ object BackupSerializer {
                 require(name.length in 1..80) { "Nom du compte '$id' invalide (1..80 caractères requis)." }
                 val kind = a.optString("kind", "cash").trim()
                 require(kind in ALLOWED_ACCOUNT_KINDS) { "Type de compte '$kind' invalide pour '$id'." }
-                val initBal = requireFiniteInRange(
-                    a.optDouble("initialBalance", 0.0),
-                    -100_000_000.0,
-                    100_000_000.0,
+                val initBal = readMoneyFromJson(
+                    a,
+                    "initialBalance",
+                    Money.ZERO,
+                    Money.MIN_STORABLE,
+                    Money.MAX_STORABLE,
                     "account.initialBalance"
                 )
                 val colorHex = a.optString("colorHex", "#10B981").trim().ifBlank { "#10B981" }
@@ -434,13 +479,36 @@ object BackupSerializer {
                 require(name.length in 1..120) { "Nom d'élément financier invalide pour '$id'." }
                 val subtitle = itObj.optString("subtitle", "")
                 require(subtitle.length <= 250) { "Sous-titre trop long pour '$id'." }
-                val amount = requireFiniteInRange(itObj.optDouble("amount", 0.0), 0.0, 100_000_000.0, "financialItem.amount")
-                val secAmount = requireFiniteInRange(
-                    itObj.optDouble("secondaryAmount", 0.0),
-                    0.0,
-                    100_000_000.0,
-                    "financialItem.secondaryAmount"
+                val amount = readMoneyFromJson(
+                    itObj,
+                    "amount",
+                    Money.ZERO,
+                    Money.ZERO,
+                    Money.MAX_STORABLE,
+                    "financialItem.amount"
                 )
+                val secAmount: Money
+                val daretMembersVal: Int?
+                if (itemType == "daret") {
+                    val rawMembers = if (itObj.has("daretMembers") && !itObj.isNull("daretMembers")) {
+                        itObj.optInt("daretMembers", 1)
+                    } else {
+                        val legacySec = itObj.optDouble("secondaryAmount", 1.0)
+                        requireFiniteInRange(legacySec, 0.0, 100_000_000.0, "financialItem.secondaryAmount").roundToInt()
+                    }
+                    secAmount = Money.ZERO
+                    daretMembersVal = rawMembers.coerceAtLeast(1)
+                } else {
+                    secAmount = readMoneyFromJson(
+                        itObj,
+                        "secondaryAmount",
+                        Money.ZERO,
+                        Money.ZERO,
+                        Money.MAX_STORABLE,
+                        "financialItem.secondaryAmount"
+                    )
+                    daretMembersVal = null
+                }
                 val dayOrTurn = itObj.optInt("dayOrTurn", 1)
                 require(dayOrTurn in 0..366) { "dayOrTurn hors limites ($dayOrTurn) pour '$id'." }
                 val extraInt = itObj.optInt("extraInt", 0)
@@ -456,6 +524,7 @@ object BackupSerializer {
                         subtitle = subtitle,
                         amount = amount,
                         secondaryAmount = secAmount,
+                        daretMembers = daretMembersVal,
                         dayOrTurn = dayOrTurn,
                         extraInt = extraInt,
                         dateOrCycle = dateOrCycle
@@ -548,8 +617,15 @@ object BackupSerializer {
             require(txType in ALLOWED_TX_TYPES) {
                 "Type de transaction non autorisé ('$txType') pour '$id'."
             }
-            val amt = if (item.has("amount")) item.getDouble("amount") else item.optDouble("montant", 0.0)
-            requireFiniteInRange(amt, 0.01, 100_000_000.0, "transaction.amount")
+            val amtKey = if (item.has("amount")) "amount" else "montant"
+            val amt = readMoneyFromJson(
+                item,
+                amtKey,
+                Money.ZERO,
+                Money.ONE_CENTIME,
+                Money.MAX_STORABLE,
+                "transaction.amount"
+            )
 
             val cat = item.optString("category", "Autre / Imprévus").trim().ifBlank { "Autre / Imprévus" }
             require(cat.length in 1..120) { "Catégorie de transaction invalide pour '$id'." }
@@ -600,9 +676,9 @@ object BackupSerializer {
 }
 
 data class WeeklyBreakdownResult(
-    val weekSpend: List<Double>,
-    val weekFutureSpend: List<Double>,
-    val prevWeekSpend: List<Double>,
+    val weekSpend: List<Money>,
+    val weekFutureSpend: List<Money>,
+    val prevWeekSpend: List<Money>,
     val weekLabel: String
 )
 
@@ -612,33 +688,33 @@ data class DashboardState(
     val customPrefs: CustomizationPrefs = CustomizationPrefs(),
     val activeWindow: PayCycleWindow = PayCycleEngine.computeWindow("2026-10", 1),
     val accounts: List<AccountWithBalance> = emptyList(),
-    val totalNetWorth: Double = 0.0,
+    val totalNetWorth: Money = Money.ZERO,
     val envelopes: List<EnvelopeStatus> = emptyList(),
     val cycleTransactions: List<TransactionItem> = emptyList(),
     val filteredHistory: List<TransactionItem> = emptyList(),
     val upcomingTransactions: List<TransactionItem> = emptyList(),
     val allTransactions: List<TransactionItem> = emptyList(),
-    val cycleExpenses: Double = 0.0,
-    val cycleIncomes: Double = 0.0,
-    val totalCycleRollover: Double = 0.0,
-    val totalAvailableBudget: Double = 6400.0,
-    val remainingBudget: Double = 6400.0,
-    val unpaidBillsTotal: Double = 0.0,
-    val safePool: Double = 0.0,
+    val cycleExpenses: Money = Money.ZERO,
+    val cycleIncomes: Money = Money.ZERO,
+    val totalCycleRollover: Money = Money.ZERO,
+    val totalAvailableBudget: Money = Money.fromDh(6400),
+    val remainingBudget: Money = Money.fromDh(6400),
+    val unpaidBillsTotal: Money = Money.ZERO,
+    val safePool: Money = Money.ZERO,
     val daysRemaining: Int = 30,
-    val safeToSpendToday: Double = 0.0,
-    val dailyAverageSpend: Double = 0.0,
-    val projectedCycleSpend: Double = 0.0,
+    val safeToSpendToday: Money = Money.ZERO,
+    val dailyAverageSpend: Money = Money.ZERO,
+    val projectedCycleSpend: Money = Money.ZERO,
     val spendProjection: CycleSpendProjection = CycleSpendProjection(),
-    val previousCycleExpenses: Double = 0.0,
-    val weekDaysSpend: List<Double> = List(7) { 0.0 },
-    val weekDaysFutureSpend: List<Double> = List(7) { 0.0 },
-    val weekTotalSpend: Double = 0.0,
-    val prevWeekTotalSpend: Double = 0.0,
+    val previousCycleExpenses: Money = Money.ZERO,
+    val weekDaysSpend: List<Money> = List(7) { Money.ZERO },
+    val weekDaysFutureSpend: List<Money> = List(7) { Money.ZERO },
+    val weekTotalSpend: Money = Money.ZERO,
+    val prevWeekTotalSpend: Money = Money.ZERO,
     val weekRangeLabel: String = "",
     val mostExpensiveDayIndex: Int = -1,
-    val mostExpensiveDayAmount: Double = 0.0,
-    val activeWeekDailyAverage: Double = 0.0,
+    val mostExpensiveDayAmount: Money = Money.ZERO,
+    val activeWeekDailyAverage: Money = Money.ZERO,
     val topEnvelopeStatus: EnvelopeStatus? = null,
     val bestControlledEnvelope: EnvelopeStatus? = null,
     val worstControlledEnvelope: EnvelopeStatus? = null,
@@ -653,9 +729,9 @@ data class DashboardState(
     val noSpendStreakDays: Int = 0,
     val monthEndForecastMessage: String = "",
     val biggestSpendingDayIso: String = "",
-    val biggestSpendingDayAmount: Double = 0.0,
+    val biggestSpendingDayAmount: Money = Money.ZERO,
     val detectedSubscriptions: List<DetectedSubscription> = emptyList(),
-    val cycleSavings: Double = 0.0,
+    val cycleSavings: Money = Money.ZERO,
     val isOfflineMode: Boolean = false,
     val isSyncing: Boolean = false,
     val isCleanFreshAccount: Boolean = false,
@@ -876,7 +952,7 @@ class MasroufiViewModel(
 
         val sortedAccounts = accs.sortedBy { it.name }
         val accountBalances = PayCycleEngine.computeAccountBalances(sortedAccounts, txs)
-        val netWorth = accountBalances.sumOf { it.currentBalance }
+        val netWorth = accountBalances.map { it.currentBalance }.sumMoney()
 
         val sortedEnvelopes = envs.sortedByDescending { it.hasCap }.sortedByDescending { it.percentage }
         val envelopeStatuses = PayCycleEngine.computeEnvelopes(
@@ -894,21 +970,21 @@ class MasroufiViewModel(
 
         // Phase 0: Exclude future-dated transactions (date > today) from spent-so-far, daily average, and cycle balance
         val pastOrTodayCycleTxs = cycleTxs.filter { it.isoDate <= todayIso }
-        val futureCycleExpenses = cycleTxs.filter { it.type == "expense" && it.isoDate > todayIso }.sumOf { it.amount }
+        val futureCycleExpenses = cycleTxs.filter { it.type == "expense" && it.isoDate > todayIso }.map { it.amount }.sumMoney()
 
-        val cycleExpenses = pastOrTodayCycleTxs.filter { it.type == "expense" }.sumOf { it.amount }
+        val cycleExpenses = pastOrTodayCycleTxs.filter { it.type == "expense" }.map { it.amount }.sumMoney()
         val cycleSavings = pastOrTodayCycleTxs.filter {
             it.type == "expense" && (
                 it.envelopeKey.equals("epargne", ignoreCase = true) ||
                     DefaultCategoryResolver.canonicalDefaultId(it.category) == "epargne"
                 )
-        }.sumOf { it.amount }
-        val cycleIncomes = pastOrTodayCycleTxs.filter { it.type == "income" }.sumOf { it.amount }
+        }.map { it.amount }.sumMoney()
+        val cycleIncomes = pastOrTodayCycleTxs.filter { it.type == "income" }.map { it.amount }.sumMoney()
         val prevCycleExpenses = txs.filter {
             it.type == "expense" && PayCycleEngine.isInWindow(it.isoDate, prevWindow) && it.isoDate <= todayIso
-        }.sumOf { it.amount }
+        }.map { it.amount }.sumMoney()
 
-        val totalRollover = envelopeStatuses.sumOf { it.rolloverAmount }
+        val totalRollover = envelopeStatuses.map { it.rolloverAmount }.sumMoney()
         val totalAvailable = profile.baseBudget + cycleIncomes + totalRollover
         val remaining = totalAvailable - cycleExpenses
 
@@ -919,13 +995,14 @@ class MasroufiViewModel(
         val seasonals = finItems.filter { it.itemType == "seasonal" }
 
         val unpaidBills = bills.filter { !PayCycleEngine.isBillPaidInCycle(it, activeCycleKey) }
-            .sumOf { it.amount }
+            .map { it.amount }
+            .sumMoney()
 
         // Count future-dated transactions in Safe-to-spend only as committed bills
         val committedBillsAndFuture = unpaidBills + futureCycleExpenses
-        val safePool = max(0.0, remaining - committedBillsAndFuture)
-        val safeToday = if (window.daysRemaining > 0) safePool / window.daysRemaining else safePool
-        val dailyAvg = cycleExpenses / max(1, window.daysElapsed)
+        val safePool = (remaining - committedBillsAndFuture).coerceAtLeast(Money.ZERO)
+        val safeToday = if (window.daysRemaining > 0) safePool.divideBy(window.daysRemaining.toLong()) else safePool
+        val dailyAvg = cycleExpenses.divideBy(max(1, window.daysElapsed).toLong())
 
         val spendProjection = PayCycleEngine.computeOverspendProjection(
             window = window,
@@ -944,15 +1021,15 @@ class MasroufiViewModel(
         val weekFutureSpend = weeklyBreakdown.weekFutureSpend
         val prevWeekSpend = weeklyBreakdown.prevWeekSpend
         val weekLabel = weeklyBreakdown.weekLabel
-        val weekTotal = weekSpend.sum()
-        val maxDaySpend = weekSpend.maxOrNull() ?: 0.0
-        val maxDayIdx = if (maxDaySpend > 0.0) weekSpend.indexOfFirst { it == maxDaySpend } else -1
-        val activeDaysCount = weekSpend.count { it > 0.0 }.coerceAtLeast(1)
+        val weekTotal = weekSpend.sumMoney()
+        val maxDaySpend = weekSpend.maxOrNull() ?: Money.ZERO
+        val maxDayIdx = if (maxDaySpend.isPositive) weekSpend.indexOfFirst { it == maxDaySpend } else -1
+        val activeDaysCount = weekSpend.count { it.isPositive }.coerceAtLeast(1)
 
-        val cappedEnvs = envelopeStatuses.filter { it.config.hasCap && it.totalAvailable > 0 }
+        val cappedEnvs = envelopeStatuses.filter { it.config.hasCap && it.totalAvailable.isPositive }
         val bestEnv = cappedEnvs.minByOrNull { it.usagePercent }
         val worstEnv = cappedEnvs.maxByOrNull { it.usagePercent }
-        val topEnv = envelopeStatuses.filter { it.spent > 0 }.maxByOrNull { it.spent }
+        val topEnv = envelopeStatuses.filter { it.spent.isPositive }.maxByOrNull { it.spent }
 
         val earliestTxIso = txs.minByOrNull { it.isoDate }?.isoDate
         val historySpanDays = if (earliestTxIso != null) {
@@ -966,7 +1043,7 @@ class MasroufiViewModel(
             window = window,
             totalAvailableBudget = totalAvailable,
             cycleExpenses = cycleExpenses,
-            previousCycleExpenses = if (hasAtLeast14DaysData) prevCycleExpenses else 0.0,
+            previousCycleExpenses = if (hasAtLeast14DaysData) prevCycleExpenses else Money.ZERO,
             safeToSpendToday = safeToday,
             dailyAverageSpend = dailyAvg,
             envelopes = envelopeStatuses,
@@ -1020,7 +1097,8 @@ class MasroufiViewModel(
                 tx.desc.lowercase().contains(q) ||
                 tx.category.lowercase().contains(q) ||
                 locCat.contains(q) ||
-                tx.amount.toInt().toString().contains(q)
+                tx.amount.formatDhRounded(useGrouping = false).contains(q) ||
+                tx.amount.toCanonicalDecimalString().contains(q)
             val resolvedKey = tx.envelopeKey.ifBlank {
                 PayCycleEngine.resolveEnvelopeKey(tx.category, tx.desc, sortedEnvelopes)
             }
@@ -1065,11 +1143,11 @@ class MasroufiViewModel(
             weekDaysSpend = weekSpend,
             weekDaysFutureSpend = weekFutureSpend,
             weekTotalSpend = weekTotal,
-            prevWeekTotalSpend = prevWeekSpend.sum(),
+            prevWeekTotalSpend = prevWeekSpend.sumMoney(),
             weekRangeLabel = weekLabel,
             mostExpensiveDayIndex = maxDayIdx,
             mostExpensiveDayAmount = maxDaySpend,
-            activeWeekDailyAverage = weekTotal / activeDaysCount,
+            activeWeekDailyAverage = weekTotal.divideBy(activeDaysCount.toLong()),
             topEnvelopeStatus = topEnv,
             bestControlledEnvelope = bestEnv,
             worstControlledEnvelope = worstEnv,
@@ -1089,7 +1167,7 @@ class MasroufiViewModel(
             cycleSavings = cycleSavings,
             isOfflineMode = isLocalOnlyUser,
             isSyncing = isSyncingNow,
-            isCleanFreshAccount = txs.isEmpty() && netWorth == 0.0,
+            isCleanFreshAccount = txs.isEmpty() && netWorth.isZero,
             hideAmounts = hideAmounts,
             filterState = filter,
             whatIfState = whatIf,
@@ -1137,27 +1215,27 @@ class MasroufiViewModel(
         todayIso: String = PayCycleEngine.todayIso()
     ): WeeklyBreakdownResult {
         val (mondayEpochDay, rangeLabel) = PayCycleEngine.computeMondayEpochDayAndLabel(anchorIso)
-        val curWeek = DoubleArray(7)
-        val futureWeek = DoubleArray(7)
-        val prevWeek = DoubleArray(7)
+        val curWeek = LongArray(7)
+        val futureWeek = LongArray(7)
+        val prevWeek = LongArray(7)
         for (tx in txs) {
             if (tx.type != "expense") continue
             val txDay = PayCycleEngine.parseEpochDays(tx.isoDate)
             val diff = (txDay - mondayEpochDay).toInt()
             if (diff in 0..6) {
                 if (tx.isoDate > todayIso) {
-                    futureWeek[diff] += tx.amount
+                    futureWeek[diff] = Math.addExact(futureWeek[diff], tx.amount.centimes)
                 } else {
-                    curWeek[diff] += tx.amount
+                    curWeek[diff] = Math.addExact(curWeek[diff], tx.amount.centimes)
                 }
             } else if (diff in -7..-1 && tx.isoDate <= todayIso) {
-                prevWeek[diff + 7] += tx.amount
+                prevWeek[diff + 7] = Math.addExact(prevWeek[diff + 7], tx.amount.centimes)
             }
         }
         return WeeklyBreakdownResult(
-            weekSpend = curWeek.toList(),
-            weekFutureSpend = futureWeek.toList(),
-            prevWeekSpend = prevWeek.toList(),
+            weekSpend = curWeek.map { Money.fromCentimes(it) },
+            weekFutureSpend = futureWeek.map { Money.fromCentimes(it) },
+            prevWeekSpend = prevWeek.map { Money.fromCentimes(it) },
             weekLabel = rangeLabel
         )
     }
@@ -1220,10 +1298,10 @@ class MasroufiViewModel(
         }
     }
 
-    fun saveBudgetSettings(baseBudget: Double, payCycleDay: Int, rolloverEnabled: Boolean) {
+    fun saveBudgetSettings(baseBudget: Money, payCycleDay: Int, rolloverEnabled: Boolean) {
         val cur = uiState.value.profile
         val updated = cur.copy(
-            baseBudget = PayCycleEngine.roundMoney(baseBudget).coerceAtLeast(100.0),
+            baseBudget = baseBudget.coerceAtLeast(Money.fromDh(100)),
             payCycleDay = payCycleDay.coerceIn(1, 28),
             rolloverEnabled = rolloverEnabled
         )
@@ -1283,8 +1361,8 @@ class MasroufiViewModel(
             itemType = "custom_prefs",
             name = prefs.customTitle.ifBlank { "Masroufi" }.take(80),
             subtitle = encodedSub,
-            amount = 0.0,
-            secondaryAmount = 0.0,
+            amount = Money.ZERO,
+            secondaryAmount = Money.ZERO,
             dayOrTurn = prefs.toVisibilityMask(),
             extraInt = 0,
             dateOrCycle = prefs.customSubtitle.take(200),
@@ -1327,7 +1405,7 @@ class MasroufiViewModel(
     fun saveTransaction(
         existingId: String = "",
         type: String,
-        amount: Double,
+        amount: Money,
         category: String,
         envelopeKey: String,
         accountId: String,
@@ -1335,8 +1413,7 @@ class MasroufiViewModel(
         desc: String,
         isoDate: String
     ) {
-        val roundedAmount = PayCycleEngine.roundMoney(amount)
-        if (roundedAmount <= 0.0) return
+        if (!amount.isPositive) return
         val validatedDate = try {
             PayCycleEngine.requireOrNormalizeIsoDate(isoDate)
         } catch (e: IllegalArgumentException) {
@@ -1364,7 +1441,7 @@ class MasroufiViewModel(
             id = generatedId,
             userId = currentUserId,
             type = type,
-            amount = roundedAmount,
+            amount = amount,
             category = normalizedCat,
             envelopeKey = resolvedEnvKey,
             accountId = accountId.ifBlank { "acc_cash" },
@@ -1395,7 +1472,7 @@ class MasroufiViewModel(
             id = txId,
             userId = currentUserId,
             type = "expense",
-            amount = PayCycleEngine.roundMoney(preset.amount).coerceAtLeast(1.0),
+            amount = preset.amount.coerceAtLeast(Money.fromDh(1)),
             category = normalizedCat,
             envelopeKey = envKey,
             accountId = preset.dateOrCycle.ifBlank { "acc_cash" },
@@ -1432,14 +1509,14 @@ class MasroufiViewModel(
     }
 
     fun completeQuickOnboarding(
-        salary: Double,
+        salary: Money,
         payDay: Int,
         threeEnvelopes: List<Triple<String, Double, String>>,
         onDone: () -> Unit = {}
     ) {
         val curProfile = uiState.value.profile
         val updatedProfile = curProfile.copy(
-            baseBudget = salary.coerceAtLeast(100.0),
+            baseBudget = salary.coerceAtLeast(Money.fromDh(100)),
             payCycleDay = payDay.coerceIn(1, 28),
             rolloverEnabled = true
         )
@@ -1511,8 +1588,7 @@ class MasroufiViewModel(
 
         var learnedAny = false
         val createdTxs = items.mapIndexedNotNull { idx, parsed ->
-            val roundedAmt = PayCycleEngine.roundMoney(parsed.amount)
-            if (roundedAmt <= 0.0) return@mapIndexedNotNull null
+            if (!parsed.amount.isPositive) return@mapIndexedNotNull null
             val resolvedEnvKey = parsed.envelopeKey.ifBlank {
                 PayCycleEngine.resolveEnvelopeKey(parsed.categoryName, parsed.description, envConfigs)
             }
@@ -1531,7 +1607,7 @@ class MasroufiViewModel(
                 id = voiceTxId,
                 userId = currentUserId,
                 type = parsed.txType.ifBlank { "expense" },
-                amount = roundedAmt,
+                amount = parsed.amount,
                 category = normalizedCat,
                 envelopeKey = resolvedEnvKey,
                 accountId = resolvedAccountId,
@@ -1568,13 +1644,8 @@ class MasroufiViewModel(
         onComplete: (importedCount: Int) -> Unit = {}
     ) {
         val validTxs = transactions
-            .filter { it.amount > 0.0 && PayCycleEngine.isValidIsoDate(it.isoDate) }
-            .map { tx ->
-                tx.copy(
-                    userId = currentUserId,
-                    amount = PayCycleEngine.roundMoney(tx.amount)
-                )
-            }
+            .filter { it.amount.isPositive && PayCycleEngine.isValidIsoDate(it.isoDate) }
+            .map { tx -> tx.copy(userId = currentUserId) }
         if (validTxs.isEmpty()) {
             onComplete(0)
             return
@@ -1620,7 +1691,7 @@ class MasroufiViewModel(
         }
     }
 
-    fun saveAccount(id: String = "", name: String, kind: String, initialBalance: Double, colorHex: String) {
+    fun saveAccount(id: String = "", name: String, kind: String, initialBalance: Money, colorHex: String) {
         val existing = uiState.value.accounts.find { it.account.id == id }?.account
         safeLaunch("saveAccount") {
             repository.upsertAccount(
@@ -1629,7 +1700,7 @@ class MasroufiViewModel(
                     userId = currentUserId,
                     name = name.ifBlank { "Compte" },
                     kind = if (kind in listOf("cash", "bank", "wallet")) kind else "cash",
-                    initialBalance = PayCycleEngine.roundMoney(initialBalance),
+                    initialBalance = initialBalance,
                     colorHex = colorHex.ifBlank { "#10B981" },
                     createdAt = existing?.createdAt
                 )
@@ -1691,15 +1762,21 @@ class MasroufiViewModel(
     fun saveFinancialItem(item: FinancialItem) {
         val s = uiState.value
         val existing = (s.presets + s.goals + s.bills + s.debts + s.darets + s.seasonals).find { it.id == item.id }
-        safeLaunch("saveFinancialItem") {
-            repository.upsertFinancialItem(
-                item.copy(
-                    userId = currentUserId,
-                    amount = PayCycleEngine.roundMoney(item.amount),
-                    secondaryAmount = PayCycleEngine.roundMoney(item.secondaryAmount),
-                    createdAt = item.createdAt ?: existing?.createdAt
-                )
+        val normalized = if (item.itemType == "daret") {
+            item.copy(
+                userId = currentUserId,
+                secondaryAmount = Money.ZERO,
+                daretMembers = item.resolvedDaretMembers(),
+                createdAt = item.createdAt ?: existing?.createdAt
             )
+        } else {
+            item.copy(
+                userId = currentUserId,
+                createdAt = item.createdAt ?: existing?.createdAt
+            )
+        }
+        safeLaunch("saveFinancialItem") {
+            repository.upsertFinancialItem(normalized)
         }
     }
 
@@ -1730,8 +1807,8 @@ class MasroufiViewModel(
             itemType = "bill",
             name = sub.name.take(100),
             subtitle = "Abonnement détecté",
-            amount = sub.amount.coerceAtLeast(1.0),
-            secondaryAmount = 0.0,
+            amount = sub.amount.coerceAtLeast(Money.fromDh(1)),
+            secondaryAmount = Money.ZERO,
             dayOrTurn = sub.typicalDayOfMonth.coerceIn(1, 28),
             extraInt = 0,
             dateOrCycle = ""
@@ -1744,15 +1821,15 @@ class MasroufiViewModel(
 
     fun splitBillIntoSellef(
         billTitle: String,
-        totalAmount: Double,
+        totalAmount: Money,
         friendsNamesCsv: String,
         includeSelf: Boolean = true,
         recordFullExpenseNow: Boolean = true,
         accountId: String = "acc_cash",
         envelopeKey: String = "cafe",
-        onDone: (Int, Double) -> Unit = { _, _ -> }
+        onDone: (Int, Money) -> Unit = { _, _ -> }
     ) {
-        if (totalAmount <= 0.0 || totalAmount.isNaN()) return
+        if (!totalAmount.isPositive) return
         val friends = friendsNamesCsv
             .split(",", ";", "\n")
             .map { it.trim() }
@@ -1760,8 +1837,8 @@ class MasroufiViewModel(
             .distinct()
         if (friends.isEmpty()) return
         val divisor = if (includeSelf) friends.size + 1 else friends.size
-        val sharePerPerson = ((totalAmount / divisor) * 100.0).roundToInt() / 100.0
-        if (sharePerPerson <= 0.0) return
+        val sharePerPerson = totalAmount.divideBy(divisor.toLong())
+        if (!sharePerPerson.isPositive) return
 
         val cleanTitle = billTitle.trim().ifBlank { "Sortie / Restaurant" }
         val nowMs = System.currentTimeMillis()
@@ -1792,7 +1869,7 @@ class MasroufiViewModel(
                     name = friendName.take(80),
                     subtitle = cleanTitle.take(120),
                     amount = sharePerPerson,
-                    secondaryAmount = 0.0,
+                    secondaryAmount = Money.ZERO,
                     dayOrTurn = 1,
                     extraInt = 0,
                     dateOrCycle = "lent"
@@ -1814,7 +1891,7 @@ class MasroufiViewModel(
             id = txId,
             userId = currentUserId,
             type = "expense",
-            amount = bill.amount.coerceAtLeast(1.0),
+            amount = bill.amount.coerceAtLeast(Money.fromDh(1)),
             category = "charges",
             envelopeKey = "charges",
             accountId = "acc_bank",
@@ -1827,18 +1904,17 @@ class MasroufiViewModel(
         }
     }
 
-    fun contributeToGoalOrSeasonal(item: FinancialItem, addAmount: Double) {
-        val roundedAdd = PayCycleEngine.roundMoney(addAmount)
-        if (roundedAdd <= 0.0) return
+    fun contributeToGoalOrSeasonal(item: FinancialItem, addAmount: Money) {
+        if (!addAmount.isPositive) return
         val updatedItem = item.copy(
-            secondaryAmount = PayCycleEngine.roundMoney(item.secondaryAmount + roundedAdd),
+            secondaryAmount = item.secondaryAmount + addAmount,
             userId = currentUserId
         )
         val tx = TransactionItem(
             id = "tx_contrib_${item.id}_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = "expense",
-            amount = roundedAdd,
+            amount = addAmount,
             category = "epargne",
             envelopeKey = "epargne",
             accountId = "acc_bank",
@@ -1851,16 +1927,21 @@ class MasroufiViewModel(
     }
 
     fun payDaretRound(daret: FinancialItem) {
-        val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
+        val totalMembers = daret.resolvedDaretMembers()
         val nextPaid = (daret.extraInt + 1).coerceAtMost(totalMembers)
-        val updatedDaret = daret.copy(extraInt = nextPaid, userId = currentUserId)
+        val updatedDaret = daret.copy(
+            extraInt = nextPaid,
+            daretMembers = totalMembers,
+            secondaryAmount = Money.ZERO,
+            userId = currentUserId
+        )
         val txId = "tx_daret_${daret.id}_round_$nextPaid"
         val existingTx = uiState.value.allTransactions.find { it.id == txId }
         val tx = TransactionItem(
             id = txId,
             userId = currentUserId,
             type = "expense",
-            amount = PayCycleEngine.roundMoney(daret.amount).coerceAtLeast(1.0),
+            amount = daret.amount.coerceAtLeast(Money.fromDh(1)),
             category = "epargne",
             envelopeKey = "epargne",
             accountId = "acc_bank",
@@ -1875,9 +1956,13 @@ class MasroufiViewModel(
 
     fun collectDaretPot(daret: FinancialItem, targetAccountId: String = "acc_bank") {
         if (PayCycleEngine.isDaretPotCollected(daret)) return
-        val totalMembers = if (daret.secondaryAmount.isNaN()) 1 else daret.secondaryAmount.roundToInt().coerceAtLeast(1)
-        val totalPot = PayCycleEngine.roundMoney(daret.amount.coerceAtLeast(1.0) * totalMembers)
-        val updatedDaret = PayCycleEngine.markDaretPotCollected(daret).copy(userId = currentUserId)
+        val totalMembers = daret.resolvedDaretMembers()
+        val totalPot = daret.amount.coerceAtLeast(Money.fromDh(1)) * totalMembers.toLong()
+        val updatedDaret = PayCycleEngine.markDaretPotCollected(daret).copy(
+            daretMembers = totalMembers,
+            secondaryAmount = Money.ZERO,
+            userId = currentUserId
+        )
         val validAccId = targetAccountId.takeIf {
             it == "acc_bank" || it == "acc_cash" || uiState.value.accounts.any { acc -> acc.account.id == it }
         } ?: "acc_bank"
@@ -1901,17 +1986,16 @@ class MasroufiViewModel(
         }
     }
 
-    fun settleDebt(debt: FinancialItem, payment: Double) {
-        val roundedPayment = PayCycleEngine.roundMoney(payment)
-        if (roundedPayment <= 0.0) return
-        val newPaid = PayCycleEngine.roundMoney(debt.secondaryAmount + roundedPayment).coerceAtMost(debt.amount)
+    fun settleDebt(debt: FinancialItem, payment: Money) {
+        if (!payment.isPositive) return
+        val newPaid = (debt.secondaryAmount + payment).coerceAtMost(debt.amount)
         val isLent = debt.dateOrCycle != "borrowed"
         val updatedDebt = debt.copy(secondaryAmount = newPaid)
         val tx = TransactionItem(
             id = "tx_debt_${debt.id}_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = if (isLent) "income" else "expense",
-            amount = roundedPayment,
+            amount = payment,
             category = "autre",
             envelopeKey = "autre",
             accountId = "acc_cash",

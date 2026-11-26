@@ -73,6 +73,7 @@ import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.example.ui.theme.ExpressiveAnimatedProgressBar
 import com.example.ui.theme.ExpressiveGlassCard
+import com.masroufi.core.Money
 import com.masroufi.fiscal.domain.AnnualBillCalculator
 import com.masroufi.fiscal.domain.AnnualBillItem
 import com.masroufi.fiscal.domain.AnnualBillPreset
@@ -143,7 +144,7 @@ fun AnnualBillsScreen(
     }
     val existingEditingSaved = remember(existingEditingBill, existingGoals) {
         val goalId = existingEditingBill?.linkedGoalId.orEmpty()
-        if (goalId.isBlank()) 0.0 else existingGoals.find { it.id == goalId }?.secondaryAmount ?: 0.0
+        if (goalId.isBlank()) Money.ZERO else existingGoals.find { it.id == goalId }?.secondaryAmount ?: Money.ZERO
     }
 
     val liveBreakdown = remember(
@@ -168,7 +169,7 @@ fun AnnualBillsScreen(
     val activeBills = remember(annualBills) { annualBills.filterNot { it.isPaid } }
     val paidBills = remember(annualBills) { annualBills.filter { it.isPaid } }
 
-    fun fmt(value: Double): String = "${PayCycleEngine.formatAmountOrMask(value, hideAmounts)} $cur"
+    fun fmt(value: Money): String = "${PayCycleEngine.formatAmountOrMask(value, hideAmounts)} $cur"
 
     fun monthLabel(month: Int): String =
         strings.monthNames.getOrElse((month - 1).coerceIn(0, 11)) { month.toString() }
@@ -491,7 +492,7 @@ fun AnnualBillsScreen(
                                         manualAmountText = ""
                                     }
                                 },
-                                enabled = resolvedAmountMad > 0.0,
+                                enabled = resolvedAmountMad.isPositive,
                                 shape = RoundedCornerShape(16.dp),
                                 contentPadding = PaddingValues(vertical = 14.dp),
                                 modifier = Modifier
@@ -559,7 +560,7 @@ fun AnnualBillsScreen(
                     }
                     items(activeBills, key = { it.id }) { bill ->
                         val linkedGoal = existingGoals.find { it.id == bill.linkedGoalId }
-                        val savedAmt = linkedGoal?.secondaryAmount ?: 0.0
+                        val savedAmt = linkedGoal?.secondaryAmount ?: Money.ZERO
                         val breakdown = AnnualBillCalculator.computeBreakdown(
                             annualAmountMad = bill.annualAmountMad,
                             savedAmountMad = savedAmt,
@@ -581,7 +582,11 @@ fun AnnualBillsScreen(
                                 bill.cvBand?.let { selectedCvBand = it }
                                 bill.fuelType?.let { selectedFuel = it }
                                 customName = bill.title
-                                manualAmountText = bill.annualAmountMad.toString()
+                                manualAmountText = if (bill.annualAmountMad.centimes % 100L == 0L) {
+                                    (bill.annualAmountMad.centimes / 100L).toString()
+                                } else {
+                                    bill.annualAmountMad.toCanonicalDecimalString()
+                                }
                                 selectedDueMonth = bill.dueMonth
                             },
                             onMarkPaid = { billPendingPayDialog = bill },
@@ -716,7 +721,7 @@ private fun AnnualBillReserveCard(
     onMarkPaid: () -> Unit,
     onDelete: () -> Unit
 ) {
-    fun fmt(v: Double): String = "${PayCycleEngine.formatAmountOrMask(v, hideAmounts)} $currencySymbol"
+    fun fmt(v: Money): String = "${PayCycleEngine.formatAmountOrMask(v, hideAmounts)} $currencySymbol"
     val monthText = strings.monthNames.getOrElse((bill.dueMonth - 1).coerceIn(0, 11)) { bill.dueMonth.toString() }
     val statusColor = when {
         breakdown.isDueDatePassed -> AccentCoral

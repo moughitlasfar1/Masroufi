@@ -13,6 +13,7 @@ import com.example.ui.ShareCardPayload
 import com.example.widget.MasroufiWidgetStore
 import com.example.widget.WidgetSnapshot
 import com.example.widget.WidgetStyle
+import com.masroufi.core.Money
 import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
@@ -49,7 +50,7 @@ class ShareCardAndPrivacyAuditTest {
             groupName = "Daret Famille",
             turnNumber = 3,
             totalMembers = 10,
-            amountMad = 1500.0,
+            amountMad = Money.fromDh(1500),
             recipientName = "Karim",
             payoutDate = "2026-11-30"
         )
@@ -67,8 +68,8 @@ class ShareCardAndPrivacyAuditTest {
 
         val sellef = ShareCardPayload.SellefCard(
             personName = "Youssef",
-            totalBalanceMad = 850.0,
-            remainingMad = 350.0,
+            totalBalanceMad = Money.fromDh(850),
+            remainingMad = Money.fromDh(350),
             isLent = true
         )
         val darijaMasked = ShareCardFormatter.buildCardModel(sellef, ShareCardLanguage.DARIJA, hideAmounts = true)
@@ -86,7 +87,7 @@ class ShareCardAndPrivacyAuditTest {
             groupName = "Daret Bureau",
             turnNumber = 2,
             totalMembers = 6,
-            amountMad = 2000.0,
+            amountMad = Money.fromDh(2000),
             recipientName = "Salma",
             payoutDate = "2026-12-05"
         )
@@ -137,7 +138,7 @@ class ShareCardAndPrivacyAuditTest {
         MasroufiWidgetStore.saveWidgetSnapshot(
             context,
             WidgetSnapshot(
-                safeToSpendToday = 275.0,
+                safeToSpendToday = Money.fromDh(275),
                 hideAmounts = false,
                 appLockEnabled = true,
                 language = "fr",

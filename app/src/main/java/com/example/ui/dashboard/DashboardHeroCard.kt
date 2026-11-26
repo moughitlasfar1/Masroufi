@@ -69,6 +69,7 @@ import com.example.ui.theme.ExpressiveMotion
 import com.example.ui.theme.MasroufiTokens
 import com.example.ui.theme.heroGradientColors
 import com.example.ui.theme.paletteForKey
+import com.masroufi.core.Money
 
 @Composable
 fun DashboardHeroCard(
@@ -80,22 +81,22 @@ fun DashboardHeroCard(
     val hide = state.hideAmounts
     val haptics = LocalHapticFeedback.current
     val lang = state.profile.language
-    val pct = if (state.totalAvailableBudget > 0) {
-        ((state.cycleExpenses / state.totalAvailableBudget) * 100.0).safeRoundToInt()
+    val pct = if (state.totalAvailableBudget.isPositive) {
+        ((state.cycleExpenses.centimes.toDouble() / state.totalAvailableBudget.centimes.toDouble()) * 100.0).safeRoundToInt()
     } else 0
-    val isOverBudget = state.remainingBudget < 0
+    val isOverBudget = state.remainingBudget.isNegative
     var heroExpanded by remember { mutableStateOf(false) }
 
-    fun fmt(value: Double): String = PayCycleEngine.formatAmountOrMask(value, hide)
+    fun fmt(value: Money): String = PayCycleEngine.formatAmountOrMask(value, hide)
 
     val heroColors = heroGradientColors(state.customPrefs.accentPalette, isOverBudget)
     val heroAccent = paletteForKey(state.customPrefs.accentPalette).primaryDark
     val heroShape = MasroufiTokens.Shapes.heroCard
 
     // Budget remaining ratio for the arc gauge (1.0 = full budget remaining, 0.0 = drained)
-    val remainingFraction = if (state.totalAvailableBudget > 0.0) {
-        ((state.totalAvailableBudget - state.cycleExpenses) / state.totalAvailableBudget).toFloat().safeFraction(0f, 1f)
-    } else if (state.safeToSpendToday > 0.0) 0.75f else 0f
+    val remainingFraction = if (state.totalAvailableBudget.isPositive) {
+        ((state.totalAvailableBudget - state.cycleExpenses).centimes.toDouble() / state.totalAvailableBudget.centimes.toDouble()).toFloat().safeFraction(0f, 1f)
+    } else if (state.safeToSpendToday.isPositive) 0.75f else 0f
 
     val animatedGaugeFraction by animateFloatAsState(
         targetValue = if (isOverBudget) 1f else remainingFraction.coerceAtLeast(0.06f),
@@ -281,7 +282,7 @@ fun DashboardHeroCard(
                     fontWeight = FontWeight.Bold,
                     color = Color.White
                 )
-            } else if (state.unpaidBillsTotal > 0.0) {
+            } else if (state.unpaidBillsTotal.isPositive) {
                 Spacer(modifier = Modifier.height(MasroufiTokens.Spacing.xs))
                 Text(
                     text = strings.safeToSpendSub.replace("{bills}", fmt(state.unpaidBillsTotal)),

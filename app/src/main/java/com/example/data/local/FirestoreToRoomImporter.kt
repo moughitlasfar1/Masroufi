@@ -5,6 +5,7 @@ import com.example.data.AccountItem
 import com.example.data.DataSourceConfigStore
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
+import com.example.data.FirestoreSnapshotMappers
 import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
@@ -62,21 +63,7 @@ class FirebaseFirestoreServerSource(
 
         val profileSnap = userDoc.get(Source.SERVER).await()
         val profile = if (profileSnap.exists()) {
-            val isDark = profileSnap.getBoolean("isDarkTheme")
-                ?: profileSnap.getBoolean("darkTheme")
-                ?: false
-            UserProfile(
-                id = profileSnap.id,
-                userId = profileSnap.getString("userId") ?: userId,
-                baseBudget = profileSnap.getDouble("baseBudget") ?: 6400.0,
-                payCycleDay = (profileSnap.getLong("payCycleDay") ?: 1L).toInt().coerceIn(1, 28),
-                rolloverEnabled = profileSnap.getBoolean("rolloverEnabled") ?: true,
-                language = profileSnap.getString("language") ?: "fr",
-                isDarkTheme = isDark,
-                seeded = profileSnap.getBoolean("seeded") ?: true,
-                createdAt = profileSnap.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-                updatedAt = profileSnap.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-            )
+            FirestoreSnapshotMappers.toUserProfile(profileSnap, userId)
         } else {
             null
         }
@@ -85,18 +72,16 @@ class FirebaseFirestoreServerSource(
             .whereEqualTo("userId", userId)
             .get(Source.SERVER)
             .await()
-        val accounts = accountsSnap.documents.mapNotNull { doc ->
-            doc.toObject(AccountItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+        val accounts = accountsSnap.documents.map { doc ->
+            FirestoreSnapshotMappers.toAccountItem(doc, userId)
         }
 
         val transactionsSnap = userDoc.collection("transactions")
             .whereEqualTo("userId", userId)
             .get(Source.SERVER)
             .await()
-        val transactions = transactionsSnap.documents.mapNotNull { doc ->
-            doc.toObject(TransactionItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+        val transactions = transactionsSnap.documents.map { doc ->
+            FirestoreSnapshotMappers.toTransactionItem(doc, userId)
         }
 
         val envelopesSnap = userDoc.collection("envelopes")
@@ -125,9 +110,8 @@ class FirebaseFirestoreServerSource(
             .whereEqualTo("userId", userId)
             .get(Source.SERVER)
             .await()
-        val items = itemsSnap.documents.mapNotNull { doc ->
-            doc.toObject(FinancialItem::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+        val items = itemsSnap.documents.map { doc ->
+            FirestoreSnapshotMappers.toFinancialItem(doc, userId)
         }
 
         val creditsSnap = userDoc.collection("credits")
@@ -135,8 +119,7 @@ class FirebaseFirestoreServerSource(
             .await()
         val credits = creditsSnap.documents.mapNotNull { doc ->
             runCatching {
-                doc.toObject(SavedCreditEntity::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-                    ?.let { if (it.id.isBlank()) it.copy(id = doc.id) else it }
+                FirestoreSnapshotMappers.toSavedCreditEntity(doc, userId)
             }.getOrNull()
         }
 
@@ -370,7 +353,7 @@ object FirestoreToRoomImporter {
                 put(
                     "profile",
                     JSONObject().apply {
-                        put("baseBudget", p.baseBudget)
+                        put("baseBudget", p.baseBudget.toBigDecimalDh())
                         put("payCycleDay", p.payCycleDay)
                         put("rolloverEnabled", p.rolloverEnabled)
                         put("language", p.language)
@@ -388,7 +371,7 @@ object FirestoreToRoomImporter {
                                 put("id", a.id)
                                 put("name", a.name)
                                 put("kind", a.kind)
-                                put("initialBalance", a.initialBalance)
+                                put("initialBalance", a.initialBalance.toBigDecimalDh())
                                 put("colorHex", a.colorHex)
                             }
                         )
@@ -403,7 +386,7 @@ object FirestoreToRoomImporter {
                             JSONObject().apply {
                                 put("id", t.id)
                                 put("type", t.type)
-                                put("amount", t.amount)
+                                put("amount", t.amount.toBigDecimalDh())
                                 put("category", t.category)
                                 put("envelopeKey", t.envelopeKey)
                                 put("accountId", t.accountId)
@@ -446,8 +429,14 @@ object FirestoreToRoomImporter {
                                 put("itemType", i.itemType)
                                 put("name", i.name)
                                 put("subtitle", i.subtitle)
-                                put("amount", i.amount)
-                                put("secondaryAmount", i.secondaryAmount)
+                                put("amount", i.amount.toBigDecimalDh())
+                                put(
+                                    "secondaryAmount",
+                                    if (i.itemType == "daret") i.resolvedDaretMembers() else i.secondaryAmount.toBigDecimalDh()
+                                )
+                                if (i.itemType == "daret") {
+                                    put("daretMembers", i.resolvedDaretMembers())
+                                }
                                 put("dayOrTurn", i.dayOrTurn)
                                 put("extraInt", i.extraInt)
                                 put("dateOrCycle", i.dateOrCycle)
@@ -464,16 +453,16 @@ object FirestoreToRoomImporter {
                             JSONObject().apply {
                                 put("id", c.id)
                                 put("type", c.type)
-                                put("loanAmount", c.loanAmount)
-                                put("downPayment", c.downPayment)
-                                put("financedPrincipal", c.financedPrincipal)
+                                put("loanAmount", c.loanAmount.toBigDecimalDh())
+                                put("downPayment", c.downPayment.toBigDecimalDh())
+                                put("financedPrincipal", c.financedPrincipal.toBigDecimalDh())
                                 put("durationMonths", c.durationMonths)
                                 put("deferredMonths", c.deferredMonths)
                                 put("annualInterestRateHt", c.annualInterestRateHt)
                                 put("applyInterestTva", c.applyInterestTva)
                                 put("insuranceRate", c.insuranceRate)
-                                put("monthlyPayment", c.monthlyPayment)
-                                put("totalCost", c.totalCost)
+                                put("monthlyPayment", c.monthlyPayment.toBigDecimalDh())
+                                put("totalCost", c.totalCost.toBigDecimalDh())
                                 put("debtToIncomeRatio", c.debtToIncomeRatio)
                                 put("maxAllowedDti", c.maxAllowedDti)
                                 put("linkToMonthlyExpenses", c.linkToMonthlyExpenses)

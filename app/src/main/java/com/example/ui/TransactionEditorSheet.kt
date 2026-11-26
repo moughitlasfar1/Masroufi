@@ -73,6 +73,7 @@ import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.ExpressivePillChip
 import com.example.ui.theme.semanticExpenseColor
 import com.example.ui.theme.semanticIncomeColor
+import com.masroufi.core.Money
 import com.masroufi.importer.domain.ImporterStrings
 import com.masroufi.importer.presentation.ScanReceiptActionChip
 import java.util.Calendar
@@ -87,7 +88,7 @@ fun TransactionEditorSheet(
     strings: AppStrings,
     autoLaunchVoice: Boolean = false,
     onDismiss: () -> Unit,
-    onSave: (String, String, Double, String, String, String, String, String, String) -> Unit,
+    onSave: (String, String, Money, String, String, String, String, String, String) -> Unit,
     onDelete: ((TransactionItem) -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -114,8 +115,8 @@ fun TransactionEditorSheet(
     var amountText by remember {
         mutableStateOf(
             existingTx?.amount?.let {
-                if (it > 0) {
-                    if (it % 1.0 == 0.0) it.toInt().toString() else it.toString()
+                if (it.isPositive) {
+                    if (it.centimes % 100L == 0L) (it.centimes / 100L).toString() else it.toCanonicalDecimalString()
                 } else ""
             } ?: ""
         )
@@ -193,7 +194,7 @@ fun TransactionEditorSheet(
         )
     }
 
-    fun computeConvertedAmount(rawTextOverride: String = amountText): Double {
+    fun computeConvertedAmount(rawTextOverride: String = amountText): Money {
         val rawAmt = evaluateKeypadExpression(rawTextOverride)
         val eurRate = eurRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_EUR_TO_MAD
         val usdRate = usdRateText.replace(",", ".").toDoubleOrNull() ?: PayCycleEngine.DEFAULT_USD_TO_MAD
@@ -229,7 +230,7 @@ fun TransactionEditorSheet(
             dateError = "Veuillez sélectionner un compte destinataire différent du compte source."
             return false
         }
-        if (convertedAmt <= 0.0) {
+        if (!convertedAmt.isPositive) {
             return false
         }
 
@@ -261,7 +262,7 @@ fun TransactionEditorSheet(
             }
         }
         val baseDesc = effectiveDesc.ifBlank { if (txType == "transfer") "Transfert entre comptes" else overrideCategory }
-        val finalDesc = if (entryCurrency != baseCurrencyCode && rawAmt > 0.0) {
+        val finalDesc = if (entryCurrency != baseCurrencyCode && rawAmt.isPositive) {
             "$baseDesc (${PayCycleEngine.formatDh(rawAmt)} $entryCurrency)"
         } else {
             baseDesc
@@ -410,11 +411,11 @@ fun TransactionEditorSheet(
                         lang = lang,
                         onReceiptScanned = { parsed ->
                             val foundAmount = parsed.totalAmountMad
-                            if (foundAmount != null && foundAmount > 0.0) {
-                                amountText = if (foundAmount % 1.0 == 0.0) {
-                                    foundAmount.toInt().toString()
+                            if (foundAmount != null && foundAmount.isPositive) {
+                                amountText = if (foundAmount.centimes % 100L == 0L) {
+                                    (foundAmount.centimes / 100L).toString()
                                 } else {
-                                    String.format(java.util.Locale.US, "%.2f", foundAmount)
+                                    foundAmount.toCanonicalDecimalString()
                                 }
                             }
                             if (!parsed.isoDate.isNullOrBlank()) {
@@ -529,10 +530,10 @@ fun TransactionEditorSheet(
                     val resolvedEnvKey = shortcut.envelopeKey.ifBlank { smartGuess.envelopeKey }
                     val resolvedCat = shortcut.categoryName.ifBlank { smartGuess.categoryName }
                     val resolvedAcc = smartGuess.accountId.ifBlank { shortcut.accountId }
-                    val amtStr = if (shortcut.typicalAmount % 1.0 == 0.0) {
-                        shortcut.typicalAmount.toInt().toString()
+                    val amtStr = if (shortcut.typicalAmount.centimes % 100L == 0L) {
+                        (shortcut.typicalAmount.centimes / 100L).toString()
                     } else {
-                        shortcut.typicalAmount.toString()
+                        shortcut.typicalAmount.toCanonicalDecimalString()
                     }
                     prefilledShortcut = shortcut
                     amountText = amtStr
@@ -562,10 +563,10 @@ fun TransactionEditorSheet(
                     autoLaunchVoice = autoLaunchVoice,
                     onVoiceParsed = { parsed ->
                         txType = parsed.txType
-                        amountText = if (parsed.amount % 1.0 == 0.0) {
-                            parsed.amount.toInt().toString()
+                        amountText = if (parsed.amount.centimes % 100L == 0L) {
+                            (parsed.amount.centimes / 100L).toString()
                         } else {
-                            parsed.amount.toString()
+                            parsed.amount.toCanonicalDecimalString()
                         }
                         desc = parsed.description
                         selectedEnvelopeKey = parsed.envelopeKey
@@ -627,7 +628,7 @@ fun TransactionEditorSheet(
                                 selectedEnvelopeKey = env.config.key
                                 customCategory = catLabel
                                 duplicateWarningTx = null
-                                if (twoTapInstantSave && (amountText.replace(",", ".").toDoubleOrNull() ?: 0.0) > 0.0) {
+                                if (twoTapInstantSave && evaluateKeypadExpression(amountText).isPositive) {
                                     tryCommitTransaction(
                                         overrideCategory = catLabel,
                                         overrideEnvKey = env.config.key

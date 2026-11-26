@@ -5,8 +5,8 @@ import com.example.data.DefaultCategoryResolver
 import com.example.data.EnvelopeConfig
 import com.example.data.TransactionItem
 import com.example.domain.PayCycleEngine
+import com.masroufi.core.Money
 import java.util.Locale
-import kotlin.math.abs
 
 /**
  * Shared statement import pipeline:
@@ -104,8 +104,7 @@ object StatementPipeline {
         for (row in rows) {
             if (!PayCycleEngine.isValidIsoDate(row.isoDate)) continue
             val (rawType, amount) = resolveTypeAndAmount(row) ?: continue
-            val roundedAmount = PayCycleEngine.roundMoney(amount)
-            if (roundedAmount <= 0.0) continue
+            if (!amount.isPositive) continue
 
             val atmTransfer = rawType == "expense" && isAtmWithdrawal(row.rawLabel)
             val txType = if (atmTransfer) "transfer" else rawType
@@ -132,19 +131,19 @@ object StatementPipeline {
                 )
             }
 
-            val baseKey = "${row.isoDate}|${String.format(Locale.US, "%.2f", roundedAmount)}|${cleanedLabel.lowercase(Locale.ROOT)}|$bankAccId"
+            val baseKey = "${row.isoDate}|${amount.toCanonicalDecimalString()}|${cleanedLabel.lowercase(Locale.ROOT)}|$bankAccId"
             val occ = fileIdOccurrences[baseKey] ?: 0
             fileIdOccurrences[baseKey] = occ + 1
 
             val deterministicId = ImporterConstants.buildDeterministicId(
                 isoDate = row.isoDate,
-                amountMad = roundedAmount,
+                amountMad = amount,
                 normalizedLabel = cleanedLabel,
                 accountId = bankAccId,
                 occurrenceIndex = occ
             )
 
-            val dupSig = duplicateSignature(row.isoDate, roundedAmount, txType)
+            val dupSig = duplicateSignature(row.isoDate, amount, txType)
             val existingCount = existingSignatureCounts[dupSig] ?: 0
             val alreadyMatched = matchedSignatureCounts[dupSig] ?: 0
             val isProbableDuplicate = if (deterministicId in existingIds) {
@@ -163,7 +162,7 @@ object StatementPipeline {
                     rawLabel = ImporterConstants.sanitizeLabel(row.rawLabel),
                     cleanedLabel = cleanedLabel,
                     txType = txType,
-                    amountMad = roundedAmount,
+                    amountMad = amount,
                     accountId = bankAccId,
                     toAccountId = if (atmTransfer) cashAccId else "",
                     envelopeKey = envKey,
@@ -182,7 +181,7 @@ object StatementPipeline {
         userId: String
     ): List<TransactionItem> {
         return candidates
-            .filter { it.isSelected && it.amountMad > 0.0 }
+            .filter { it.isSelected && it.amountMad.isPositive }
             .map { c ->
                 val normalizedCategory = if (c.txType == "transfer") {
                     "Transfert"
@@ -193,7 +192,7 @@ object StatementPipeline {
                     id = c.deterministicId,
                     userId = userId,
                     type = c.txType,
-                    amount = PayCycleEngine.roundMoney(c.amountMad),
+                    amount = c.amountMad,
                     category = normalizedCategory,
                     envelopeKey = if (c.txType == "transfer") "autre" else c.envelopeKey,
                     accountId = c.accountId,
@@ -205,17 +204,17 @@ object StatementPipeline {
             }
     }
 
-    private fun resolveTypeAndAmount(row: StatementRow): Pair<String, Double>? {
-        val debit = row.debitMad?.takeIf { it > 0.0 }
-        val credit = row.creditMad?.takeIf { it > 0.0 }
+    private fun resolveTypeAndAmount(row: StatementRow): Pair<String, Money>? {
+        val debit = row.debitMad?.takeIf { it.isPositive }
+        val credit = row.creditMad?.takeIf { it.isPositive }
         return when {
             debit != null && credit == null -> "expense" to debit
             credit != null && debit == null -> "income" to credit
             debit != null && credit != null -> {
                 if (debit >= credit) "expense" to debit else "income" to credit
             }
-            row.signedAmountMad != null && abs(row.signedAmountMad) > 0.0 -> {
-                if (row.signedAmountMad < 0.0) "expense" to abs(row.signedAmountMad)
+            row.signedAmountMad != null && row.signedAmountMad.abs().isPositive -> {
+                if (row.signedAmountMad.isNegative) "expense" to row.signedAmountMad.abs()
                 else "income" to row.signedAmountMad
             }
             else -> null
@@ -275,8 +274,8 @@ object StatementPipeline {
         return key to name
     }
 
-    private fun duplicateSignature(isoDate: String, amount: Double, type: String): String {
-        val rounded = String.format(Locale.US, "%.2f", PayCycleEngine.roundMoney(amount))
+    private fun duplicateSignature(isoDate: String, amount: Money, type: String): String {
+        val rounded = amount.toCanonicalDecimalString()
         return "${isoDate.trim()}|$rounded|${type.trim().lowercase(Locale.ROOT)}"
     }
 }

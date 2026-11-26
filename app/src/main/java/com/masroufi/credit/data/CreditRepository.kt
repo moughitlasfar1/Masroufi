@@ -1,14 +1,15 @@
 package com.masroufi.credit.data
 
+import com.example.data.FirestoreSnapshotMappers
 import com.example.data.OperationType
 import com.example.data.handleFirestoreError
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
-import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
+import com.masroufi.core.Money
 import com.masroufi.credit.domain.CreditInput
 import com.masroufi.credit.domain.CreditResult
 import kotlinx.coroutines.CancellationException
@@ -48,10 +49,10 @@ class CreditRepository(
         val uid = currentUid()
             ?: return Result.failure(IllegalStateException("AUTH_REQUIRED"))
 
-        if (input.loanAmount <= 0.0 || input.durationMonths <= 0) {
+        if (!input.loanAmount.isPositive || input.durationMonths <= 0) {
             return Result.failure(IllegalArgumentException("INVALID_CREDIT_INPUT"))
         }
-        val safeDownPayment = input.downPayment.coerceIn(0.0, input.loanAmount)
+        val safeDownPayment = input.downPayment.coerceIn(Money.ZERO, input.loanAmount)
         val safeDeferred = input.deferredMonths.coerceIn(0, (input.durationMonths - 1).coerceAtLeast(0))
 
         val colRef = db.collection("users").document(uid).collection("credits")
@@ -61,16 +62,16 @@ class CreditRepository(
         val payload = hashMapOf<String, Any>(
             "userId" to uid,
             "type" to input.creditType.name,
-            "loanAmount" to input.loanAmount,
-            "downPayment" to safeDownPayment,
-            "financedPrincipal" to result.financedPrincipal.coerceIn(0.0, input.loanAmount),
+            "loanAmount" to input.loanAmount.toBigDecimalDh().toDouble(),
+            "downPayment" to safeDownPayment.toBigDecimalDh().toDouble(),
+            "financedPrincipal" to result.financedPrincipal.coerceIn(Money.ZERO, input.loanAmount).toBigDecimalDh().toDouble(),
             "durationMonths" to input.durationMonths,
             "deferredMonths" to safeDeferred,
             "annualInterestRateHt" to input.annualInterestRateHt.coerceIn(0.0, 50.0),
             "applyInterestTva" to input.applyInterestTva,
             "insuranceRate" to input.insuranceRate.coerceIn(0.0, 20.0),
-            "monthlyPayment" to result.monthlyPayment.coerceAtLeast(0.0),
-            "totalCost" to result.totalCost.coerceAtLeast(0.0),
+            "monthlyPayment" to result.monthlyPayment.coerceAtLeast(Money.ZERO).toBigDecimalDh().toDouble(),
+            "totalCost" to result.totalCost.coerceAtLeast(Money.ZERO).toBigDecimalDh().toDouble(),
             "debtToIncomeRatio" to result.debtToIncomeRatio.coerceIn(0.0, 10_000.0),
             "maxAllowedDti" to result.maxAllowedDti,
             "linkToMonthlyExpenses" to linkToMonthlyExpenses,
@@ -102,12 +103,7 @@ class CreditRepository(
                 }
                 val items = snapshot?.documents?.mapNotNull { doc ->
                     runCatching {
-                        doc.toObject(
-                            SavedCreditEntity::class.java,
-                            DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
-                        )?.let { entity ->
-                            if (entity.id.isBlank()) entity.copy(id = doc.id) else entity
-                        }
+                        FirestoreSnapshotMappers.toSavedCreditEntity(doc, uid)
                     }.getOrNull()
                 }.orEmpty()
                 trySend(items)

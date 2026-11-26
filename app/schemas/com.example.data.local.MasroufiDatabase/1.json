@@ -1,0 +1,698 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "12cd7d38ab31023e13e7ae593835755f",
+    "entities": [
+      {
+        "tableName": "user_profiles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`userId` TEXT NOT NULL, `baseBudget` REAL NOT NULL, `payCycleDay` INTEGER NOT NULL, `rolloverEnabled` INTEGER NOT NULL, `language` TEXT NOT NULL, `isDarkTheme` INTEGER NOT NULL, `seeded` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`userId`))",
+        "fields": [
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baseBudget",
+            "columnName": "baseBudget",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payCycleDay",
+            "columnName": "payCycleDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rolloverEnabled",
+            "columnName": "rolloverEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "language",
+            "columnName": "language",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isDarkTheme",
+            "columnName": "isDarkTheme",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seeded",
+            "columnName": "seeded",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "userId"
+          ]
+        }
+      },
+      {
+        "tableName": "accounts",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `userId` TEXT NOT NULL, `name` TEXT NOT NULL, `kind` TEXT NOT NULL, `currency` TEXT NOT NULL, `initialBalance` REAL NOT NULL, `colorHex` TEXT NOT NULL, `isArchived` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currency",
+            "columnName": "currency",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "initialBalance",
+            "columnName": "initialBalance",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorHex",
+            "columnName": "colorHex",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isArchived",
+            "columnName": "isArchived",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_accounts_userId",
+            "unique": false,
+            "columnNames": [
+              "userId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_accounts_userId` ON `${TABLE_NAME}` (`userId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "transactions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `userId` TEXT NOT NULL, `type` TEXT NOT NULL, `amount` REAL NOT NULL, `category` TEXT NOT NULL, `envelopeKey` TEXT NOT NULL, `accountId` TEXT NOT NULL, `toAccountId` TEXT NOT NULL, `desc` TEXT NOT NULL, `isoDate` TEXT NOT NULL, `hourOfDay` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "envelopeKey",
+            "columnName": "envelopeKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accountId",
+            "columnName": "accountId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toAccountId",
+            "columnName": "toAccountId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "desc",
+            "columnName": "desc",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isoDate",
+            "columnName": "isoDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hourOfDay",
+            "columnName": "hourOfDay",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_transactions_userId",
+            "unique": false,
+            "columnNames": [
+              "userId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_userId` ON `${TABLE_NAME}` (`userId`)"
+          },
+          {
+            "name": "index_transactions_userId_isoDate",
+            "unique": false,
+            "columnNames": [
+              "userId",
+              "isoDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_userId_isoDate` ON `${TABLE_NAME}` (`userId`, `isoDate`)"
+          },
+          {
+            "name": "index_transactions_accountId",
+            "unique": false,
+            "columnNames": [
+              "accountId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_accountId` ON `${TABLE_NAME}` (`accountId`)"
+          },
+          {
+            "name": "index_transactions_envelopeKey",
+            "unique": false,
+            "columnNames": [
+              "envelopeKey"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_transactions_envelopeKey` ON `${TABLE_NAME}` (`envelopeKey`)"
+          }
+        ]
+      },
+      {
+        "tableName": "envelopes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `userId` TEXT NOT NULL, `key` TEXT NOT NULL, `nameFr` TEXT NOT NULL, `nameAr` TEXT NOT NULL, `nameDarija` TEXT NOT NULL, `nameEn` TEXT NOT NULL, `percentage` REAL NOT NULL, `hasCap` INTEGER NOT NULL, `colorHex` TEXT NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "key",
+            "columnName": "key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nameFr",
+            "columnName": "nameFr",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nameAr",
+            "columnName": "nameAr",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nameDarija",
+            "columnName": "nameDarija",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nameEn",
+            "columnName": "nameEn",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "percentage",
+            "columnName": "percentage",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasCap",
+            "columnName": "hasCap",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorHex",
+            "columnName": "colorHex",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_envelopes_userId",
+            "unique": false,
+            "columnNames": [
+              "userId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_envelopes_userId` ON `${TABLE_NAME}` (`userId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "financial_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `userId` TEXT NOT NULL, `itemType` TEXT NOT NULL, `name` TEXT NOT NULL, `subtitle` TEXT NOT NULL, `amount` REAL NOT NULL, `secondaryAmount` REAL NOT NULL, `dayOrTurn` INTEGER NOT NULL, `extraInt` INTEGER NOT NULL, `dateOrCycle` TEXT NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "itemType",
+            "columnName": "itemType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subtitle",
+            "columnName": "subtitle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "amount",
+            "columnName": "amount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "secondaryAmount",
+            "columnName": "secondaryAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayOrTurn",
+            "columnName": "dayOrTurn",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "extraInt",
+            "columnName": "extraInt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dateOrCycle",
+            "columnName": "dateOrCycle",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMs",
+            "columnName": "updatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_financial_items_userId",
+            "unique": false,
+            "columnNames": [
+              "userId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_financial_items_userId` ON `${TABLE_NAME}` (`userId`)"
+          },
+          {
+            "name": "index_financial_items_userId_itemType",
+            "unique": false,
+            "columnNames": [
+              "userId",
+              "itemType"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_financial_items_userId_itemType` ON `${TABLE_NAME}` (`userId`, `itemType`)"
+          }
+        ]
+      },
+      {
+        "tableName": "saved_credits",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `userId` TEXT NOT NULL, `type` TEXT NOT NULL, `loanAmount` REAL NOT NULL, `downPayment` REAL NOT NULL, `financedPrincipal` REAL NOT NULL, `durationMonths` INTEGER NOT NULL, `deferredMonths` INTEGER NOT NULL, `annualInterestRateHt` REAL NOT NULL, `applyInterestTva` INTEGER NOT NULL, `insuranceRate` REAL NOT NULL, `monthlyPayment` REAL NOT NULL, `totalCost` REAL NOT NULL, `debtToIncomeRatio` REAL NOT NULL, `maxAllowedDti` REAL NOT NULL, `linkToMonthlyExpenses` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "loanAmount",
+            "columnName": "loanAmount",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "downPayment",
+            "columnName": "downPayment",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "financedPrincipal",
+            "columnName": "financedPrincipal",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMonths",
+            "columnName": "durationMonths",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deferredMonths",
+            "columnName": "deferredMonths",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "annualInterestRateHt",
+            "columnName": "annualInterestRateHt",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "applyInterestTva",
+            "columnName": "applyInterestTva",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "insuranceRate",
+            "columnName": "insuranceRate",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "monthlyPayment",
+            "columnName": "monthlyPayment",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalCost",
+            "columnName": "totalCost",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "debtToIncomeRatio",
+            "columnName": "debtToIncomeRatio",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "maxAllowedDti",
+            "columnName": "maxAllowedDti",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "linkToMonthlyExpenses",
+            "columnName": "linkToMonthlyExpenses",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_saved_credits_userId",
+            "unique": false,
+            "columnNames": [
+              "userId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_saved_credits_userId` ON `${TABLE_NAME}` (`userId`)"
+          },
+          {
+            "name": "index_saved_credits_userId_createdAtEpochMs",
+            "unique": false,
+            "columnNames": [
+              "userId",
+              "createdAtEpochMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_saved_credits_userId_createdAtEpochMs` ON `${TABLE_NAME}` (`userId`, `createdAtEpochMs`)"
+          }
+        ]
+      },
+      {
+        "tableName": "import_metadata",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`userId` TEXT NOT NULL, `completedAtEpochMs` INTEGER NOT NULL, `backupChecksumSha256` TEXT NOT NULL, `profileCount` INTEGER NOT NULL, `accountCount` INTEGER NOT NULL, `transactionCount` INTEGER NOT NULL, `envelopeCount` INTEGER NOT NULL, `financialItemCount` INTEGER NOT NULL, `creditCount` INTEGER NOT NULL, PRIMARY KEY(`userId`))",
+        "fields": [
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAtEpochMs",
+            "columnName": "completedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "backupChecksumSha256",
+            "columnName": "backupChecksumSha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileCount",
+            "columnName": "profileCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accountCount",
+            "columnName": "accountCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transactionCount",
+            "columnName": "transactionCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "envelopeCount",
+            "columnName": "envelopeCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "financialItemCount",
+            "columnName": "financialItemCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "creditCount",
+            "columnName": "creditCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "userId"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '12cd7d38ab31023e13e7ae593835755f')"
+    ]
+  }
+}

@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
 import com.masroufi.credit.domain.AmortizationRow
 import com.masroufi.credit.domain.CreditCalculator
@@ -79,7 +80,7 @@ import com.masroufi.credit.domain.CreditType
 fun CreditSimulatorScreen(
     viewModel: CreditSimulatorViewModel,
     language: String,
-    initialMonthlyIncome: Double,
+    initialMonthlyIncome: Money,
     isLocalMode: Boolean,
     onBack: () -> Unit,
     onRequestGoogleSignIn: () -> Unit,
@@ -97,7 +98,7 @@ fun CreditSimulatorScreen(
         viewModel.setLanguage(language)
     }
     LaunchedEffect(initialMonthlyIncome) {
-        if (initialMonthlyIncome > 0.0) {
+        if (initialMonthlyIncome.isPositive) {
             viewModel.applyMasroufiIncomePrefill(initialMonthlyIncome)
         }
     }
@@ -114,7 +115,7 @@ fun CreditSimulatorScreen(
         CreditType.AUTO -> 800_000f
         CreditType.CONSOMMATION -> 600_000f
     }
-    val downPaymentSliderMax = uiState.input.loanAmount.toFloat().coerceAtLeast(1_000f)
+    val downPaymentSliderMax = uiState.input.loanAmount.toBigDecimalDh().toFloat().coerceAtLeast(1_000f)
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -265,23 +266,21 @@ fun CreditSimulatorScreen(
                                     fontWeight = FontWeight.Bold
                                 )
 
-                                CreditSyncedSliderField(
+                                CreditSyncedMoneySliderField(
                                     label = strings.loanAmountLabel,
                                     value = uiState.input.loanAmount,
                                     valueRange = 5_000f..loanSliderMax,
                                     onValueChange = viewModel::onLoanAmountChanged,
-                                    isInteger = true,
                                     suffix = "MAD",
                                     errorText = uiState.validationErrors[CreditValidationKeys.LOAN_AMOUNT],
                                     testTagPrefix = "credit_loan_amount"
                                 )
 
-                                CreditSyncedSliderField(
+                                CreditSyncedMoneySliderField(
                                     label = strings.downPaymentLabel,
                                     value = uiState.input.downPayment,
                                     valueRange = 0f..downPaymentSliderMax,
                                     onValueChange = viewModel::onDownPaymentChanged,
-                                    isInteger = true,
                                     suffix = "MAD",
                                     errorText = uiState.validationErrors[CreditValidationKeys.DOWN_PAYMENT],
                                     testTagPrefix = "credit_down_payment"
@@ -345,12 +344,11 @@ fun CreditSimulatorScreen(
                                     )
                                 }
 
-                                CreditSyncedSliderField(
+                                CreditSyncedMoneySliderField(
                                     label = strings.monthlyNetIncomeLabel,
                                     value = uiState.input.monthlyNetIncome,
                                     valueRange = 3_000f..100_000f,
                                     onValueChange = viewModel::onMonthlyNetIncomeChanged,
-                                    isInteger = true,
                                     suffix = "MAD",
                                     errorText = uiState.validationErrors[CreditValidationKeys.MONTHLY_INCOME],
                                     testTagPrefix = "credit_income"
@@ -408,12 +406,11 @@ fun CreditSimulatorScreen(
                                             .padding(16.dp),
                                         verticalArrangement = Arrangement.spacedBy(14.dp)
                                     ) {
-                                        CreditSyncedSliderField(
+                                        CreditSyncedMoneySliderField(
                                             label = strings.existingMonthlyDebtLabel,
                                             value = uiState.input.existingMonthlyDebt,
                                             valueRange = 0f..30_000f,
                                             onValueChange = viewModel::onExistingMonthlyDebtChanged,
-                                            isInteger = true,
                                             suffix = "MAD",
                                             testTagPrefix = "credit_existing_debt"
                                         )

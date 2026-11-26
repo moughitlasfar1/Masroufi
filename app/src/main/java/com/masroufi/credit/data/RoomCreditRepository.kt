@@ -10,6 +10,7 @@ import com.example.data.local.MasroufiEntityMappers.toLocalEntity
 import com.example.data.local.NoOpRemoteMirror
 import com.example.data.local.RemoteMirror
 import com.google.firebase.Timestamp
+import com.masroufi.core.Money
 import com.masroufi.credit.domain.CreditInput
 import com.masroufi.credit.domain.CreditResult
 import java.util.Date
@@ -96,7 +97,7 @@ class RoomCreditRepository private constructor(
         result: CreditResult,
         linkToMonthlyExpenses: Boolean
     ): Result<String> {
-        if (input.loanAmount <= 0.0 || input.durationMonths <= 0) {
+        if (!input.loanAmount.isPositive || input.durationMonths <= 0) {
             return Result.failure(IllegalArgumentException("INVALID_CREDIT_INPUT"))
         }
         val dao = requireDao()
@@ -105,7 +106,7 @@ class RoomCreditRepository private constructor(
         val uid = currentUid()
         val now = System.currentTimeMillis()
         val creditId = "credit_${UUID.randomUUID().toString().replace("-", "").take(16)}"
-        val safeDownPayment = input.downPayment.coerceIn(0.0, input.loanAmount)
+        val safeDownPayment = input.downPayment.coerceIn(Money.ZERO, input.loanAmount)
         val safeDeferred = input.deferredMonths.coerceIn(0, (input.durationMonths - 1).coerceAtLeast(0))
 
         val domainCredit = SavedCreditEntity(
@@ -114,14 +115,14 @@ class RoomCreditRepository private constructor(
             type = input.creditType.name,
             loanAmount = input.loanAmount,
             downPayment = safeDownPayment,
-            financedPrincipal = result.financedPrincipal.coerceIn(0.0, input.loanAmount),
+            financedPrincipal = result.financedPrincipal.coerceIn(Money.ZERO, input.loanAmount),
             durationMonths = input.durationMonths,
             deferredMonths = safeDeferred,
             annualInterestRateHt = input.annualInterestRateHt.coerceIn(0.0, 50.0),
             applyInterestTva = input.applyInterestTva,
             insuranceRate = input.insuranceRate.coerceIn(0.0, 20.0),
-            monthlyPayment = result.monthlyPayment.coerceAtLeast(0.0),
-            totalCost = result.totalCost.coerceAtLeast(0.0),
+            monthlyPayment = result.monthlyPayment.coerceAtLeast(Money.ZERO),
+            totalCost = result.totalCost.coerceAtLeast(Money.ZERO),
             debtToIncomeRatio = result.debtToIncomeRatio.coerceIn(0.0, 10_000.0),
             maxAllowedDti = result.maxAllowedDti,
             linkToMonthlyExpenses = linkToMonthlyExpenses,

@@ -7,6 +7,7 @@ import com.example.notifications.ExtractedNotificationMessage
 import com.example.notifications.MasroufiDetectionLog
 import com.example.widget.MasroufiWidgetStore
 import com.example.widget.WidgetSnapshot
+import com.masroufi.core.Money
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -20,10 +21,6 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-/**
- * Audit verification tests for BankDetectionStore pipeline (D1, D5, D8, D10, S4, S6)
- * and zero-PII MasroufiDetectionLog.
- */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class BankDetectionPipelineAuditTest {
@@ -40,9 +37,9 @@ class BankDetectionPipelineAuditTest {
             context,
             WidgetSnapshot(
                 snapshotDateIso = "2026-11-19",
-                todaySpend = 0.0,
-                safeToSpendToday = 200.0,
-                remainingBudget = 2000.0,
+                todaySpend = Money.ZERO,
+                safeToSpendToday = Money.fromDh(200),
+                remainingBudget = Money.fromDh(2000),
                 daysRemainingInCycle = 10,
                 language = "fr"
             )
@@ -70,9 +67,8 @@ class BankDetectionPipelineAuditTest {
             messages = listOf(msg1)
         )
         assertEquals(1, firstBatch.size)
-        assertEquals(85.0, firstBatch.first().amount, 0.01)
+        assertEquals(Money.fromDh(85), firstBatch.first().amount)
 
-        // Second notification in the SAME SMS thread holds both msg1 and msg2
         val msg2 = ExtractedNotificationMessage(
             title = "CIH Bank",
             body = "Paiement par carte de 140,00 MAD chez CARREFOUR",
@@ -85,7 +81,7 @@ class BankDetectionPipelineAuditTest {
             messages = listOf(msg1, msg2)
         )
         assertEquals("Only the newly arrived 2nd SMS should be parsed", 1, secondBatch.size)
-        assertEquals(140.0, secondBatch.first().amount, 0.01)
+        assertEquals(Money.fromDh(140), secondBatch.first().amount)
         assertEquals("CARREFOUR", secondBatch.first().merchant)
 
         val pending = BankDetectionStore.loadPendingItems(context, t2 + 1000L)
@@ -138,10 +134,9 @@ class BankDetectionPipelineAuditTest {
         val smsPkg = "com.google.android.apps.messaging"
         BankDetectionStore.setPackageAllowed(context, smsPkg, true)
         BankDetectionStore.setAutoConfirmEnabled(context, true)
-        BankDetectionStore.setAutoConfirmMaxAmount(context, 500.0)
+        BankDetectionStore.setAutoConfirmMaxAmount(context, Money.fromDh(500))
 
         val t1 = 1_795_090_000_000L
-        // First SMS from untrusted sender "SpoofSender" MUST queue for review, NOT auto-confirm
         val first = BankDetectionStore.processIncomingNotification(
             context = context,
             sourcePackage = smsPkg,
@@ -153,14 +148,12 @@ class BankDetectionPipelineAuditTest {
         assertEquals(1, BankDetectionStore.loadPendingItems(context, t1).size)
         assertEquals(0, MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context).size)
 
-        // User manually confirms this item -> saves to acc_bank & trusts sender "banksms"
         val createdManual = BankDetectionStore.confirmDetectedItem(context, first!!, isAutoConfirmed = false)
         assertEquals(1, createdManual.size)
         assertEquals("acc_bank", createdManual.first().accountId)
         assertEquals(first.isoDate, createdManual.first().isoDate)
         MasroufiWidgetStore.consumePendingQuickCaptureTransactions(context)
 
-        // Second SMS from now-trusted sender under cap auto-confirms directly to acc_bank
         val second = BankDetectionStore.processIncomingNotification(
             context = context,
             sourcePackage = smsPkg,
@@ -191,14 +184,12 @@ class BankDetectionPipelineAuditTest {
         assertNotNull(detected)
         assertEquals("D10: maskedSamplePreview must be empty", "", detected!!.maskedSamplePreview)
 
-        // S4: Plaintext shared prefs must not contain pending JSON or merchant name
         val legacyPrefs = context.getSharedPreferences("masroufi_bank_detection_prefs", Context.MODE_PRIVATE)
         assertFalse(legacyPrefs.contains("pending_detected_items_json"))
         val allPlainValues = legacyPrefs.all.values.joinToString(" ")
         assertFalse(allPlainValues.contains("SECRET_MERCHANT_XYZ"))
         assertFalse(allPlainValues.contains("275"))
 
-        // Zero-PII diagnostic log must record structured metadata without amounts or merchants
         val logEntries = MasroufiDetectionLog.snapshotEntries()
         assertTrue(logEntries.isNotEmpty())
         val serializedLog = logEntries.joinToString(" ") {

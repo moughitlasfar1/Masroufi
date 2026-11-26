@@ -87,6 +87,8 @@ import com.example.ui.theme.BackgroundWallpaperManager
 import com.example.ui.theme.ExpressiveAccordionCard
 import com.example.ui.theme.ExpressiveGlassSurface
 import com.example.ui.theme.MasroufiPalettes
+import com.masroufi.core.Money
+import com.masroufi.core.MoneyParser
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,7 +100,7 @@ fun SettingsBottomSheet(
     isLocalMode: Boolean = false,
     onLinkGoogleAccount: () -> Unit = {},
     onDismiss: () -> Unit,
-    onSaveSettings: (Double, Int, Boolean) -> Unit,
+    onSaveSettings: (Money, Int, Boolean) -> Unit,
     onToggleTheme: () -> Unit = {},
     onSelectThemeMode: (String) -> Unit = {},
     onSelectLanguage: (String) -> Unit = {},
@@ -118,7 +120,7 @@ fun SettingsBottomSheet(
 ) {
     val context = LocalContext.current
     val lang = state.profile.language
-    var budgetText by remember { mutableStateOf(state.profile.baseBudget.safeRoundToInt().toString()) }
+    var budgetText by remember { mutableStateOf(state.profile.baseBudget.formatDhRounded(useGrouping = false)) }
     var payDayText by remember { mutableStateOf(state.profile.payCycleDay.toString()) }
     var rolloverEnabled by remember { mutableStateOf(state.profile.rolloverEnabled) }
     var localMoreFeatures by remember(moreFeaturesEnabled) { mutableStateOf(moreFeaturesEnabled) }
@@ -340,7 +342,7 @@ fun SettingsBottomSheet(
                         }
                         Button(
                             onClick = {
-                                val b = budgetText.replace(",", ".").toDoubleOrNull() ?: 6400.0
+                                val b = MoneyParser.parseMoroccanAmountToCentimes(budgetText)?.let { Money.fromCentimes(it) }?.takeIf { it.isPositive } ?: Money.fromDh(6400)
                                 val d = (payDayText.toIntOrNull() ?: 1).coerceIn(1, 28)
                                 onSaveSettings(b, d, rolloverEnabled)
                                 onDismiss()
