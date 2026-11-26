@@ -744,29 +744,45 @@ fun MainFeatureScreen(
     }
 
     val rollbackSnapshot by viewModel.preRestoreRollbackJson.collectAsStateWithLifecycle()
-    var pendingBackupPassword by remember { mutableStateOf("") }
+    var pendingEncryptedExportPayload by remember { mutableStateOf<String?>(null) }
+    var pendingExportAction by remember { mutableStateOf("file") } // "file", "share", "copy"
+    var showExportPassphraseDialog by remember { mutableStateOf(false) }
+    var exportDialogBusy by remember { mutableStateOf(false) }
+    var exportDialogError by remember { mutableStateOf<String?>(null) }
+
     var pendingRestoreRawContent by remember { mutableStateOf("") }
+    var pendingRestoreEnvelopeInfo by remember { mutableStateOf<com.example.security.BackupEnvelopeInfo?>(null) }
+    var restoreDialogBusy by remember { mutableStateOf(false) }
+    var restoreDialogError by remember { mutableStateOf<String?>(null) }
+
+    fun currentFiscalSnapshot() = com.example.data.BackupFiscalSnapshot(
+        annualBills = annualBillsList,
+        zakatConfig = zakatConfig
+    )
+
+    fun applyRestoredFiscal(fiscal: com.example.data.BackupFiscalSnapshot) {
+        annualBillsList = fiscal.annualBills
+        com.masroufi.fiscal.data.FiscalRepository.saveAnnualBills(context, fiscal.annualBills)
+        fiscal.zakatConfig?.let { z ->
+            zakatConfig = z
+            com.masroufi.fiscal.data.FiscalRepository.saveZakatConfig(context, z)
+        }
+    }
 
     val exportJsonLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json")
     ) { uri ->
-        if (uri != null) {
-            runCatching {
-                viewModel.exportBackupJson(pendingBackupPassword)
-            }.onSuccess { payload ->
-                val ok = AppSecurityManager.writeTextToUri(context, uri, payload)
-                scope.launch {
-                    snackbarHostState.showSnackbar(
-                        if (ok) "Sauvegarde JSON chiffrée (AES-256-GCM) enregistrée !"
-                        else "Erreur lors de l'enregistrement"
-                    )
+        val payload = pendingEncryptedExportPayload
+        pendingEncryptedExportPayload = null
+        if (uri != null && !payload.isNullOrBlank()) {
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    AppSecurityManager.writeTextToUri(context, uri, payload)
                 }
-            }.onFailure { err ->
-                scope.launch {
-                    snackbarHostState.showSnackbar(
-                        "Échec du chiffrement : ${err.localizedMessage ?: "mot de passe (10+ car.) requis — aucun fichier écrit."}"
-                    )
-                }
+                snackbarHostState.showSnackbar(
+                    if (ok) "Sauvegarde portable v3 chiffrée (AES-256-GCM) enregistrée !"
+                    else "Erreur lors de l'enregistrement"
+                )
             }
         }
     }
@@ -788,13 +804,37 @@ fun MainFeatureScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            val raw = AppSecurityManager.readTextFromUri(context, uri)
-            if (!raw.isNullOrBlank()) {
-                pendingRestoreRawContent = raw
-                activeSheet = ActiveSheet.RestoreBackup
-            } else {
-                scope.launch {
+            scope.launch {
+                val raw = withContext(Dispatchers.IO) {
+                    AppSecurityManager.readTextFromUri(context, uri)
+                }
+                if (raw.isNullOrBlank()) {
                     snackbarHostState.showSnackbar("Fichier illisible ou dépassant la limite de 10 Mo.")
+                    return@launch
+                }
+                when (val envInfo = com.example.security.PortableBackupCrypto.inspectEnvelope(raw)) {
+                    is com.example.security.BackupEnvelopeInfo.PortableV3Encrypted,
+                    is com.example.security.BackupEnvelopeInfo.LegacyV2Encrypted -> {
+                        activeSheet = ActiveSheet.None
+                        pendingRestoreRawContent = raw
+                        pendingRestoreEnvelopeInfo = envInfo
+                        restoreDialogError = null
+                    }
+                    com.example.security.BackupEnvelopeInfo.LegacyPlaintextJson -> {
+                        pendingRestoreEnvelopeInfo = null
+                        pendingRestoreRawContent = raw
+                        activeSheet = ActiveSheet.RestoreBackup
+                    }
+                    is com.example.security.BackupEnvelopeInfo.UnsupportedVersion -> {
+                        snackbarHostState.showSnackbar(
+                            "Version de sauvegarde non prise en charge (v${envInfo.detectedVersion})."
+                        )
+                    }
+                    is com.example.security.BackupEnvelopeInfo.Corrupted -> {
+                        snackbarHostState.showSnackbar(
+                            "Fichier de sauvegarde invalide : ${envInfo.reason}"
+                        )
+                    }
                 }
             }
         }
@@ -1560,52 +1600,15 @@ fun MainFeatureScreen(
                                                 }
                                             }
                                         },
-                                        onShareJson = { pwd ->
-                                            pendingBackupPassword = pwd
-                                            runCatching { viewModel.exportBackupJson(pwd) }
-                                                .onSuccess { payload ->
-                                                    shareTextContent(context, payload, "masroufi_backup.json", "application/json")
-                                                }
-                                                .onFailure { err ->
-                                                    scope.launch {
-                                                        snackbarHostState.showSnackbar(
-                                                            "Échec du chiffrement : ${err.localizedMessage ?: "partage annulé par sécurité."}"
-                                                        )
-                                                    }
-                                                }
+                                        onShareJson = { _ ->
+                                            pendingExportAction = "share"
+                                            exportDialogError = null
+                                            showExportPassphraseDialog = true
                                         },
-                                        onCopyJson = { pwd ->
-                                            pendingBackupPassword = pwd
-                                            runCatching { viewModel.exportBackupJson(pwd) }
-                                                .onSuccess { payload ->
-                                                    val isEnc = AppSecurityManager.isEncryptedBackup(payload)
-                                                    copyToClipboard(context, payload)
-                                                    scope.launch {
-                                                        launch {
-                                                            delay(60_000L)
-                                                            AppSecurityManager.clearSensitiveClipboard(context)
-                                                        }
-                                                        val res = snackbarHostState.showSnackbar(
-                                                            message = if (isEnc) {
-                                                                "JSON chiffré AES-256-GCM copié (auto-effacé dans 60s)"
-                                                            } else {
-                                                                "JSON copié (masqué & auto-effacé dans 60s)"
-                                                            },
-                                                            actionLabel = "Vider",
-                                                            duration = SnackbarDuration.Short
-                                                        )
-                                                        if (res == SnackbarResult.ActionPerformed) {
-                                                            AppSecurityManager.clearSensitiveClipboard(context)
-                                                        }
-                                                    }
-                                                }
-                                                .onFailure { err ->
-                                                    scope.launch {
-                                                        snackbarHostState.showSnackbar(
-                                                            "Échec du chiffrement : ${err.localizedMessage ?: "copie annulée par sécurité."}"
-                                                        )
-                                                    }
-                                                }
+                                        onCopyJson = { _ ->
+                                            pendingExportAction = "copy"
+                                            exportDialogError = null
+                                            showExportPassphraseDialog = true
                                         },
                                         onShareCsv = {
                                             shareTextContent(context, viewModel.exportCsv(), "masroufi_export.csv", "text/csv")
@@ -1614,17 +1617,10 @@ fun MainFeatureScreen(
                                             pendingRestoreRawContent = ""
                                             activeSheet = ActiveSheet.RestoreBackup
                                         },
-                                        onExportJsonFile = { pwd ->
-                                            if (pwd.trim().length < AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH) {
-                                                scope.launch {
-                                                    snackbarHostState.showSnackbar(
-                                                        "Mot de passe de 10+ caractères requis pour exporter un JSON chiffré."
-                                                    )
-                                                }
-                                            } else {
-                                                pendingBackupPassword = pwd
-                                                exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
-                                            }
+                                        onExportJsonFile = { _ ->
+                                            pendingExportAction = "file"
+                                            exportDialogError = null
+                                            showExportPassphraseDialog = true
                                         },
                                         onExportCsvFile = {
                                             exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")
@@ -1640,7 +1636,9 @@ fun MainFeatureScreen(
                                         },
                                         hasRollbackSnapshot = !rollbackSnapshot.isNullOrBlank(),
                                         onRollbackRestore = {
-                                            viewModel.rollbackLastRestore { ok ->
+                                            viewModel.rollbackLastRestore(
+                                                onFiscalRestored = ::applyRestoredFiscal
+                                            ) { ok ->
                                                 scope.launch {
                                                     snackbarHostState.showSnackbar(
                                                         if (ok) "État précédent restauré (Rollback effectué) !" else "Rollback indisponible"
@@ -1820,17 +1818,10 @@ fun MainFeatureScreen(
                             snackbarHostState.showSnackbar("Presse-papiers vidé !")
                         }
                     },
-                    onExportJsonFile = { pwd ->
-                        if (pwd.trim().length < AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH) {
-                            scope.launch {
-                                snackbarHostState.showSnackbar(
-                                    "Mot de passe de 10+ caractères requis pour exporter un JSON chiffré."
-                                )
-                            }
-                        } else {
-                            pendingBackupPassword = pwd
-                            exportJsonLauncher.launch("masroufi_backup_${state.activeWindow.cycleKey}.json")
-                        }
+                    onExportJsonFile = { _ ->
+                        pendingExportAction = "file"
+                        exportDialogError = null
+                        showExportPassphraseDialog = true
                     },
                     onExportCsvFile = {
                         exportCsvLauncher.launch("masroufi_transactions_${state.activeWindow.cycleKey}.csv")
@@ -1951,22 +1942,152 @@ fun MainFeatureScreen(
                 ActiveSheet.RestoreBackup -> RestoreJsonSheet(
                     strings = strings,
                     initialRawJson = pendingRestoreRawContent,
-                    onPreviewBackup = { raw, pwd ->
-                        viewModel.previewBackupImport(raw, pwd)
+                    onPreviewBackupAsync = { raw, passChars ->
+                        viewModel.previewBackupImportAsync(raw, passChars, wipePassphrase = true)
+                    },
+                    onRestorePortable = { raw, passChars, replaceExisting ->
+                        val outcome = viewModel.restoreBackupPortable(
+                            rawJson = raw,
+                            passphrase = passChars,
+                            replaceExisting = replaceExisting,
+                            currentFiscal = currentFiscalSnapshot(),
+                            wipePassphrase = true
+                        )
+                        if (outcome is com.example.ui.BackupRestoreResult.Success) {
+                            outcome.restoredFiscal?.let(::applyRestoredFiscal)
+                        }
+                        outcome
                     },
                     onDismiss = {
                         activeSheet = ActiveSheet.None
                         pendingRestoreRawContent = ""
                     },
-                    onRestore = { raw, pwd, replaceExisting ->
-                        viewModel.restoreFromJson(raw, pwd, replaceExisting) { _, msg ->
-                            scope.launch {
-                                snackbarHostState.showSnackbar(msg)
-                            }
+                    onRestoreSucceeded = { msg ->
+                        scope.launch {
+                            snackbarHostState.showSnackbar(msg)
                         }
                     },
                     onImportFile = {
                         importJsonLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    }
+                )
+            }
+
+            if (showExportPassphraseDialog) {
+                com.example.ui.ExportBackupPassphraseDialog(
+                    lang = state.profile.language,
+                    isEncrypting = exportDialogBusy,
+                    errorMessage = exportDialogError,
+                    onDismiss = {
+                        showExportPassphraseDialog = false
+                        exportDialogError = null
+                    },
+                    onConfirmPassphrase = { passChars ->
+                        exportDialogBusy = true
+                        exportDialogError = null
+                        scope.launch {
+                            val result = viewModel.exportBackupV3(
+                                passphrase = passChars,
+                                fiscal = currentFiscalSnapshot(),
+                                wipePassphrase = true
+                            )
+                            exportDialogBusy = false
+                            when (result) {
+                                is com.example.security.PortableCryptoResult.Success -> {
+                                    val encrypted = result.value
+                                    showExportPassphraseDialog = false
+                                    when (pendingExportAction) {
+                                        "share" -> {
+                                            shareTextContent(
+                                                context,
+                                                encrypted,
+                                                "masroufi_backup_v3_${state.activeWindow.cycleKey}.json",
+                                                "application/json"
+                                            )
+                                        }
+                                        "copy" -> {
+                                            copyToClipboard(context, encrypted)
+                                            launch {
+                                                delay(60_000L)
+                                                AppSecurityManager.clearSensitiveClipboard(context)
+                                            }
+                                            val res = snackbarHostState.showSnackbar(
+                                                message = "Sauvegarde v3 chiffrée AES-256-GCM copiée (auto-effacée dans 60s)",
+                                                actionLabel = "Vider",
+                                                duration = SnackbarDuration.Short
+                                            )
+                                            if (res == SnackbarResult.ActionPerformed) {
+                                                AppSecurityManager.clearSensitiveClipboard(context)
+                                            }
+                                        }
+                                        else -> {
+                                            pendingEncryptedExportPayload = encrypted
+                                            exportJsonLauncher.launch("masroufi_backup_v3_${state.activeWindow.cycleKey}.json")
+                                        }
+                                    }
+                                }
+                                is com.example.security.PortableCryptoResult.WeakPassphrase -> {
+                                    exportDialogError = "Mot de passe trop court (min ${result.minLength} caractères)."
+                                }
+                                is com.example.security.PortableCryptoResult.FileTooLarge -> {
+                                    exportDialogError = "Sauvegarde trop volumineuse (${result.actualBytes} octets)."
+                                }
+                                else -> {
+                                    exportDialogError = "Échec du chiffrement de la sauvegarde."
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+
+            val activeRestoreEnvelope = pendingRestoreEnvelopeInfo
+            if (activeRestoreEnvelope != null) {
+                com.example.ui.RestoreBackupPassphraseDialog(
+                    lang = state.profile.language,
+                    envelopeInfo = activeRestoreEnvelope,
+                    isRestoring = restoreDialogBusy,
+                    errorMessage = restoreDialogError,
+                    onClearError = { restoreDialogError = null },
+                    onDismiss = {
+                        pendingRestoreEnvelopeInfo = null
+                        pendingRestoreRawContent = ""
+                        restoreDialogError = null
+                    },
+                    onConfirmRestore = { passChars, replaceExisting ->
+                        restoreDialogBusy = true
+                        restoreDialogError = null
+                        scope.launch {
+                            val outcome = viewModel.restoreBackupPortable(
+                                rawJson = pendingRestoreRawContent,
+                                passphrase = passChars,
+                                replaceExisting = replaceExisting,
+                                currentFiscal = currentFiscalSnapshot(),
+                                wipePassphrase = true
+                            )
+                            restoreDialogBusy = false
+                            when (outcome) {
+                                is com.example.ui.BackupRestoreResult.Success -> {
+                                    outcome.restoredFiscal?.let(::applyRestoredFiscal)
+                                    pendingRestoreEnvelopeInfo = null
+                                    pendingRestoreRawContent = ""
+                                    restoreDialogError = null
+                                    snackbarHostState.showSnackbar(outcome.message)
+                                }
+                                is com.example.ui.BackupRestoreResult.WrongPassphraseOrTampered -> {
+                                    restoreDialogError = outcome.message
+                                }
+                                is com.example.ui.BackupRestoreResult.UnsupportedVersion -> {
+                                    restoreDialogError = outcome.message
+                                }
+                                is com.example.ui.BackupRestoreResult.CorruptedOrInvalid -> {
+                                    restoreDialogError = outcome.message
+                                }
+                                is com.example.ui.BackupRestoreResult.CommitFailed -> {
+                                    restoreDialogError = outcome.message
+                                }
+                            }
+                        }
                     }
                 )
             }

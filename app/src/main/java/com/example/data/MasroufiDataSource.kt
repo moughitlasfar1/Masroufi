@@ -72,6 +72,8 @@ interface MasroufiDataSource {
         userId: String = requireUserId()
     )
 
+    suspend fun getSavedCredits(userId: String = requireUserId()): List<com.masroufi.credit.data.SavedCreditEntity> = emptyList()
+
     suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -84,7 +86,9 @@ interface MasroufiDataSource {
         staleAccountIdsToDelete: List<String> = emptyList(),
         staleEnvelopeIdsToDelete: List<String> = emptyList(),
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit = { _, _ -> },
-        userId: String = requireUserId()
+        userId: String = requireUserId(),
+        savedCredits: List<com.masroufi.credit.data.SavedCreditEntity> = emptyList(),
+        staleSavedCreditIdsToDelete: List<String> = emptyList()
     )
 
     suspend fun adoptLocalDataIntoUser(

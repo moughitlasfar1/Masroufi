@@ -50,6 +50,22 @@ interface RemoteMirror {
         restoredAccountCount: Int,
         restoredEnvelopeCount: Int
     ) {}
+    suspend fun onBackupRestored(
+        userId: String,
+        restoredTxCount: Int,
+        restoredItemCount: Int,
+        restoredAccountCount: Int,
+        restoredEnvelopeCount: Int,
+        restoredCreditCount: Int
+    ) {
+        onBackupRestored(
+            userId = userId,
+            restoredTxCount = restoredTxCount,
+            restoredItemCount = restoredItemCount,
+            restoredAccountCount = restoredAccountCount,
+            restoredEnvelopeCount = restoredEnvelopeCount
+        )
+    }
     suspend fun onLocalDataAdopted(
         sourceUserId: String,
         targetUserId: String,

@@ -19,12 +19,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -35,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +48,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.AccountItem
@@ -50,12 +56,13 @@ import com.example.data.FinancialItem
 import com.example.domain.AppStrings
 import com.example.domain.PayCycleEngine
 import com.example.domain.Translations
-import com.example.security.AppSecurityManager
+import com.example.security.PortableBackupCrypto
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
 import com.masroufi.core.Money
 import com.masroufi.core.MoneyParser
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -501,21 +508,27 @@ fun AddFinancialItemSheet(
 fun RestoreJsonSheet(
     strings: AppStrings,
     initialRawJson: String = "",
-    onPreviewBackup: (String, String) -> Result<BackupImportPreview> = { _, _ -> Result.failure(Exception()) },
+    onPreviewBackupAsync: suspend (String, CharArray) -> Result<BackupImportPreview> = { _, _ -> Result.failure(Exception()) },
+    onRestorePortable: suspend (String, CharArray, Boolean) -> BackupRestoreResult = { _, _, _ ->
+        BackupRestoreResult.CorruptedOrInvalid("Non configuré")
+    },
     onDismiss: () -> Unit,
-    onRestore: (String, String, Boolean) -> Unit,
+    onRestoreSucceeded: (String) -> Unit = {},
     onImportFile: () -> Unit = {}
 ) {
+    val scope = rememberCoroutineScope()
     var rawJson by remember(initialRawJson) { mutableStateOf(initialRawJson) }
     var decryptPassword by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
     var replaceExisting by remember { mutableStateOf(true) }
     var previewState by remember { mutableStateOf<BackupImportPreview?>(null) }
     var previewError by remember { mutableStateOf<String?>(null) }
+    var isWorking by remember { mutableStateOf(false) }
 
-    val isEncrypted = remember(rawJson) { AppSecurityManager.isEncryptedBackup(rawJson) }
+    val isEncrypted = remember(rawJson) { PortableBackupCrypto.isEncryptedBackup(rawJson) }
 
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!isWorking) onDismiss() },
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
@@ -533,9 +546,8 @@ fun RestoreJsonSheet(
             )
 
             FilledTonalButton(
-                onClick = {
-                    onImportFile()
-                },
+                onClick = { onImportFile() },
+                enabled = !isWorking,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("restore_sheet_import_file_btn")
@@ -550,7 +562,8 @@ fun RestoreJsonSheet(
                     previewState = null
                     previewError = null
                 },
-                label = { Text("Ou collez votre JSON Masroufi (clair ou chiffré AES-256-GCM)...") },
+                enabled = !isWorking,
+                label = { Text("Ou collez votre JSON Masroufi (v3 chiffré ou v2/v1)...") },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(130.dp)
@@ -565,8 +578,18 @@ fun RestoreJsonSheet(
                         previewState = null
                         previewError = null
                     },
+                    enabled = !isWorking,
                     label = { Text("Mot de passe de déchiffrement AES-256-GCM") },
-                    visualTransformation = PasswordVisualTransformation(),
+                    visualTransformation = if (showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { showPassword = !showPassword }) {
+                            Icon(
+                                imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (showPassword) "Masquer" else "Afficher"
+                            )
+                        }
+                    },
+                    isError = !previewError.isNullOrBlank(),
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
@@ -596,27 +619,39 @@ fun RestoreJsonSheet(
                 Switch(
                     checked = replaceExisting,
                     onCheckedChange = { replaceExisting = it },
+                    enabled = !isWorking,
                     modifier = Modifier.testTag("restore_replace_existing_switch")
                 )
             }
 
             FilledTonalButton(
                 onClick = {
-                    if (rawJson.isNotBlank()) {
-                        val res = onPreviewBackup(rawJson, decryptPassword)
-                        res.onSuccess { prev ->
-                            previewState = prev
-                            previewError = null
-                        }.onFailure { err ->
-                            previewState = null
-                            previewError = err.localizedMessage ?: "Sauvegarde invalide ou mot de passe incorrect."
+                    if (rawJson.isNotBlank() && !isWorking) {
+                        isWorking = true
+                        previewError = null
+                        val passChars = decryptPassword.trim().toCharArray()
+                        scope.launch {
+                            val res = onPreviewBackupAsync(rawJson, passChars)
+                            isWorking = false
+                            res.onSuccess { prev ->
+                                previewState = prev
+                                previewError = null
+                            }.onFailure { err ->
+                                previewState = null
+                                previewError = err.localizedMessage ?: "Sauvegarde invalide ou mot de passe incorrect."
+                            }
                         }
                     }
                 },
+                enabled = rawJson.isNotBlank() && !isWorking,
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("restore_preview_btn")
             ) {
+                if (isWorking) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 Text("1. Vérifier & Prévisualiser la sauvegarde (Phase 1)", fontWeight = FontWeight.Bold)
             }
 
@@ -625,7 +660,8 @@ fun RestoreJsonSheet(
                     text = previewError!!,
                     color = AccentCoral,
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.testTag("restore_sheet_error_text")
                 )
             }
 
@@ -652,16 +688,14 @@ fun RestoreJsonSheet(
                             text = "• Comptes : ${prev.accountsCount} | Enveloppes : ${prev.envelopesCount} | Éléments : ${prev.financialItemsCount}",
                             style = MaterialTheme.typography.bodySmall
                         )
+                        val creditsPart = if (prev.savedCreditsCount > 0) " | Crédits : ${prev.savedCreditsCount}" else ""
+                        val billsPart = if (prev.annualBillsCount > 0) " | Charges ann. : ${prev.annualBillsCount}" else ""
                         Text(
-                            text = "• Transactions : ${prev.transactionsCount} (${prev.totalOperationsCount} écritures au total)",
+                            text = "• Transactions : ${prev.transactionsCount}$creditsPart$billsPart",
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
-                            text = if (prev.isSingleAtomicBatch) {
-                                "• Exécution : 1 lot Firestore atomique (< 400 opérations)"
-                            } else {
-                                "• Exécution : ${prev.batchChunksCount} lots séquentiels avec sauvegarde Rollback préalable"
-                            },
+                            text = "• Exécution : 1 transaction Room atomique (vérifiée en mémoire avant écriture)",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -671,16 +705,48 @@ fun RestoreJsonSheet(
 
             Button(
                 onClick = {
-                    if (rawJson.isNotBlank()) {
-                        onRestore(rawJson, decryptPassword, replaceExisting)
-                        onDismiss()
+                    if (rawJson.isNotBlank() && !isWorking) {
+                        isWorking = true
+                        previewError = null
+                        val passChars = decryptPassword.trim().toCharArray()
+                        scope.launch {
+                            val outcome = onRestorePortable(rawJson, passChars, replaceExisting)
+                            isWorking = false
+                            when (outcome) {
+                                is BackupRestoreResult.Success -> {
+                                    onRestoreSucceeded(outcome.message)
+                                    onDismiss()
+                                }
+                                is BackupRestoreResult.WrongPassphraseOrTampered -> {
+                                    previewError = outcome.message
+                                }
+                                is BackupRestoreResult.UnsupportedVersion -> {
+                                    previewError = outcome.message
+                                }
+                                is BackupRestoreResult.CorruptedOrInvalid -> {
+                                    previewError = outcome.message
+                                }
+                                is BackupRestoreResult.CommitFailed -> {
+                                    previewError = outcome.message
+                                }
+                            }
+                        }
                     }
                 },
+                enabled = rawJson.isNotBlank() && !isWorking,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp)
                     .testTag("restore_confirm_btn")
             ) {
+                if (isWorking) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 Text("2. Exécuter la restauration (Phase 2)", fontWeight = FontWeight.ExtraBold)
             }
             Spacer(modifier = Modifier.height(24.dp))

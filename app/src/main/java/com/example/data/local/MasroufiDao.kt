@@ -185,7 +185,9 @@ interface MasroufiDao {
         staleTxIdsToDelete: List<String>,
         staleItemIdsToDelete: List<String>,
         staleAccountIdsToDelete: List<String>,
-        staleEnvelopeIdsToDelete: List<String>
+        staleEnvelopeIdsToDelete: List<String>,
+        savedCredits: List<SavedCreditLocalEntity> = emptyList(),
+        staleSavedCreditIdsToDelete: List<String> = emptyList()
     ) {
         if (profile != null) upsertProfile(profile)
         if (customPrefsItem != null) upsertFinancialItem(customPrefsItem)
@@ -193,10 +195,12 @@ interface MasroufiDao {
         if (envelopes.isNotEmpty()) upsertEnvelopes(envelopes)
         if (financialItems.isNotEmpty()) upsertFinancialItems(financialItems)
         if (transactions.isNotEmpty()) upsertTransactions(transactions)
+        if (savedCredits.isNotEmpty()) upsertSavedCredits(savedCredits)
         staleTxIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteTransaction(userId, id) }
         staleItemIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteFinancialItem(userId, id) }
         staleAccountIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteAccount(userId, id) }
         staleEnvelopeIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteEnvelope(userId, id) }
+        staleSavedCreditIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteSavedCredit(userId, id) }
     }
 
     @Transaction

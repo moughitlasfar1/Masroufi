@@ -869,7 +869,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         staleAccountIdsToDelete: List<String>,
         staleEnvelopeIdsToDelete: List<String>,
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit,
-        userId: String
+        userId: String,
+        savedCredits: List<com.masroufi.credit.data.SavedCreditEntity>,
+        staleSavedCreditIdsToDelete: List<String>
     ) {
         val uid = requireUserId(userId)
         val userRef = db.collection("users").document(uid)

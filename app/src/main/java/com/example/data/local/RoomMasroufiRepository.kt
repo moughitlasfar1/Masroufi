@@ -10,10 +10,12 @@ import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.data.local.MasroufiEntityMappers.toDomain
 import com.example.data.local.MasroufiEntityMappers.toEntity
+import com.example.data.local.MasroufiEntityMappers.toLocalEntity
 import com.example.domain.PayCycleEngine
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.masroufi.core.Money
+import com.masroufi.credit.data.SavedCreditEntity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -374,6 +376,11 @@ class RoomMasroufiRepository(
         }
     }
 
+    override suspend fun getSavedCredits(userId: String): List<SavedCreditEntity> {
+        val uid = requireUserId(userId)
+        return dao.getSavedCredits(uid).map { it.toDomain() }
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -386,7 +393,9 @@ class RoomMasroufiRepository(
         staleAccountIdsToDelete: List<String>,
         staleEnvelopeIdsToDelete: List<String>,
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit,
-        userId: String
+        userId: String,
+        savedCredits: List<SavedCreditEntity>,
+        staleSavedCreditIdsToDelete: List<String>
     ) {
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
@@ -420,6 +429,12 @@ class RoomMasroufiRepository(
         }
         val restoredTxIds = txEntities.map { it.id }.toSet()
 
+        val creditEntities = savedCredits.mapIndexed { idx, credit ->
+            val cleanId = credit.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "credit_restored_$idx" }
+            credit.copy(id = cleanId).toLocalEntity(uid, now)
+        }
+        val restoredCreditIds = creditEntities.map { it.id }.toSet()
+
         val safeStaleTxs = staleTxIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
             .filter { it.isNotBlank() && it !in restoredTxIds }
         val safeStaleItems = staleItemIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
@@ -432,6 +447,8 @@ class RoomMasroufiRepository(
             staleEnvelopeIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
                 .filter { it.isNotBlank() && it !in restoredEnvelopeIds }
         } else emptyList()
+        val safeStaleCredits = staleSavedCreditIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
+            .filter { it.isNotBlank() && it !in restoredCreditIds }
 
         dao.restoreBackupSnapshotAtomically(
             userId = uid,
@@ -444,7 +461,9 @@ class RoomMasroufiRepository(
             staleTxIdsToDelete = safeStaleTxs,
             staleItemIdsToDelete = safeStaleItems,
             staleAccountIdsToDelete = safeStaleAccounts,
-            staleEnvelopeIdsToDelete = safeStaleEnvelopes
+            staleEnvelopeIdsToDelete = safeStaleEnvelopes,
+            savedCredits = creditEntities,
+            staleSavedCreditIdsToDelete = safeStaleCredits
         )
         onChunkProgress(1, 1)
 
@@ -454,7 +473,8 @@ class RoomMasroufiRepository(
                 restoredTxCount = txEntities.size,
                 restoredItemCount = itemEntities.size,
                 restoredAccountCount = accountEntities.size,
-                restoredEnvelopeCount = envelopeEntities.size
+                restoredEnvelopeCount = envelopeEntities.size,
+                restoredCreditCount = creditEntities.size
             )
         }
     }

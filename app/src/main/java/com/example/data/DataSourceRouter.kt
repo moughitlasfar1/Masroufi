@@ -287,6 +287,10 @@ class LocalRoomMasroufiDataSource(
         )
     }
 
+    override suspend fun getSavedCredits(userId: String): List<com.masroufi.credit.data.SavedCreditEntity> {
+        return requireOpenRepo()?.getSavedCredits(userId) ?: emptyList()
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -299,7 +303,9 @@ class LocalRoomMasroufiDataSource(
         staleAccountIdsToDelete: List<String>,
         staleEnvelopeIdsToDelete: List<String>,
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit,
-        userId: String
+        userId: String,
+        savedCredits: List<com.masroufi.credit.data.SavedCreditEntity>,
+        staleSavedCreditIdsToDelete: List<String>
     ) {
         requireOpenRepo()?.restoreFullBackupAtomically(
             profile,
@@ -313,7 +319,9 @@ class LocalRoomMasroufiDataSource(
             staleAccountIdsToDelete,
             staleEnvelopeIdsToDelete,
             onChunkProgress,
-            userId
+            userId,
+            savedCredits,
+            staleSavedCreditIdsToDelete
         )
     }
 

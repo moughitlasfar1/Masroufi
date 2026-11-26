@@ -4,12 +4,15 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AccountItem
+import com.example.data.BackupFiscalSnapshot
+import com.example.data.BackupV3Codec
 import com.example.data.CustomizationPrefs
 import com.example.data.DefaultCategoryResolver
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.MasroufiDataSource
 import com.example.data.TransactionItem
+import com.example.data.UnsupportedBackupVersionException
 import com.example.data.UserProfile
 import com.example.domain.AccountWithBalance
 import com.example.domain.CycleSpendProjection
@@ -20,13 +23,18 @@ import com.example.domain.PayCycleWindow
 import com.example.domain.SmartInsight
 import com.example.domain.SmartReminder
 import com.example.security.AppSecurityManager
+import com.example.security.BackupEnvelopeInfo
+import com.example.security.PortableBackupCrypto
+import com.example.security.PortableCryptoResult
 import com.masroufi.core.Money
 import com.masroufi.core.sumMoney
+import com.masroufi.credit.data.SavedCreditEntity
 import java.math.BigDecimal
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,6 +45,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -62,7 +71,12 @@ data class ParsedBackupPayload(
     val envelopes: List<EnvelopeConfig>,
     val financialItems: List<FinancialItem>,
     val transactions: List<TransactionItem>,
-    val learnedCategories: Map<String, String> = emptyMap()
+    val learnedCategories: Map<String, String> = emptyMap(),
+    val exportedAtEpochMillis: Long = 0L,
+    val appVersion: String = "",
+    val savedCredits: List<SavedCreditEntity> = emptyList(),
+    val hasSavedCreditsSection: Boolean = false,
+    val fiscal: BackupFiscalSnapshot? = null
 )
 
 data class BackupImportPreview(
@@ -75,8 +89,27 @@ data class BackupImportPreview(
     val transactionsCount: Int,
     val totalOperationsCount: Int,
     val batchChunksCount: Int,
-    val isSingleAtomicBatch: Boolean
+    val isSingleAtomicBatch: Boolean,
+    val savedCreditsCount: Int = 0,
+    val annualBillsCount: Int = 0,
+    val encryptionVersion: Int = 0,
+    val appVersion: String = ""
 )
+
+sealed class BackupRestoreResult {
+    data class Success(
+        val message: String,
+        val backupVersion: Int,
+        val restoredTransactionsCount: Int,
+        val restoredCreditsCount: Int,
+        val restoredFiscal: BackupFiscalSnapshot?
+    ) : BackupRestoreResult()
+
+    data class WrongPassphraseOrTampered(val message: String) : BackupRestoreResult()
+    data class UnsupportedVersion(val version: Int, val message: String) : BackupRestoreResult()
+    data class CorruptedOrInvalid(val message: String) : BackupRestoreResult()
+    data class CommitFailed(val message: String) : BackupRestoreResult()
+}
 
 object BackupSerializer {
     private val FORMULA_PREFIXES = charArrayOf('=', '+', '-', '@')
@@ -115,6 +148,24 @@ object BackupSerializer {
                 .append(sanitizeCsvCell(t.isoDate)).append('\n')
         }
         return sb.toString()
+    }
+
+    fun encodeV3Backup(
+        state: DashboardState,
+        savedCredits: List<SavedCreditEntity> = emptyList(),
+        fiscal: BackupFiscalSnapshot? = null,
+        appVersion: String = com.example.BuildConfig.VERSION_NAME,
+        exportedAtEpochMillis: Long = System.currentTimeMillis(),
+        exportedAtIso: String = PayCycleEngine.todayIso()
+    ): String {
+        return BackupV3Codec.encodeV3Backup(
+            state = state,
+            savedCredits = savedCredits,
+            fiscal = fiscal,
+            appVersion = appVersion,
+            exportedAtEpochMillis = exportedAtEpochMillis,
+            exportedAtIso = exportedAtIso
+        )
     }
 
     fun encodeV2Backup(state: DashboardState): String {
@@ -322,6 +373,13 @@ object BackupSerializer {
 
         val obj = JSONObject(trimmed)
         val version = obj.optInt("backupVersion", 1)
+        when (version) {
+            BackupV3Codec.BACKUP_VERSION_V3 -> {
+                return BackupV3Codec.decodeV3Backup(obj, currentUserId, fallbackProfile)
+            }
+            1, 2 -> Unit
+            else -> throw UnsupportedBackupVersionException(version)
+        }
 
         val profileObj = obj.optJSONObject("profile")
         val rawBudget = if (profileObj != null && profileObj.has("baseBudget")) {
@@ -571,14 +629,37 @@ object BackupSerializer {
         fallbackProfile: UserProfile
     ): BackupImportPreview {
         val rawBytes = rawContent.toByteArray(Charsets.UTF_8).size
-        require(rawBytes <= AppSecurityManager.MAX_BACKUP_FILE_BYTES) {
+        require(rawBytes <= PortableBackupCrypto.MAX_BACKUP_FILE_BYTES) {
             "Sauvegarde trop volumineuse ($rawBytes octets > 10 Mo max)."
         }
-        val isEnc = AppSecurityManager.isEncryptedBackup(rawContent)
-        val plainJson = if (isEnc) {
-            AppSecurityManager.decryptBackupJson(rawContent, password)
-        } else {
-            rawContent
+        val envelopeInfo = PortableBackupCrypto.inspectEnvelope(rawContent)
+        val (isEnc, encVersion) = when (envelopeInfo) {
+            is BackupEnvelopeInfo.PortableV3Encrypted -> true to envelopeInfo.encryptionVersion
+            is BackupEnvelopeInfo.LegacyV2Encrypted -> true to envelopeInfo.encryptionVersion
+            BackupEnvelopeInfo.LegacyPlaintextJson -> false to 0
+            is BackupEnvelopeInfo.UnsupportedVersion ->
+                throw UnsupportedBackupVersionException(envelopeInfo.detectedVersion)
+            is BackupEnvelopeInfo.Corrupted ->
+                throw IllegalArgumentException(envelopeInfo.reason)
+        }
+        val plainJson = when (
+            val dec = PortableBackupCrypto.decryptAnyBackupBlocking(
+                rawContent = rawContent,
+                passphrase = password.toCharArray(),
+                wipePassphrase = true
+            )
+        ) {
+            is PortableCryptoResult.Success -> dec.value
+            is PortableCryptoResult.WrongPassphraseOrTampered ->
+                throw IllegalArgumentException("Mot de passe incorrect ou sauvegarde corrompue.")
+            is PortableCryptoResult.UnsupportedVersion ->
+                throw UnsupportedBackupVersionException(dec.version)
+            is PortableCryptoResult.FileTooLarge ->
+                throw IllegalArgumentException("Sauvegarde trop volumineuse (${dec.actualBytes} octets > 10 Mo max).")
+            is PortableCryptoResult.CorruptedFile ->
+                throw IllegalArgumentException(dec.detail)
+            is PortableCryptoResult.WeakPassphrase ->
+                throw IllegalArgumentException("Mot de passe trop court (min ${dec.minLength} caractères).")
         }
         val parsed = decodeBackup(plainJson, currentUserId, fallbackProfile)
         val totalOps = (if (parsed.profile != null) 1 else 0) +
@@ -586,7 +667,8 @@ object BackupSerializer {
             parsed.accounts.size +
             parsed.envelopes.size +
             parsed.financialItems.size +
-            parsed.transactions.size
+            parsed.transactions.size +
+            parsed.savedCredits.size
         val chunks = ceil(totalOps.coerceAtLeast(1) / 400.0).toInt().coerceAtLeast(1)
         return BackupImportPreview(
             isEncrypted = isEnc,
@@ -598,7 +680,11 @@ object BackupSerializer {
             transactionsCount = parsed.transactions.size,
             totalOperationsCount = totalOps,
             batchChunksCount = chunks,
-            isSingleAtomicBatch = chunks == 1
+            isSingleAtomicBatch = chunks == 1,
+            savedCreditsCount = parsed.savedCredits.size,
+            annualBillsCount = parsed.fiscal?.annualBills?.size ?: 0,
+            encryptionVersion = encVersion,
+            appVersion = parsed.appVersion
         )
     }
 
@@ -2019,17 +2105,51 @@ class MasroufiViewModel(
     val preRestoreRollbackJson: StateFlow<String?> = _preRestoreRollbackJson.asStateFlow()
 
     /**
-     * S9: Complete Version 2 JSON Backup (profile, customPrefs, accounts, envelopes,
-     * financialItems, and transactions). ALWAYS encrypted with AES-256-GCM + PBKDF2-HMAC-SHA256;
-     * rejects blank or short (< 10 character) passwords so plaintext JSON backups are never exported.
+     * Phase 3: Portable Backup v3 (all Room v2 user tables incl. saved_credits + FiscalRepository,
+     * exact Long centimes, PBKDF2-HMAC-SHA256 600k iterations + AES-256-GCM with AAD, zero Keystore).
+     * Runs KDF & encryption off the main thread on [Dispatchers.Default].
+     */
+    suspend fun exportBackupV3(
+        passphrase: CharArray,
+        fiscal: BackupFiscalSnapshot? = null,
+        appVersion: String = com.example.BuildConfig.VERSION_NAME,
+        wipePassphrase: Boolean = true
+    ): PortableCryptoResult<String> {
+        val currentState = uiState.value
+        val savedCredits = withContext(Dispatchers.IO) {
+            runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
+        }
+        val plainV3 = BackupSerializer.encodeV3Backup(
+            state = currentState,
+            savedCredits = savedCredits,
+            fiscal = fiscal,
+            appVersion = appVersion
+        )
+        return PortableBackupCrypto.encrypt(
+            plaintextUtf8 = plainV3,
+            passphrase = passphrase,
+            iterations = PortableBackupCrypto.DEFAULT_PBKDF2_ITERATIONS,
+            wipePassphrase = wipePassphrase
+        )
+    }
+
+    /**
+     * Synchronous Backup v3 encrypted JSON export (enforces >= 10 char passphrase).
      */
     fun exportBackupJson(password: String): String {
         val cleanPwd = password.trim()
-        require(cleanPwd.length >= AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH) {
-            "Un mot de passe d'au moins ${AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH} caractères est obligatoire pour exporter une sauvegarde JSON chiffrée."
+        require(cleanPwd.length >= PortableBackupCrypto.MIN_PASSPHRASE_LENGTH) {
+            "Un mot de passe d'au moins ${PortableBackupCrypto.MIN_PASSPHRASE_LENGTH} caractères est obligatoire pour exporter une sauvegarde JSON chiffrée."
         }
-        val plain = BackupSerializer.encodeV2Backup(uiState.value)
-        return AppSecurityManager.encryptBackupJson(plain, cleanPwd)
+        val plain = BackupSerializer.encodeV3Backup(uiState.value)
+        return when (val res = PortableBackupCrypto.encryptBlocking(plain, cleanPwd)) {
+            is PortableCryptoResult.Success -> res.value
+            is PortableCryptoResult.WeakPassphrase ->
+                throw IllegalArgumentException("Un mot de passe d'au moins ${res.minLength} caractères est obligatoire.")
+            is PortableCryptoResult.FileTooLarge ->
+                throw IllegalArgumentException("Sauvegarde trop volumineuse (${res.actualBytes} octets).")
+            else -> throw IllegalArgumentException("Échec du chiffrement de la sauvegarde.")
+        }
     }
 
     /**
@@ -2050,6 +2170,75 @@ class MasroufiViewModel(
         }
     }
 
+    suspend fun previewBackupImportAsync(
+        rawContent: String,
+        passphrase: CharArray,
+        wipePassphrase: Boolean = true
+    ): Result<BackupImportPreview> = withContext(Dispatchers.Default) {
+        val passCopy = passphrase.copyOf()
+        if (wipePassphrase) java.util.Arrays.fill(passphrase, '\u0000')
+        try {
+            runCatching {
+                val rawBytes = rawContent.toByteArray(Charsets.UTF_8).size
+                require(rawBytes <= PortableBackupCrypto.MAX_BACKUP_FILE_BYTES) {
+                    "Sauvegarde trop volumineuse ($rawBytes octets > 10 Mo max)."
+                }
+                val info = PortableBackupCrypto.inspectEnvelope(rawContent)
+                val (isEnc, encVersion) = when (info) {
+                    is BackupEnvelopeInfo.PortableV3Encrypted -> true to info.encryptionVersion
+                    is BackupEnvelopeInfo.LegacyV2Encrypted -> true to info.encryptionVersion
+                    BackupEnvelopeInfo.LegacyPlaintextJson -> false to 0
+                    is BackupEnvelopeInfo.UnsupportedVersion ->
+                        throw UnsupportedBackupVersionException(info.detectedVersion)
+                    is BackupEnvelopeInfo.Corrupted ->
+                        throw IllegalArgumentException(info.reason)
+                }
+                val plainJson = when (
+                    val dec = PortableBackupCrypto.decryptAnyBackupBlocking(rawContent, passCopy, wipePassphrase = true)
+                ) {
+                    is PortableCryptoResult.Success -> dec.value
+                    is PortableCryptoResult.WrongPassphraseOrTampered ->
+                        throw IllegalArgumentException("Mot de passe incorrect ou sauvegarde corrompue.")
+                    is PortableCryptoResult.UnsupportedVersion ->
+                        throw UnsupportedBackupVersionException(dec.version)
+                    is PortableCryptoResult.FileTooLarge ->
+                        throw IllegalArgumentException("Sauvegarde trop volumineuse (${dec.actualBytes} octets > 10 Mo max).")
+                    is PortableCryptoResult.CorruptedFile ->
+                        throw IllegalArgumentException(dec.detail)
+                    is PortableCryptoResult.WeakPassphrase ->
+                        throw IllegalArgumentException("Mot de passe trop court.")
+                }
+                val parsed = BackupSerializer.decodeBackup(plainJson, currentUserId, uiState.value.profile)
+                val totalOps = (if (parsed.profile != null) 1 else 0) +
+                    (if (parsed.customPrefs != null) 1 else 0) +
+                    parsed.accounts.size +
+                    parsed.envelopes.size +
+                    parsed.financialItems.size +
+                    parsed.transactions.size +
+                    parsed.savedCredits.size
+                val chunks = ceil(totalOps.coerceAtLeast(1) / 400.0).toInt().coerceAtLeast(1)
+                BackupImportPreview(
+                    isEncrypted = isEnc,
+                    backupVersion = parsed.backupVersion,
+                    exportedAtIso = parsed.exportedAtIso,
+                    accountsCount = parsed.accounts.size,
+                    envelopesCount = parsed.envelopes.size,
+                    financialItemsCount = parsed.financialItems.size,
+                    transactionsCount = parsed.transactions.size,
+                    totalOperationsCount = totalOps,
+                    batchChunksCount = chunks,
+                    isSingleAtomicBatch = chunks == 1,
+                    savedCreditsCount = parsed.savedCredits.size,
+                    annualBillsCount = parsed.fiscal?.annualBills?.size ?: 0,
+                    encryptionVersion = encVersion,
+                    appVersion = parsed.appVersion
+                )
+            }
+        } finally {
+            java.util.Arrays.fill(passCopy, '\u0000')
+        }
+    }
+
     fun restoreFromJson(rawJson: String, onResult: (Boolean) -> Unit) {
         restoreFromJson(
             rawJson = rawJson,
@@ -2060,116 +2249,165 @@ class MasroufiViewModel(
     }
 
     /**
-     * Two-phase backup restore (SEC-07):
-     * Phase 1: Decrypts (if AES-256-GCM encrypted) and validates the entire backup payload in memory
-     *          against size/item limits and Firestore rules constraints, and persists an encrypted
-     *          pre-restore rollback snapshot of the current state.
-     * Phase 2: Executes unified Firestore batch writes (sets + stale deletes in 400-op chunks),
-     *          and automatically replays the rollback snapshot if a mid-stream failure occurs.
+     * Phase 3 atomic, memory-first backup restore supporting Backup v3 (portable encrypted)
+     * and legacy v1/v2 (encrypted or plaintext) backups.
+     *
+     * Strict guarantees:
+     * 1. Decryption, JSON parsing, ID/range checks, and metadata count checks run entirely in memory
+     *    on [Dispatchers.Default] BEFORE touching Room, optimistic UI state, or FiscalRepository.
+     * 2. Room writes (profile, customPrefs, accounts, envelopes, financialItems, transactions,
+     *    saved_credits, and stale deletions) commit inside a single atomic Room `@Transaction`
+     *    scoped to [currentUserId].
+     * 3. Optimistic UI state, learned categories, rollback snapshot persistence, fiscal restoration,
+     *    and RemoteMirror.onBackupRestored happen strictly AFTER the Room transaction commits.
      */
-    fun restoreFromJson(
+    suspend fun restoreBackupPortable(
         rawJson: String,
-        password: String = "",
+        passphrase: CharArray,
         replaceExisting: Boolean = true,
+        currentFiscal: BackupFiscalSnapshot? = null,
         isRollbackReplay: Boolean = false,
-        onResult: (Boolean, String) -> Unit
-    ) {
-        safeLaunch("restoreFromJson") {
-            val currentState = uiState.value
-            val rollbackSnapshot = if (!isRollbackReplay) {
-                BackupSerializer.encodeV2Backup(currentState)
-            } else null
+        wipePassphrase: Boolean = true
+    ): BackupRestoreResult {
+        val currentState = uiState.value
 
-            // Phase 1: Decrypt (if encrypted) & validate entire backup in memory before any Firestore write
-            val parsed = try {
-                val rawBytes = rawJson.toByteArray(Charsets.UTF_8).size
-                require(rawBytes <= AppSecurityManager.MAX_BACKUP_FILE_BYTES) {
-                    "Sauvegarde trop volumineuse ($rawBytes octets > 10 Mo max)."
-                }
-                val plainJson = if (AppSecurityManager.isEncryptedBackup(rawJson)) {
-                    AppSecurityManager.decryptBackupJson(rawJson, password)
-                } else {
-                    rawJson
-                }
+        // Phase 1: Decrypt & validate entire payload strictly in memory on Dispatchers.Default
+        val decResult = PortableBackupCrypto.decryptAnyBackup(
+            rawContent = rawJson,
+            passphrase = passphrase,
+            wipePassphrase = wipePassphrase
+        )
+        val plainJson = when (decResult) {
+            is PortableCryptoResult.Success -> decResult.value
+            is PortableCryptoResult.WrongPassphraseOrTampered -> {
+                return BackupRestoreResult.WrongPassphraseOrTampered(
+                    "Mot de passe incorrect ou fichier altéré. Aucune donnée modifiée."
+                )
+            }
+            is PortableCryptoResult.UnsupportedVersion -> {
+                return BackupRestoreResult.UnsupportedVersion(
+                    version = decResult.version,
+                    message = "Version de chiffrement non prise en charge (v${decResult.version})."
+                )
+            }
+            is PortableCryptoResult.FileTooLarge -> {
+                return BackupRestoreResult.CorruptedOrInvalid(
+                    "Sauvegarde trop volumineuse (${decResult.actualBytes} octets > 10 Mo max)."
+                )
+            }
+            is PortableCryptoResult.CorruptedFile -> {
+                return BackupRestoreResult.CorruptedOrInvalid(
+                    "Fichier de sauvegarde corrompu : ${decResult.detail}"
+                )
+            }
+            is PortableCryptoResult.WeakPassphrase -> {
+                return BackupRestoreResult.WrongPassphraseOrTampered(
+                    "Mot de passe trop court (min ${decResult.minLength} caractères)."
+                )
+            }
+        }
+
+        val parsed = try {
+            withContext(Dispatchers.Default) {
                 BackupSerializer.decodeBackup(
                     rawJson = plainJson,
                     currentUserId = currentUserId,
                     fallbackProfile = currentState.profile
                 )
-            } catch (e: Exception) {
-                if (com.example.BuildConfig.DEBUG) {
-                    Log.w("MasroufiVM", "Phase 1 backup validation failed: ${e.message}")
-                }
-                val msg = e.localizedMessage ?: "Format invalide ou mot de passe erroné."
-                _errorMessage.value = "Erreur lors de la validation : $msg"
-                onResult(false, msg)
-                return@safeLaunch
             }
-
-            // Persist encrypted rollback snapshot before mutating state
-            if (rollbackSnapshot != null) {
-                _preRestoreRollbackJson.value = rollbackSnapshot
-                onRollbackSnapshotChanged(rollbackSnapshot)
+        } catch (e: UnsupportedBackupVersionException) {
+            return BackupRestoreResult.UnsupportedVersion(
+                version = e.detectedVersion,
+                message = e.localizedMessage ?: "Version de sauvegarde non prise en charge."
+            )
+        } catch (e: Exception) {
+            if (com.example.BuildConfig.DEBUG) {
+                Log.w("MasroufiVM", "Phase 1 backup validation failed: ${e.message}")
             }
+            return BackupRestoreResult.CorruptedOrInvalid(
+                e.localizedMessage ?: "Format de sauvegarde invalide ou corrompu."
+            )
+        }
 
-            val existingAccMap = currentState.accounts.associate { it.account.id to it.account.createdAt }
-            val existingEnvMap = currentState.envelopes.associate { it.config.id to it.config.createdAt }
-            val allExistingItems = currentState.presets + currentState.goals + currentState.bills +
-                currentState.debts + currentState.darets + currentState.seasonals
-            val existingItemMap = allExistingItems.associate { it.id to it.createdAt }
-            val existingTxMap = currentState.allTransactions.associate { it.id to it.createdAt }
+        // Phase 2: Prepare complete snapshot & commit inside a single atomic Room @Transaction
+        val existingCredits = withContext(Dispatchers.IO) {
+            runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
+        }
+        val rollbackSnapshot = if (!isRollbackReplay) {
+            BackupSerializer.encodeV3Backup(
+                state = currentState,
+                savedCredits = existingCredits,
+                fiscal = currentFiscal
+            )
+        } else null
 
-            val profileWithCreatedAt = parsed.profile?.copy(createdAt = currentState.profile.createdAt)
-            if (profileWithCreatedAt != null) {
-                _optimisticProfile.value = profileWithCreatedAt
+        val existingAccMap = currentState.accounts.associate { it.account.id to it.account.createdAt }
+        val existingEnvMap = currentState.envelopes.associate { it.config.id to it.config.createdAt }
+        val allExistingItems = currentState.presets + currentState.goals + currentState.bills +
+            currentState.debts + currentState.darets + currentState.seasonals
+        val existingItemMap = allExistingItems.associate { it.id to it.createdAt }
+        val existingTxMap = currentState.allTransactions.associate { it.id to it.createdAt }
+
+        val profileWithCreatedAt = parsed.profile?.copy(createdAt = currentState.profile.createdAt)
+        val customPrefsItem = parsed.customPrefs?.let {
+            buildCustomPrefsFinancialItem(it, _customPrefsItemCreatedAt.value)
+        }
+
+        // Build learned categories item without mutating global PayCycleEngine yet
+        val learnedRestoreItems = if (parsed.learnedCategories.isNotEmpty()) {
+            val merged = LinkedHashMap(PayCycleEngine.getAllLearnedCategories()).apply {
+                putAll(parsed.learnedCategories)
             }
-            val customPrefsItem = if (parsed.customPrefs != null) {
-                _optimisticCustomPrefs.value = parsed.customPrefs
-                buildCustomPrefsFinancialItem(parsed.customPrefs, _customPrefsItemCreatedAt.value)
-            } else null
-
-            if (parsed.learnedCategories.isNotEmpty()) {
-                parsed.learnedCategories.forEach { (k, v) ->
-                    PayCycleEngine.learnCategoryForDescription(k, v)
-                }
-                onLearnedCategoriesUpdated(PayCycleEngine.exportLearnedCategoriesJson())
-            }
-            val learnedRestoreItems = if (parsed.learnedCategories.isNotEmpty()) {
-                listOf(
-                    PayCycleEngine.buildLearnedCategoriesFinancialItem(
-                        userId = currentUserId,
-                        existingCreatedAt = _learnedCategoriesCreatedAt.value
-                    )
+            val mergedJson = JSONObject().apply {
+                merged.forEach { (k, v) -> put(k, v) }
+            }.toString()
+            listOf(
+                FinancialItem(
+                    id = "learned_categories",
+                    userId = currentUserId,
+                    itemType = "custom_prefs",
+                    name = "Catégories apprises",
+                    subtitle = "",
+                    amount = Money.ZERO,
+                    secondaryAmount = Money.ZERO,
+                    dayOrTurn = 1,
+                    extraInt = 0,
+                    dateOrCycle = mergedJson.take(250),
+                    createdAt = _learnedCategoriesCreatedAt.value
                 )
-            } else emptyList()
+            )
+        } else emptyList()
 
-            val accountsWithCreatedAt = parsed.accounts.map { acc ->
-                acc.copy(createdAt = existingAccMap[acc.id])
-            }
-            val envelopesWithCreatedAt = parsed.envelopes.map { env ->
-                env.copy(createdAt = existingEnvMap[env.id])
-            }
-            val itemsWithCreatedAt = parsed.financialItems
-                .filterNot { it.id == "learned_categories" }
-                .map { item -> item.copy(createdAt = existingItemMap[item.id]) } + learnedRestoreItems
-            val txsWithCreatedAt = parsed.transactions.map { tx ->
-                tx.copy(createdAt = existingTxMap[tx.id])
-            }
+        val accountsWithCreatedAt = parsed.accounts.map { acc ->
+            acc.copy(createdAt = existingAccMap[acc.id])
+        }
+        val envelopesWithCreatedAt = parsed.envelopes.map { env ->
+            env.copy(createdAt = existingEnvMap[env.id])
+        }
+        val itemsWithCreatedAt = parsed.financialItems
+            .filterNot { it.id == "learned_categories" }
+            .map { item -> item.copy(createdAt = existingItemMap[item.id]) } + learnedRestoreItems
+        val txsWithCreatedAt = parsed.transactions.map { tx ->
+            tx.copy(createdAt = existingTxMap[tx.id])
+        }
 
-            val staleTxIds = if (replaceExisting) currentState.allTransactions.map { it.id } else emptyList()
-            val staleItemIds = if (replaceExisting && parsed.backupVersion >= 2) {
-                allExistingItems.map { it.id }
-            } else emptyList()
-            val staleAccIds = if (replaceExisting && parsed.accounts.isNotEmpty()) {
-                currentState.accounts.map { it.account.id }
-            } else emptyList()
-            val staleEnvIds = if (replaceExisting && parsed.envelopes.isNotEmpty()) {
-                currentState.envelopes.map { it.config.id }
-            } else emptyList()
+        val staleTxIds = if (replaceExisting) currentState.allTransactions.map { it.id } else emptyList()
+        val staleItemIds = if (replaceExisting && parsed.backupVersion >= 2) {
+            allExistingItems.map { it.id }
+        } else emptyList()
+        val staleAccIds = if (replaceExisting && parsed.accounts.isNotEmpty()) {
+            currentState.accounts.map { it.account.id }
+        } else emptyList()
+        val staleEnvIds = if (replaceExisting && parsed.envelopes.isNotEmpty()) {
+            currentState.envelopes.map { it.config.id }
+        } else emptyList()
+        val staleCreditIds = if (replaceExisting && parsed.hasSavedCreditsSection) {
+            existingCredits.map { it.id }
+        } else emptyList()
 
-            try {
-                var finalChunks = 1
-                // Phase 2: Execute unified bounded batches
+        return try {
+            var finalChunks = 1
+            withContext(Dispatchers.IO) {
                 repository.restoreFullBackupAtomically(
                     profile = profileWithCreatedAt,
                     customPrefsItem = customPrefsItem,
@@ -2181,48 +2419,104 @@ class MasroufiViewModel(
                     staleItemIdsToDelete = staleItemIds,
                     staleAccountIdsToDelete = staleAccIds,
                     staleEnvelopeIdsToDelete = staleEnvIds,
-                    onChunkProgress = { _, total -> finalChunks = total }
+                    onChunkProgress = { _, total -> finalChunks = total },
+                    userId = currentUserId,
+                    savedCredits = parsed.savedCredits,
+                    staleSavedCreditIdsToDelete = staleCreditIds
                 )
-                onResult(
-                    true,
-                    "Restauration réussie (${parsed.transactions.size} op., $finalChunks lot(s) synchronisé(s)) !"
-                )
-            } catch (e: Exception) {
-                if (com.example.BuildConfig.DEBUG) {
-                    Log.e("MasroufiVM", "Phase 2 restore failed; attempting automatic rollback", e)
+            }
+
+            // Strictly post-commit mutations (only executed once Room @Transaction succeeded)
+            if (rollbackSnapshot != null) {
+                _preRestoreRollbackJson.value = rollbackSnapshot
+                onRollbackSnapshotChanged(rollbackSnapshot)
+            }
+            if (profileWithCreatedAt != null) {
+                _optimisticProfile.value = profileWithCreatedAt
+            }
+            if (parsed.customPrefs != null) {
+                _optimisticCustomPrefs.value = parsed.customPrefs
+            }
+            if (parsed.learnedCategories.isNotEmpty()) {
+                parsed.learnedCategories.forEach { (k, v) ->
+                    PayCycleEngine.learnCategoryForDescription(k, v)
                 }
-                // Automatic rollback replay if a multi-chunk restore failed mid-stream (SEC-07)
-                if (!isRollbackReplay && !rollbackSnapshot.isNullOrBlank()) {
-                    runCatching {
-                        val rbParsed = BackupSerializer.decodeBackup(
-                            rawJson = rollbackSnapshot,
-                            currentUserId = currentUserId,
-                            fallbackProfile = currentState.profile
-                        )
-                        repository.restoreFullBackupAtomically(
-                            profile = rbParsed.profile?.copy(createdAt = currentState.profile.createdAt),
-                            customPrefsItem = rbParsed.customPrefs?.let {
-                                buildCustomPrefsFinancialItem(it, _customPrefsItemCreatedAt.value)
-                            },
-                            accounts = rbParsed.accounts.map { it.copy(createdAt = existingAccMap[it.id]) },
-                            envelopes = rbParsed.envelopes.map { it.copy(createdAt = existingEnvMap[it.id]) },
-                            financialItems = rbParsed.financialItems.map { it.copy(createdAt = existingItemMap[it.id]) },
-                            transactions = rbParsed.transactions.map { it.copy(createdAt = existingTxMap[it.id]) },
-                            staleTxIdsToDelete = parsed.transactions.map { it.id },
-                            staleItemIdsToDelete = parsed.financialItems.map { it.id },
-                            staleAccountIdsToDelete = parsed.accounts.map { it.id },
-                            staleEnvelopeIdsToDelete = parsed.envelopes.map { it.id }
-                        )
-                    }
+                onLearnedCategoriesUpdated(PayCycleEngine.exportLearnedCategoriesJson())
+            }
+            _errorMessage.value = null
+
+            val creditsNote = if (parsed.savedCredits.isNotEmpty()) {
+                ", ${parsed.savedCredits.size} crédit(s)"
+            } else ""
+            BackupRestoreResult.Success(
+                message = "Restauration v${parsed.backupVersion} réussie (${parsed.transactions.size} op.$creditsNote, $finalChunks lot atomique) !",
+                backupVersion = parsed.backupVersion,
+                restoredTransactionsCount = parsed.transactions.size,
+                restoredCreditsCount = parsed.savedCredits.size,
+                restoredFiscal = parsed.fiscal
+            )
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (e: Exception) {
+            if (com.example.BuildConfig.DEBUG) {
+                Log.e("MasroufiVM", "Phase 2 atomic restore failed; Room transaction rolled back", e)
+            }
+            val msg = e.localizedMessage ?: "Erreur lors de la restauration atomique. Vos données sont intactes."
+            _errorMessage.value = "Erreur lors de la restauration : $msg"
+            BackupRestoreResult.CommitFailed(msg)
+        }
+    }
+
+    /**
+     * Legacy callback wrapper around [restoreBackupPortable].
+     */
+    fun restoreFromJson(
+        rawJson: String,
+        password: String = "",
+        replaceExisting: Boolean = true,
+        isRollbackReplay: Boolean = false,
+        currentFiscal: BackupFiscalSnapshot? = null,
+        onFiscalRestored: (BackupFiscalSnapshot) -> Unit = {},
+        onResult: (Boolean, String) -> Unit
+    ) {
+        safeLaunch("restoreFromJson") {
+            val outcome = restoreBackupPortable(
+                rawJson = rawJson,
+                passphrase = password.toCharArray(),
+                replaceExisting = replaceExisting,
+                currentFiscal = currentFiscal,
+                isRollbackReplay = isRollbackReplay,
+                wipePassphrase = true
+            )
+            when (outcome) {
+                is BackupRestoreResult.Success -> {
+                    outcome.restoredFiscal?.let(onFiscalRestored)
+                    onResult(true, outcome.message)
                 }
-                val msg = e.localizedMessage ?: "Erreur réseau lors de la restauration (Rollback appliqué)."
-                _errorMessage.value = "Erreur lors de la restauration : $msg"
-                onResult(false, msg)
+                is BackupRestoreResult.WrongPassphraseOrTampered -> {
+                    _errorMessage.value = outcome.message
+                    onResult(false, outcome.message)
+                }
+                is BackupRestoreResult.UnsupportedVersion -> {
+                    _errorMessage.value = outcome.message
+                    onResult(false, outcome.message)
+                }
+                is BackupRestoreResult.CorruptedOrInvalid -> {
+                    _errorMessage.value = outcome.message
+                    onResult(false, outcome.message)
+                }
+                is BackupRestoreResult.CommitFailed -> {
+                    _errorMessage.value = outcome.message
+                    onResult(false, outcome.message)
+                }
             }
         }
     }
 
-    fun rollbackLastRestore(onResult: (Boolean) -> Unit) {
+    fun rollbackLastRestore(
+        onFiscalRestored: (BackupFiscalSnapshot) -> Unit = {},
+        onResult: (Boolean) -> Unit
+    ) {
         val snapshot = _preRestoreRollbackJson.value
         if (snapshot.isNullOrBlank()) {
             onResult(false)
@@ -2233,6 +2527,7 @@ class MasroufiViewModel(
             password = "",
             replaceExisting = true,
             isRollbackReplay = true,
+            onFiscalRestored = onFiscalRestored,
             onResult = { ok, _ ->
                 if (ok) {
                     _preRestoreRollbackJson.value = null

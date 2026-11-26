@@ -162,7 +162,6 @@ fun SettingsBottomSheet(
         com.example.notifications.BankDetectionStore.loadPendingItems(context).size
     }
 
-    var backupPassword by remember { mutableStateOf("") }
     var showResetConfirmationDialog by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -1564,47 +1563,15 @@ fun SettingsBottomSheet(
                 modifier = Modifier.testTag("settings_section_data")
             ) {
 
-                    val backupPwdValid = backupPassword.trim().length >= AppSecurityManager.MIN_BACKUP_PASSWORD_LENGTH
-                    OutlinedTextField(
-                        value = backupPassword,
-                        onValueChange = { backupPassword = it },
-                        label = {
-                            Text(
-                                text = when (lang) {
-                                    "ar" -> "كلمة مرور النسخة الاحتياطية (10 أحرف على الأقل)"
-                                    "darija" -> "كلمة سر النسخة المشفرة (10 حروف على الأقل)"
-                                    "en" -> "Backup encryption password (min 10 chars)"
-                                    else -> "Mot de passe obligatoire AES-256 (10+ car.)"
-                                },
-                                fontSize = 12.sp
-                            )
+                    Text(
+                        text = when (lang) {
+                            "ar" -> "النسخ الاحتياطي JSON مشفّر دائماً (AES-256-GCM v3) بكلمة مرور قابلة للاستعادة على أي جهاز."
+                            "darija" -> "ملف JSON مشفّر ديما (AES-256-GCM v3) بكلمة سر كاتخدم على أي تيليفون."
+                            "en" -> "JSON backups are always AES-256-GCM (v3) encrypted with a portable passphrase."
+                            else -> "Sauvegarde JSON toujours chiffrée (AES-256-GCM v3) avec mot de passe portable."
                         },
-                        supportingText = {
-                            Text(
-                                text = if (backupPwdValid) {
-                                    when (lang) {
-                                        "ar" -> "✓ جاهز للتصدير المشفّر AES-256-GCM"
-                                        "darija" -> "✓ واجد للتشفير AES-256-GCM"
-                                        "en" -> "✓ Ready for AES-256-GCM encrypted JSON export"
-                                        else -> "✓ Prêt pour l'export JSON chiffré AES-256-GCM"
-                                    }
-                                } else {
-                                    when (lang) {
-                                        "ar" -> "التصدير بصيغة JSON مشفّر دائماً (أدخل 10 أحرف على الأقل)"
-                                        "darija" -> "ملف JSON كيتصدر مشفر ديما (دخل 10 حروف على الأقل)"
-                                        "en" -> "JSON backups are always encrypted (enter at least 10 characters)"
-                                        else -> "Export JSON toujours chiffré : saisissez au moins 10 caractères"
-                                    }
-                                },
-                                fontSize = 12.sp
-                            )
-                        },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("backup_encryption_password_input")
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Row(
@@ -1612,8 +1579,10 @@ fun SettingsBottomSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         FilledTonalButton(
-                            onClick = { onExportJsonFile(backupPassword.trim()) },
-                            enabled = backupPwdValid,
+                            onClick = {
+                                onDismiss()
+                                onExportJsonFile("")
+                            },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("save_json_file_btn")
