@@ -1,4 +1,4 @@
-# Masroufi (`v1.2.1`)
+# Masroufi (`v1.5.0`)
 
 **Masroufi** is a fast, offline-first, privacy-focused personal finance, pay-cycle budgeting, Moroccan fiscal planning, and credit simulation Android app built with Kotlin and Jetpack Compose (Material 3 Expressive). Designed for everyday use in Morocco, it supports **Français**, **العربية** (full RTL), **الدارجة المغربية**, and **English** with Moroccan Dirham (`DH` / `MAD`) formatting.
 
@@ -101,5 +101,5 @@ Signed, R8-minified production builds (**AAB & APK**) are automated via `.github
    - `STORE_PASSWORD`
    - `KEY_PASSWORD`
    - `GOOGLE_SERVICES_JSON`
-2. Trigger via a version tag push (e.g., `v1.2.1`) or manual `workflow_dispatch` in GitHub Actions.
+2. Trigger via a version tag push (e.g., `v1.5.0`) or manual `workflow_dispatch` in GitHub Actions.
 3. Both the signed **APK** and **AAB** are published to the GitHub Release and uploaded as workflow artifacts.
