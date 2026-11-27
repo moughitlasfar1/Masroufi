@@ -160,7 +160,7 @@ class Phase6RoomMigrationV3ToV4Test {
                 while (c.moveToNext()) indices += c.getString(0)
             }
             val expectedV4Indices = setOf(
-                "index_transactions_userId_recurringOccurrenceKey",
+                "index_transactions_recurringOccurrenceKey",
                 "index_recurring_rules_userId",
                 "index_recurring_rules_userId_isPaused_nextDueIsoDate",
                 "index_recurring_rules_linkedLoanId",
