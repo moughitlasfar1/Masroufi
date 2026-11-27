@@ -269,7 +269,7 @@ data class UserProfile(
 data class TransactionItem(
     @DocumentId val id: String = "",
     val userId: String = "",
-    val type: String = "expense", // "expense", "income", "transfer"
+    val type: String = "expense", // "expense", "income", "transfer", "transfer_out", "transfer_in"
     val amount: Money = Money.ZERO,
     val category: String = "autre",
     val envelopeKey: String = "autre",
@@ -278,9 +278,14 @@ data class TransactionItem(
     val desc: String = "",
     val isoDate: String = "", // YYYY-MM-DD
     val hourOfDay: Int = -1,
+    val transferGroupId: String? = null,
+    val loanId: String? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
+    fun isTransferType(): Boolean =
+        type == "transfer" || type == "transfer_out" || type == "transfer_in"
+
     fun localizedCategory(lang: String, envelopes: List<EnvelopeConfig> = emptyList()): String {
         return DefaultCategoryResolver.resolveTransactionCategoryDisplay(
             rawCategory = category,

@@ -24,9 +24,11 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         EnvelopeEntity::class,
         FinancialItemEntity::class,
         SavedCreditLocalEntity::class,
-        ImportMetadataEntity::class
+        ImportMetadataEntity::class,
+        LoanEntity::class,
+        LoanRepaymentEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class MasroufiDatabase : RoomDatabase() {
@@ -250,6 +252,8 @@ abstract class MasroufiDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_saved_credits_userId_createdAtEpochMs` ON `saved_credits` (`userId`, `createdAtEpochMs`)")
             }
         }
+
+        val MIGRATION_2_3: Migration = MasroufiDatabaseMigrations.MIGRATION_2_3
     }
 }
 
@@ -357,7 +361,7 @@ object MasroufiDatabaseProvider {
                 appCtx,
                 MasroufiDatabase::class.java,
                 dbName
-            ).addMigrations(MasroufiDatabase.MIGRATION_1_2)
+            ).addMigrations(MasroufiDatabase.MIGRATION_1_2, MasroufiDatabase.MIGRATION_2_3)
             if (customFactory != null) {
                 passphrase.fill(0)
                 builder.openHelperFactory(customFactory)

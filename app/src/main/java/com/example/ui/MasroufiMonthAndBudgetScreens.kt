@@ -981,7 +981,7 @@ fun BudgetAndDaretScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${fmt(state.totalNetWorth)} $cur",
+                                text = "${fmt(state.netWorthSnapshot.totalLiquidAssets)} $cur",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onSurface,
@@ -1019,8 +1019,25 @@ fun BudgetAndDaretScreen(
                         }
                     }
                 }
-                if (state.cycleSavings.isPositive) {
+                val nwSnap = state.netWorthSnapshot
+                if (nwSnap.totalLiabilities.isPositive || nwSnap.totalReceivables.isPositive) {
                     Spacer(modifier = Modifier.height(8.dp))
+                    val nwLabel = when (state.profile.language) {
+                        "ar" -> "صافي الثروة: ${fmt(nwSnap.netWorth)} $cur"
+                        "darija" -> "صافي الرصيد: ${fmt(nwSnap.netWorth)} $cur"
+                        "en" -> "Net worth: ${fmt(nwSnap.netWorth)} $cur"
+                        else -> "Patrimoine net : ${fmt(nwSnap.netWorth)} $cur"
+                    }
+                    Text(
+                        text = nwLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (!nwSnap.netWorth.isNegative) MaterialTheme.colorScheme.primary else expColor,
+                        modifier = Modifier.testTag("plan_net_worth_summary")
+                    )
+                }
+                if (state.cycleSavings.isPositive) {
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "${strings.cycleSavingsLabel}: +${fmt(state.cycleSavings)} $cur",
                         style = MaterialTheme.typography.labelSmall,
@@ -1250,7 +1267,7 @@ fun BudgetAndDaretScreen(
             ExpressiveAccordionCard(
                 title = strings.accountsTitle,
                 subtitle = "${state.accounts.size} • ${strings.transferAction}",
-                summaryBadge = "${fmt(state.totalNetWorth)} $cur",
+                summaryBadge = "${fmt(state.netWorthSnapshot.totalLiquidAssets)} $cur",
                 summaryBadgeColor = MaterialTheme.colorScheme.primary,
                 icon = Icons.Default.AccountBalanceWallet,
                 accentColor = MaterialTheme.colorScheme.primary,
@@ -2206,10 +2223,11 @@ fun BudgetAndDaretScreen(
             }
 
             item(key = "plan_sellef") {
+                val standaloneLoansCount = state.loans.count { it.sourceFinancialItemId.isNullOrBlank() }
                 ExpressiveAccordionCard(
                     title = strings.debtsTitle,
                     subtitle = "${strings.debtsLent} / ${strings.debtsBorrowed}",
-                    summaryBadge = "${state.debts.size}",
+                    summaryBadge = "${state.debts.size + standaloneLoansCount}",
                     summaryBadgeColor = MaterialTheme.colorScheme.primary,
                     icon = Icons.Default.Handshake,
                     accentColor = MaterialTheme.colorScheme.primary,

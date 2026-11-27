@@ -5,6 +5,11 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import com.example.domain.LoanDirection
+import com.example.domain.LoanRepaymentResult
+import com.example.domain.LoanStatus
+import com.example.data.local.MasroufiEntityMappers.toDomain
+import com.masroufi.core.Money
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -64,6 +69,12 @@ interface MasroufiDao {
     @Query("DELETE FROM transactions WHERE userId = :userId AND id = :txId")
     suspend fun deleteTransaction(userId: String, txId: String)
 
+    @Query("SELECT * FROM transactions WHERE userId = :userId AND transferGroupId = :transferGroupId")
+    suspend fun getTransactionsByTransferGroup(userId: String, transferGroupId: String): List<TransactionEntity>
+
+    @Query("DELETE FROM transactions WHERE userId = :userId AND transferGroupId = :transferGroupId")
+    suspend fun deleteTransactionsByTransferGroup(userId: String, transferGroupId: String): Int
+
     @Query("SELECT COUNT(*) FROM transactions WHERE userId = :userId")
     suspend fun countTransactions(userId: String): Int
 
@@ -112,6 +123,9 @@ interface MasroufiDao {
     @Query("SELECT * FROM saved_credits WHERE userId = :userId ORDER BY createdAtEpochMs DESC")
     suspend fun getSavedCredits(userId: String): List<SavedCreditLocalEntity>
 
+    @Query("SELECT * FROM saved_credits WHERE userId = :userId AND id = :creditId LIMIT 1")
+    suspend fun getSavedCreditById(userId: String, creditId: String): SavedCreditLocalEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSavedCredit(credit: SavedCreditLocalEntity)
 
@@ -123,6 +137,55 @@ interface MasroufiDao {
 
     @Query("SELECT COUNT(*) FROM saved_credits WHERE userId = :userId")
     suspend fun countSavedCredits(userId: String): Int
+
+    // --- Phase 5: Loans & Loan Repayments ---
+    @Query("SELECT * FROM loans WHERE userId = :userId ORDER BY status ASC, updatedAtEpochMs DESC, createdAtEpochMs DESC")
+    fun observeLoans(userId: String): Flow<List<LoanEntity>>
+
+    @Query("SELECT * FROM loans WHERE userId = :userId ORDER BY status ASC, updatedAtEpochMs DESC, createdAtEpochMs DESC")
+    suspend fun getLoans(userId: String): List<LoanEntity>
+
+    @Query("SELECT * FROM loans WHERE userId = :userId AND id = :loanId LIMIT 1")
+    suspend fun getLoanById(userId: String, loanId: String): LoanEntity?
+
+    @Query("SELECT * FROM loans WHERE userId = :userId AND sourceSavedCreditId = :savedCreditId LIMIT 1")
+    suspend fun getLoanBySavedCreditId(userId: String, savedCreditId: String): LoanEntity?
+
+    @Query("SELECT * FROM loans WHERE userId = :userId AND sourceFinancialItemId = :financialItemId LIMIT 1")
+    suspend fun getLoanBySourceFinancialItemId(userId: String, financialItemId: String): LoanEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLoan(loan: LoanEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLoans(loans: List<LoanEntity>)
+
+    @Query("DELETE FROM loans WHERE userId = :userId AND id = :loanId")
+    suspend fun deleteLoan(userId: String, loanId: String)
+
+    @Query("SELECT * FROM loan_repayments WHERE userId = :userId ORDER BY isoDate DESC, createdAtEpochMs DESC")
+    fun observeLoanRepayments(userId: String): Flow<List<LoanRepaymentEntity>>
+
+    @Query("SELECT * FROM loan_repayments WHERE userId = :userId AND loanId = :loanId ORDER BY isoDate DESC, createdAtEpochMs DESC")
+    fun observeLoanRepaymentsForLoan(userId: String, loanId: String): Flow<List<LoanRepaymentEntity>>
+
+    @Query("SELECT * FROM loan_repayments WHERE userId = :userId ORDER BY isoDate DESC, createdAtEpochMs DESC")
+    suspend fun getLoanRepayments(userId: String): List<LoanRepaymentEntity>
+
+    @Query("SELECT * FROM loan_repayments WHERE userId = :userId AND loanId = :loanId ORDER BY isoDate DESC, createdAtEpochMs DESC")
+    suspend fun getLoanRepaymentsForLoan(userId: String, loanId: String): List<LoanRepaymentEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLoanRepayment(repayment: LoanRepaymentEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertLoanRepayments(repayments: List<LoanRepaymentEntity>)
+
+    @Query("DELETE FROM loan_repayments WHERE userId = :userId AND id = :repaymentId")
+    suspend fun deleteLoanRepayment(userId: String, repaymentId: String)
+
+    @Query("DELETE FROM loan_repayments WHERE userId = :userId AND loanId = :loanId")
+    suspend fun deleteRepaymentsForLoan(userId: String, loanId: String)
 
     // --- Import Metadata ---
     @Query("SELECT * FROM import_metadata WHERE userId = :userId LIMIT 1")
@@ -147,8 +210,135 @@ interface MasroufiDao {
     @Query("DELETE FROM saved_credits WHERE userId = :userId")
     suspend fun deleteAllSavedCreditsForUser(userId: String)
 
+    @Query("DELETE FROM loans WHERE userId = :userId")
+    suspend fun deleteAllLoansForUser(userId: String)
+
+    @Query("DELETE FROM loan_repayments WHERE userId = :userId")
+    suspend fun deleteAllLoanRepaymentsForUser(userId: String)
+
     @Query("DELETE FROM user_profiles WHERE userId = :userId")
     suspend fun deleteProfileForUser(userId: String)
+
+    @Transaction
+    suspend fun executeInternalTransferAtomically(
+        outTx: TransactionEntity,
+        inTx: TransactionEntity
+    ) {
+        upsertTransaction(outTx)
+        upsertTransaction(inTx)
+    }
+
+    @Transaction
+    suspend fun deleteLoanAndRepaymentsAtomically(
+        userId: String,
+        loanId: String
+    ) {
+        deleteRepaymentsForLoan(userId, loanId)
+        deleteLoan(userId, loanId)
+    }
+
+    /**
+     * Atomically validates and records a repayment against [loanId] inside a single Room `@Transaction`.
+     *
+     * Guarantees:
+     * - Rejects zero/negative amounts ([LoanRepaymentResult.InvalidAmount]).
+     * - Rejects missing loans ([LoanRepaymentResult.LoanNotFound]).
+     * - Rejects already paid-off loans ([LoanRepaymentResult.AlreadyPaidOff]).
+     * - Blocks overpayment (`amountCentimes > remainingCentimes`) without mutating any table
+     *   ([LoanRepaymentResult.OverpaymentBlocked]).
+     * - Decrements `remainingCentimes` using exact `Long` centimes and auto-transitions status to
+     *   `PAID_OFF` when `newRemaining == 0L`.
+     * - Optionally inserts a linked settlement transaction (`transfer_out` for LIABILITY or
+     *   `transfer_in` for RECEIVABLE) with `loanId` so Net Worth delta is strictly 0.
+     */
+    @Transaction
+    suspend fun recordLoanRepaymentAtomically(
+        userId: String,
+        loanId: String,
+        amountCentimes: Long,
+        isoDate: String,
+        linkedAccountId: String?,
+        note: String,
+        repaymentId: String,
+        linkedTxId: String?,
+        nowMs: Long
+    ): LoanRepaymentResult {
+        if (amountCentimes <= 0L) {
+            return LoanRepaymentResult.InvalidAmount
+        }
+        val currentLoan = getLoanById(userId, loanId)
+            ?: return LoanRepaymentResult.LoanNotFound(loanId)
+
+        val currentStatus = LoanStatus.fromWire(currentLoan.status)
+        if (currentStatus == LoanStatus.PAID_OFF || currentLoan.remainingCentimes <= 0L) {
+            return LoanRepaymentResult.AlreadyPaidOff(loanId)
+        }
+        if (amountCentimes > currentLoan.remainingCentimes) {
+            return LoanRepaymentResult.OverpaymentBlocked(
+                loanId = loanId,
+                remaining = Money.fromCentimes(currentLoan.remainingCentimes),
+                attempted = Money.fromCentimes(amountCentimes)
+            )
+        }
+
+        val newRemainingCentimes = currentLoan.remainingCentimes - amountCentimes
+        val newStatus = if (newRemainingCentimes == 0L) LoanStatus.PAID_OFF else LoanStatus.ACTIVE
+        val updatedLoanEntity = currentLoan.copy(
+            remainingCentimes = newRemainingCentimes,
+            status = newStatus.wire,
+            updatedAtEpochMs = nowMs
+        )
+        upsertLoan(updatedLoanEntity)
+
+        val cleanLinkedAcc = linkedAccountId?.trim()?.takeIf { it.isNotBlank() }?.take(80)
+        val createdTxEntity = if (cleanLinkedAcc != null && !linkedTxId.isNullOrBlank()) {
+            val direction = LoanDirection.fromWire(currentLoan.direction)
+            val txType = if (direction == LoanDirection.RECEIVABLE) "transfer_in" else "transfer_out"
+            val txDesc = if (note.isNotBlank()) {
+                "${currentLoan.title} — ${note.trim()}"
+            } else {
+                "Remboursement: ${currentLoan.title}"
+            }.take(250)
+            TransactionEntity(
+                id = linkedTxId,
+                userId = userId,
+                type = txType,
+                amountCentimes = amountCentimes,
+                category = "autre",
+                envelopeKey = "autre",
+                accountId = cleanLinkedAcc,
+                toAccountId = "",
+                desc = txDesc,
+                isoDate = isoDate,
+                hourOfDay = -1,
+                createdAtEpochMs = nowMs,
+                updatedAtEpochMs = nowMs,
+                transferGroupId = null,
+                loanId = loanId
+            ).also { upsertTransaction(it) }
+        } else {
+            null
+        }
+
+        val repaymentEntity = LoanRepaymentEntity(
+            id = repaymentId,
+            loanId = loanId,
+            userId = userId,
+            amountCentimes = amountCentimes,
+            isoDate = isoDate,
+            linkedAccountId = cleanLinkedAcc,
+            linkedTransactionId = createdTxEntity?.id,
+            note = note.trim().take(250),
+            createdAtEpochMs = nowMs
+        )
+        upsertLoanRepayment(repaymentEntity)
+
+        return LoanRepaymentResult.Success(
+            updatedLoan = updatedLoanEntity.toDomain(),
+            repayment = repaymentEntity.toDomain(),
+            linkedTransaction = createdTxEntity?.toDomain()
+        )
+    }
 
     @Transaction
     suspend fun upsertItemAndTransactionAtomically(
@@ -170,6 +360,8 @@ interface MasroufiDao {
         txIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteTransaction(userId, id) }
         itemIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteFinancialItem(userId, id) }
         accountIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteAccount(userId, id) }
+        deleteAllLoanRepaymentsForUser(userId)
+        deleteAllLoansForUser(userId)
         if (cleanAccounts.isNotEmpty()) upsertAccounts(cleanAccounts)
     }
 
@@ -187,7 +379,11 @@ interface MasroufiDao {
         staleAccountIdsToDelete: List<String>,
         staleEnvelopeIdsToDelete: List<String>,
         savedCredits: List<SavedCreditLocalEntity> = emptyList(),
-        staleSavedCreditIdsToDelete: List<String> = emptyList()
+        staleSavedCreditIdsToDelete: List<String> = emptyList(),
+        loans: List<LoanEntity> = emptyList(),
+        loanRepayments: List<LoanRepaymentEntity> = emptyList(),
+        staleLoanIdsToDelete: List<String> = emptyList(),
+        staleLoanRepaymentIdsToDelete: List<String> = emptyList()
     ) {
         if (profile != null) upsertProfile(profile)
         if (customPrefsItem != null) upsertFinancialItem(customPrefsItem)
@@ -196,11 +392,15 @@ interface MasroufiDao {
         if (financialItems.isNotEmpty()) upsertFinancialItems(financialItems)
         if (transactions.isNotEmpty()) upsertTransactions(transactions)
         if (savedCredits.isNotEmpty()) upsertSavedCredits(savedCredits)
+        if (loans.isNotEmpty()) upsertLoans(loans)
+        if (loanRepayments.isNotEmpty()) upsertLoanRepayments(loanRepayments)
         staleTxIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteTransaction(userId, id) }
         staleItemIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteFinancialItem(userId, id) }
         staleAccountIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteAccount(userId, id) }
         staleEnvelopeIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteEnvelope(userId, id) }
         staleSavedCreditIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteSavedCredit(userId, id) }
+        staleLoanRepaymentIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteLoanRepayment(userId, id) }
+        staleLoanIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteLoan(userId, id) }
     }
 
     @Transaction
@@ -211,13 +411,17 @@ interface MasroufiDao {
         transactions: List<TransactionEntity>,
         envelopes: List<EnvelopeEntity>,
         financialItems: List<FinancialItemEntity>,
-        savedCredits: List<SavedCreditLocalEntity>
+        savedCredits: List<SavedCreditLocalEntity>,
+        loans: List<LoanEntity> = emptyList(),
+        loanRepayments: List<LoanRepaymentEntity> = emptyList()
     ) {
         deleteAllTransactionsForUser(userId)
         deleteAllAccountsForUser(userId)
         deleteAllEnvelopesForUser(userId)
         deleteAllFinancialItemsForUser(userId)
         deleteAllSavedCreditsForUser(userId)
+        deleteAllLoanRepaymentsForUser(userId)
+        deleteAllLoansForUser(userId)
         deleteProfileForUser(userId)
         if (profile != null) upsertProfile(profile)
         if (accounts.isNotEmpty()) upsertAccounts(accounts)
@@ -225,6 +429,8 @@ interface MasroufiDao {
         if (envelopes.isNotEmpty()) upsertEnvelopes(envelopes)
         if (financialItems.isNotEmpty()) upsertFinancialItems(financialItems)
         if (savedCredits.isNotEmpty()) upsertSavedCredits(savedCredits)
+        if (loans.isNotEmpty()) upsertLoans(loans)
+        if (loanRepayments.isNotEmpty()) upsertLoanRepayments(loanRepayments)
     }
 
     // --- Ownership lookups (prevent cross-user PK collision during seeding) ---
@@ -253,6 +459,12 @@ interface MasroufiDao {
     @Query("UPDATE saved_credits SET userId = :targetUserId WHERE userId = :sourceUserId")
     suspend fun reassignSavedCreditsOwner(sourceUserId: String, targetUserId: String): Int
 
+    @Query("UPDATE loans SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignLoansOwner(sourceUserId: String, targetUserId: String): Int
+
+    @Query("UPDATE loan_repayments SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignLoanRepaymentsOwner(sourceUserId: String, targetUserId: String): Int
+
     @Transaction
     suspend fun adoptUserDataAtomically(sourceUserId: String, targetUserId: String): Int {
         if (sourceUserId.isBlank() || targetUserId.isBlank() || sourceUserId == targetUserId) {
@@ -267,6 +479,8 @@ interface MasroufiDao {
         adoptedCount += reassignTransactionsOwner(sourceUserId, targetUserId)
         adoptedCount += reassignFinancialItemsOwner(sourceUserId, targetUserId)
         adoptedCount += reassignSavedCreditsOwner(sourceUserId, targetUserId)
+        adoptedCount += reassignLoansOwner(sourceUserId, targetUserId)
+        adoptedCount += reassignLoanRepaymentsOwner(sourceUserId, targetUserId)
 
         if (sourceProfile != null) {
             if (targetProfile == null) {

@@ -291,6 +291,72 @@ class LocalRoomMasroufiDataSource(
         return requireOpenRepo()?.getSavedCredits(userId) ?: emptyList()
     }
 
+    override fun observeLoans(userId: String): Flow<List<com.example.domain.LoanItem>> =
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeLoans(userId) ?: flowOf(emptyList())
+        }
+
+    override suspend fun getLoans(userId: String): List<com.example.domain.LoanItem> {
+        return requireOpenRepo()?.getLoans(userId) ?: emptyList()
+    }
+
+    override fun observeLoanRepayments(userId: String): Flow<List<com.example.domain.LoanRepaymentItem>> =
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeLoanRepayments(userId) ?: flowOf(emptyList())
+        }
+
+    override suspend fun getLoanRepayments(userId: String): List<com.example.domain.LoanRepaymentItem> {
+        return requireOpenRepo()?.getLoanRepayments(userId) ?: emptyList()
+    }
+
+    override suspend fun upsertLoan(loan: com.example.domain.LoanItem, userId: String): String {
+        val repo = requireOpenRepo() ?: return loan.id
+        return repo.upsertLoan(loan, userId)
+    }
+
+    override suspend fun deleteLoan(loanId: String, userId: String) {
+        requireOpenRepo()?.deleteLoan(loanId, userId)
+    }
+
+    override suspend fun executeInternalTransfer(
+        fromAccountId: String,
+        toAccountId: String,
+        amount: com.masroufi.core.Money,
+        isoDate: String,
+        desc: String,
+        userId: String
+    ): com.example.domain.InternalTransferResult {
+        val repo = requireOpenRepo() ?: return com.example.domain.InternalTransferResult.InvalidAccounts
+        return repo.executeInternalTransfer(fromAccountId, toAccountId, amount, isoDate, desc, userId)
+    }
+
+    override suspend fun deleteTransferGroup(transferGroupId: String, userId: String): Int {
+        return requireOpenRepo()?.deleteTransferGroup(transferGroupId, userId) ?: 0
+    }
+
+    override suspend fun recordLoanRepayment(
+        loanId: String,
+        amount: com.masroufi.core.Money,
+        linkedAccountId: String?,
+        isoDate: String,
+        note: String,
+        userId: String
+    ): com.example.domain.LoanRepaymentResult {
+        val repo = requireOpenRepo() ?: return com.example.domain.LoanRepaymentResult.LoanNotFound(loanId)
+        return repo.recordLoanRepayment(loanId, amount, linkedAccountId, isoDate, note, userId)
+    }
+
+    override suspend fun promoteSavedCreditToLoan(
+        savedCreditId: String,
+        linkedAccountId: String?,
+        titleOverride: String?,
+        userId: String
+    ): Result<com.example.domain.LoanItem> {
+        val repo = requireOpenRepo()
+            ?: return Result.failure(IllegalStateException("Base de données locale indisponible."))
+        return repo.promoteSavedCreditToLoan(savedCreditId, linkedAccountId, titleOverride, userId)
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -305,7 +371,11 @@ class LocalRoomMasroufiDataSource(
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit,
         userId: String,
         savedCredits: List<com.masroufi.credit.data.SavedCreditEntity>,
-        staleSavedCreditIdsToDelete: List<String>
+        staleSavedCreditIdsToDelete: List<String>,
+        loans: List<com.example.domain.LoanItem>,
+        loanRepayments: List<com.example.domain.LoanRepaymentItem>,
+        staleLoanIdsToDelete: List<String>,
+        staleLoanRepaymentIdsToDelete: List<String>
     ) {
         requireOpenRepo()?.restoreFullBackupAtomically(
             profile,
@@ -321,7 +391,11 @@ class LocalRoomMasroufiDataSource(
             onChunkProgress,
             userId,
             savedCredits,
-            staleSavedCreditIdsToDelete
+            staleSavedCreditIdsToDelete,
+            loans,
+            loanRepayments,
+            staleLoanIdsToDelete,
+            staleLoanRepaymentIdsToDelete
         )
     }
 

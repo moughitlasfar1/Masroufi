@@ -287,7 +287,7 @@ class Phase2RoomMigrationV1ToV2Test {
         // 3. Open the migrated DB through real Room + MasroufiDao to verify end-to-end entity mapping
         val context = ApplicationProvider.getApplicationContext<Context>()
         val roomDb = Room.databaseBuilder(context, MasroufiDatabase::class.java, TEST_DB)
-            .addMigrations(MasroufiDatabase.MIGRATION_1_2)
+            .addMigrations(MasroufiDatabase.MIGRATION_1_2, MasroufiDatabase.MIGRATION_2_3)
             .allowMainThreadQueries()
             .build()
         try {

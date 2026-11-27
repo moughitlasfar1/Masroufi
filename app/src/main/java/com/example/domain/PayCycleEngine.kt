@@ -350,28 +350,7 @@ object PayCycleEngine {
     fun computeAccountBalances(
         accounts: List<AccountItem>,
         transactions: List<TransactionItem>
-    ): List<AccountWithBalance> {
-        return accounts.map { acc ->
-            var totalIn = Money.ZERO
-            var totalOut = Money.ZERO
-            for (tx in transactions) {
-                when (tx.type) {
-                    "income" -> if (tx.accountId == acc.id) totalIn += tx.amount
-                    "expense" -> if (tx.accountId == acc.id) totalOut += tx.amount
-                    "transfer" -> {
-                        if (tx.accountId == acc.id) totalOut += tx.amount
-                        if (tx.toAccountId == acc.id) totalIn += tx.amount
-                    }
-                }
-            }
-            AccountWithBalance(
-                account = acc,
-                currentBalance = acc.initialBalance + totalIn - totalOut,
-                totalIn = totalIn,
-                totalOut = totalOut
-            )
-        }
-    }
+    ): List<AccountWithBalance> = NetWorthCalculator.computeAccountBalances(accounts, transactions)
 
     fun computeEnvelopes(
         envelopes: List<EnvelopeConfig>,
@@ -1160,7 +1139,7 @@ object PayCycleEngine {
             // 1. Check historical transactions with matching description
             val histMatch = sortedRecent.firstOrNull {
                 val d = it.desc.trim().lowercase(Locale.ROOT)
-                it.type != "transfer" && d.isNotBlank() && (d.contains(cleanDesc) || cleanDesc.contains(d))
+                !it.isTransferType() && d.isNotBlank() && (d.contains(cleanDesc) || cleanDesc.contains(d))
             }
             if (histMatch != null) {
                 val envConfig = envelopes.find { it.key == histMatch.envelopeKey }

@@ -322,16 +322,40 @@ fun DashboardHeroCard(
                             modifier = Modifier.size(14.dp)
                         )
                         val cashVsBudgetLabel = when (lang) {
-                            "ar" -> "السيولة في الحسابات: ${fmt(state.totalNetWorth)} $cur"
-                            "darija" -> "الفلوس فالحسابات: ${fmt(state.totalNetWorth)} $cur"
-                            "en" -> "Cash in accounts: ${fmt(state.totalNetWorth)} $cur"
-                            else -> "Solde des comptes : ${fmt(state.totalNetWorth)} $cur"
+                            "ar" -> "السيولة في الحسابات: ${fmt(state.netWorthSnapshot.totalLiquidAssets)} $cur"
+                            "darija" -> "الفلوس فالحسابات: ${fmt(state.netWorthSnapshot.totalLiquidAssets)} $cur"
+                            "en" -> "Cash in accounts: ${fmt(state.netWorthSnapshot.totalLiquidAssets)} $cur"
+                            else -> "Solde des comptes : ${fmt(state.netWorthSnapshot.totalLiquidAssets)} $cur"
                         }
                         Text(
                             text = cashVsBudgetLabel,
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.92f),
                             fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                val nwSnap = state.netWorthSnapshot
+                if (nwSnap.totalLiabilities.isPositive || nwSnap.totalReceivables.isPositive) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.20f),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                        modifier = Modifier.testTag("hero_net_worth_pill")
+                    ) {
+                        val netWorthLabel = when (lang) {
+                            "ar" -> "صافي الثروة: ${fmt(nwSnap.netWorth)} $cur"
+                            "darija" -> "صافي الرصيد: ${fmt(nwSnap.netWorth)} $cur"
+                            "en" -> "Net worth: ${fmt(nwSnap.netWorth)} $cur"
+                            else -> "Patrimoine net : ${fmt(nwSnap.netWorth)} $cur"
+                        }
+                        Text(
+                            text = netWorthLabel,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.88f),
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }

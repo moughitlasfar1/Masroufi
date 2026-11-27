@@ -693,13 +693,13 @@ internal fun SwipeableTransactionRow(
     }
     val amountColor = when (tx.type) {
         "income" -> semanticIncomeColor(isDarkTheme)
-        "transfer" -> semanticTransferColor(isDarkTheme)
+        "transfer", "transfer_out", "transfer_in" -> semanticTransferColor(isDarkTheme)
         else -> semanticExpenseColor(isDarkTheme)
     }
     val catAccent = distinctEnvelopeColor(tx.envelopeKey.ifBlank { tx.category }, isDarkTheme)
     val prefix = when (tx.type) {
         "income" -> "+"
-        "transfer" -> "⇄ "
+        "transfer", "transfer_out", "transfer_in" -> "⇄ "
         else -> "-"
     }
 
@@ -810,11 +810,11 @@ internal fun SwipeableTransactionRow(
                         isDarkTheme
                     )
                     val badgeBg = when (tx.type) {
-                        "income", "transfer" -> amountColor.copy(alpha = 0.14f)
+                        "income", "transfer", "transfer_out", "transfer_in" -> amountColor.copy(alpha = 0.14f)
                         else -> catVisual.container
                     }
                     val badgeFg = when (tx.type) {
-                        "income", "transfer" -> amountColor
+                        "income", "transfer", "transfer_out", "transfer_in" -> amountColor
                         else -> catVisual.foreground
                     }
                     Box(

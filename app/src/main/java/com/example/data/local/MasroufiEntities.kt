@@ -41,13 +41,15 @@ data class AccountEntity(
         Index(value = ["userId"]),
         Index(value = ["userId", "isoDate"]),
         Index(value = ["accountId"]),
-        Index(value = ["envelopeKey"])
+        Index(value = ["envelopeKey"]),
+        Index(value = ["transferGroupId"]),
+        Index(value = ["loanId"])
     ]
 )
 data class TransactionEntity(
     @PrimaryKey val id: String,
     val userId: String,
-    val type: String = "expense", // "expense", "income", "transfer"
+    val type: String = "expense", // "expense", "income", "transfer", "transfer_out", "transfer_in"
     val amountCentimes: Long = 0L,
     val category: String = "autre",
     val envelopeKey: String = "autre",
@@ -57,7 +59,9 @@ data class TransactionEntity(
     val isoDate: String = "", // YYYY-MM-DD
     val hourOfDay: Int = -1,
     val createdAtEpochMs: Long = 0L,
-    val updatedAtEpochMs: Long = 0L
+    val updatedAtEpochMs: Long = 0L,
+    val transferGroupId: String? = null,
+    val loanId: String? = null
 )
 
 @Entity(
@@ -143,4 +147,60 @@ data class ImportMetadataEntity(
     val envelopeCount: Int = 0,
     val financialItemCount: Int = 0,
     val creditCount: Int = 0
+)
+
+/**
+ * Room v3 tracked loan / debt / receivable entity using exact `Long` centimes.
+ */
+@Entity(
+    tableName = "loans",
+    indices = [
+        Index(value = ["userId"]),
+        Index(value = ["userId", "status"]),
+        Index(value = ["userId", "direction"]),
+        Index(value = ["sourceFinancialItemId"]),
+        Index(value = ["sourceSavedCreditId"])
+    ]
+)
+data class LoanEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val title: String,
+    val counterparty: String = "",
+    val direction: String = "LIABILITY", // "LIABILITY" | "RECEIVABLE"
+    val category: String = "PERSONAL_DEBT", // "BANK_CREDIT" | "PERSONAL_DEBT" | "DARET"
+    val principalCentimes: Long = 0L,
+    val remainingCentimes: Long = 0L,
+    val monthlyPaymentCentimes: Long = 0L,
+    val status: String = "ACTIVE", // "ACTIVE" | "PAID_OFF"
+    val linkedAccountId: String? = null,
+    val sourceFinancialItemId: String? = null,
+    val sourceSavedCreditId: String? = null,
+    val dueIsoDate: String? = null,
+    val notes: String = "",
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L
+)
+
+/**
+ * Room v3 immutable ledger of repayments recorded against a [LoanEntity].
+ */
+@Entity(
+    tableName = "loan_repayments",
+    indices = [
+        Index(value = ["userId"]),
+        Index(value = ["loanId"]),
+        Index(value = ["loanId", "isoDate"])
+    ]
+)
+data class LoanRepaymentEntity(
+    @PrimaryKey val id: String,
+    val loanId: String,
+    val userId: String,
+    val amountCentimes: Long = 0L,
+    val isoDate: String = "",
+    val linkedAccountId: String? = null,
+    val linkedTransactionId: String? = null,
+    val note: String = "",
+    val createdAtEpochMs: Long = 0L
 )

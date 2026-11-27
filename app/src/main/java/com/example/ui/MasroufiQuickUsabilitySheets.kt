@@ -259,7 +259,7 @@ fun computeTopThreeRecentCategories(state: DashboardState): List<RecentCategoryS
     val lang = state.profile.language
     val recentFromTxs = mutableListOf<RecentCategoryShortcut>()
     for (tx in state.allTransactions.sortedByDescending { it.isoDate }) {
-        if (tx.type == "transfer") continue
+        if (tx.isTransferType()) continue
         val envKey = tx.envelopeKey.ifBlank {
             PayCycleEngine.resolveEnvelopeKey(tx.category, tx.desc, state.envelopes.map { it.config })
         }

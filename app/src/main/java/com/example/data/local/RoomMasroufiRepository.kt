@@ -11,11 +11,19 @@ import com.example.data.UserProfile
 import com.example.data.local.MasroufiEntityMappers.toDomain
 import com.example.data.local.MasroufiEntityMappers.toEntity
 import com.example.data.local.MasroufiEntityMappers.toLocalEntity
+import com.example.domain.InternalTransferResult
+import com.example.domain.LoanCategory
+import com.example.domain.LoanDirection
+import com.example.domain.LoanItem
+import com.example.domain.LoanRepaymentItem
+import com.example.domain.LoanRepaymentResult
+import com.example.domain.LoanStatus
 import com.example.domain.PayCycleEngine
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -383,6 +391,225 @@ class RoomMasroufiRepository(
         return dao.getSavedCredits(uid).map { it.toDomain() }
     }
 
+    // --- Phase 5: Accounts Atomic Transfers & Loans ---
+
+    override fun observeLoans(userId: String): Flow<List<LoanItem>> {
+        val uid = requireUserId(userId)
+        return dao.observeLoans(uid).map { list -> list.map { it.toDomain() } }
+    }
+
+    override suspend fun getLoans(userId: String): List<LoanItem> {
+        val uid = requireUserId(userId)
+        return dao.getLoans(uid).map { it.toDomain() }
+    }
+
+    override fun observeLoanRepayments(userId: String): Flow<List<LoanRepaymentItem>> {
+        val uid = requireUserId(userId)
+        return dao.observeLoanRepayments(uid).map { list -> list.map { it.toDomain() } }
+    }
+
+    override suspend fun getLoanRepayments(userId: String): List<LoanRepaymentItem> {
+        val uid = requireUserId(userId)
+        return dao.getLoanRepayments(uid).map { it.toDomain() }
+    }
+
+    override suspend fun upsertLoan(loan: LoanItem, userId: String): String {
+        val uid = requireUserId(userId)
+        val now = System.currentTimeMillis()
+        val existing = loan.id.takeIf { it.isNotBlank() }?.let { dao.getLoanById(uid, it) }
+        val entity = loan.toEntity(uid, now).copy(
+            createdAtEpochMs = existing?.createdAtEpochMs?.takeIf { it > 0L } ?: now,
+            updatedAtEpochMs = now
+        )
+        dao.upsertLoan(entity)
+        return entity.id
+    }
+
+    override suspend fun deleteLoan(loanId: String, userId: String) {
+        if (loanId.isBlank()) return
+        val uid = requireUserId(userId)
+        dao.deleteLoanAndRepaymentsAtomically(uid, loanId)
+    }
+
+    override suspend fun executeInternalTransfer(
+        fromAccountId: String,
+        toAccountId: String,
+        amount: Money,
+        isoDate: String,
+        desc: String,
+        userId: String
+    ): InternalTransferResult {
+        val cleanFrom = fromAccountId.trim().take(80)
+        val cleanTo = toAccountId.trim().take(80)
+        if (cleanFrom.isBlank() || cleanTo.isBlank() || cleanFrom == cleanTo) {
+            return InternalTransferResult.InvalidAccounts
+        }
+        if (!amount.isPositive || amount > Money.MAX_STORABLE) {
+            return InternalTransferResult.InvalidAmount
+        }
+        val uid = requireUserId(userId)
+        val validatedDate = try {
+            PayCycleEngine.requireOrNormalizeIsoDate(isoDate)
+        } catch (_: IllegalArgumentException) {
+            PayCycleEngine.todayIso()
+        }
+        val now = System.currentTimeMillis()
+        val groupToken = UUID.randomUUID().toString().replace("-", "").take(12)
+        val groupId = "trf_${now}_$groupToken"
+        val safeDesc = desc.trim().ifBlank { "Transfert entre comptes" }.take(250)
+
+        val outEntity = TransactionEntity(
+            id = "${groupId}_out",
+            userId = uid,
+            type = "transfer_out",
+            amountCentimes = amount.centimes,
+            category = "autre",
+            envelopeKey = "autre",
+            accountId = cleanFrom,
+            toAccountId = cleanTo,
+            desc = safeDesc,
+            isoDate = validatedDate,
+            hourOfDay = -1,
+            createdAtEpochMs = now,
+            updatedAtEpochMs = now,
+            transferGroupId = groupId,
+            loanId = null
+        )
+        val inEntity = TransactionEntity(
+            id = "${groupId}_in",
+            userId = uid,
+            type = "transfer_in",
+            amountCentimes = amount.centimes,
+            category = "autre",
+            envelopeKey = "autre",
+            accountId = cleanTo,
+            toAccountId = cleanFrom,
+            desc = safeDesc,
+            isoDate = validatedDate,
+            hourOfDay = -1,
+            createdAtEpochMs = now,
+            updatedAtEpochMs = now,
+            transferGroupId = groupId,
+            loanId = null
+        )
+        dao.executeInternalTransferAtomically(outEntity, inEntity)
+        val outDomain = outEntity.toDomain()
+        val inDomain = inEntity.toDomain()
+        notifyRemoteMirror("executeInternalTransfer") {
+            it.onTransactionUpserted(uid, outDomain)
+            it.onTransactionUpserted(uid, inDomain)
+        }
+        return InternalTransferResult.Success(
+            transferGroupId = groupId,
+            outgoingTx = outDomain,
+            incomingTx = inDomain
+        )
+    }
+
+    override suspend fun deleteTransferGroup(transferGroupId: String, userId: String): Int {
+        val cleanGroup = transferGroupId.trim()
+        if (cleanGroup.isBlank()) return 0
+        val uid = requireUserId(userId)
+        return dao.deleteTransactionsByTransferGroup(uid, cleanGroup)
+    }
+
+    override suspend fun recordLoanRepayment(
+        loanId: String,
+        amount: Money,
+        linkedAccountId: String?,
+        isoDate: String,
+        note: String,
+        userId: String
+    ): LoanRepaymentResult {
+        if (!amount.isPositive || amount > Money.MAX_STORABLE) {
+            return LoanRepaymentResult.InvalidAmount
+        }
+        val cleanLoanId = loanId.trim()
+        if (cleanLoanId.isBlank()) {
+            return LoanRepaymentResult.LoanNotFound(loanId)
+        }
+        val uid = requireUserId(userId)
+        val validatedDate = try {
+            PayCycleEngine.requireOrNormalizeIsoDate(isoDate)
+        } catch (_: IllegalArgumentException) {
+            PayCycleEngine.todayIso()
+        }
+        val now = System.currentTimeMillis()
+        val token = UUID.randomUUID().toString().replace("-", "").take(10)
+        val repaymentId = "repay_${now}_$token"
+        val cleanLinkedAccount = linkedAccountId?.trim()?.takeIf { it.isNotBlank() }?.take(80)
+        val linkedTxId = if (cleanLinkedAccount != null) "tx_loan_${now}_$token" else null
+
+        val result = dao.recordLoanRepaymentAtomically(
+            userId = uid,
+            loanId = cleanLoanId,
+            amountCentimes = amount.centimes,
+            isoDate = validatedDate,
+            linkedAccountId = cleanLinkedAccount,
+            note = note,
+            repaymentId = repaymentId,
+            linkedTxId = linkedTxId,
+            nowMs = now
+        )
+        if (result is LoanRepaymentResult.Success && result.linkedTransaction != null) {
+            notifyRemoteMirror("recordLoanRepayment") {
+                it.onTransactionUpserted(uid, result.linkedTransaction)
+            }
+        }
+        return result
+    }
+
+    override suspend fun promoteSavedCreditToLoan(
+        savedCreditId: String,
+        linkedAccountId: String?,
+        titleOverride: String?,
+        userId: String
+    ): Result<LoanItem> {
+        val uid = requireUserId(userId)
+        val cleanCreditId = savedCreditId.trim()
+        if (cleanCreditId.isBlank()) {
+            return Result.failure(IllegalArgumentException("Identifiant de crédit invalide."))
+        }
+        // Idempotent: if already promoted, return the existing tracked LoanItem (no duplicate liability)
+        dao.getLoanBySavedCreditId(uid, cleanCreditId)?.let { existing ->
+            return Result.success(existing.toDomain())
+        }
+        val savedCredit = dao.getSavedCreditById(uid, cleanCreditId)
+            ?: return Result.failure(NoSuchElementException("Simulation de crédit introuvable ($cleanCreditId)."))
+
+        val now = System.currentTimeMillis()
+        val principalCentimes = savedCredit.financedPrincipalCentimes
+            .takeIf { it > 0L }
+            ?: savedCredit.loanAmountCentimes.coerceAtLeast(0L)
+        val resolvedTitle = titleOverride?.trim()?.takeIf { it.isNotBlank() } ?: when (savedCredit.type.uppercase()) {
+            "IMMOBILIER" -> "Crédit Immobilier"
+            "AUTO" -> "Crédit Auto"
+            "MOURABAHA" -> "Financement Mourabaha"
+            else -> "Crédit Consommation"
+        }
+        val entity = LoanEntity(
+            id = "loan_credit_${MasroufiEntityMappers.sanitizeId(cleanCreditId, "cr", now)}",
+            userId = uid,
+            title = resolvedTitle.take(120),
+            counterparty = "Banque",
+            direction = LoanDirection.LIABILITY.wire,
+            category = LoanCategory.BANK_CREDIT.wire,
+            principalCentimes = principalCentimes,
+            remainingCentimes = principalCentimes,
+            monthlyPaymentCentimes = savedCredit.monthlyPaymentCentimes.coerceAtLeast(0L),
+            status = if (principalCentimes > 0L) LoanStatus.ACTIVE.wire else LoanStatus.PAID_OFF.wire,
+            linkedAccountId = linkedAccountId?.trim()?.takeIf { it.isNotBlank() }?.take(80),
+            sourceFinancialItemId = null,
+            sourceSavedCreditId = cleanCreditId,
+            dueIsoDate = null,
+            notes = "${savedCredit.durationMonths} mois",
+            createdAtEpochMs = now,
+            updatedAtEpochMs = now
+        )
+        dao.upsertLoan(entity)
+        return Result.success(entity.toDomain())
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -397,7 +624,11 @@ class RoomMasroufiRepository(
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit,
         userId: String,
         savedCredits: List<SavedCreditEntity>,
-        staleSavedCreditIdsToDelete: List<String>
+        staleSavedCreditIdsToDelete: List<String>,
+        loans: List<LoanItem>,
+        loanRepayments: List<LoanRepaymentItem>,
+        staleLoanIdsToDelete: List<String>,
+        staleLoanRepaymentIdsToDelete: List<String>
     ) {
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
@@ -437,6 +668,18 @@ class RoomMasroufiRepository(
         }
         val restoredCreditIds = creditEntities.map { it.id }.toSet()
 
+        val loanEntities = loans.mapIndexed { idx, loan ->
+            val cleanId = loan.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "loan_restored_$idx" }
+            loan.copy(id = cleanId).toEntity(uid, now)
+        }
+        val restoredLoanIds = loanEntities.map { it.id }.toSet()
+
+        val repaymentEntities = loanRepayments.mapIndexed { idx, rep ->
+            val cleanId = rep.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "repay_restored_$idx" }
+            rep.copy(id = cleanId).toEntity(uid, now)
+        }
+        val restoredRepaymentIds = repaymentEntities.map { it.id }.toSet()
+
         val safeStaleTxs = staleTxIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
             .filter { it.isNotBlank() && it !in restoredTxIds }
         val safeStaleItems = staleItemIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
@@ -451,6 +694,10 @@ class RoomMasroufiRepository(
         } else emptyList()
         val safeStaleCredits = staleSavedCreditIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
             .filter { it.isNotBlank() && it !in restoredCreditIds }
+        val safeStaleLoans = staleLoanIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
+            .filter { it.isNotBlank() && it !in restoredLoanIds }
+        val safeStaleRepayments = staleLoanRepaymentIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
+            .filter { it.isNotBlank() && it !in restoredRepaymentIds }
 
         dao.restoreBackupSnapshotAtomically(
             userId = uid,
@@ -465,7 +712,11 @@ class RoomMasroufiRepository(
             staleAccountIdsToDelete = safeStaleAccounts,
             staleEnvelopeIdsToDelete = safeStaleEnvelopes,
             savedCredits = creditEntities,
-            staleSavedCreditIdsToDelete = safeStaleCredits
+            staleSavedCreditIdsToDelete = safeStaleCredits,
+            loans = loanEntities,
+            loanRepayments = repaymentEntities,
+            staleLoanIdsToDelete = safeStaleLoans,
+            staleLoanRepaymentIdsToDelete = safeStaleRepayments
         )
         onChunkProgress(1, 1)
 

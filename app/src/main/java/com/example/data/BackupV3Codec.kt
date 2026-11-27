@@ -1,6 +1,11 @@
 package com.example.data
 
 import com.example.BuildConfig
+import com.example.domain.LoanCategory
+import com.example.domain.LoanDirection
+import com.example.domain.LoanItem
+import com.example.domain.LoanRepaymentItem
+import com.example.domain.LoanStatus
 import com.example.domain.PayCycleEngine
 import com.example.ui.DashboardState
 import com.example.ui.ParsedBackupPayload
@@ -49,7 +54,10 @@ object BackupV3Codec {
     private val ALLOWED_LANGUAGES = setOf("fr", "ar", "darija", "en")
     private val ALLOWED_ACCOUNT_KINDS = setOf("cash", "bank", "wallet")
     private val ALLOWED_ITEM_TYPES = setOf("goal", "bill", "debt", "daret", "seasonal", "preset", "custom_prefs")
-    private val ALLOWED_TX_TYPES = setOf("expense", "income", "transfer")
+    private val ALLOWED_TX_TYPES = setOf("expense", "income", "transfer", "transfer_out", "transfer_in")
+    private val ALLOWED_LOAN_DIRECTIONS = setOf("LIABILITY", "RECEIVABLE")
+    private val ALLOWED_LOAN_CATEGORIES = setOf("BANK_CREDIT", "PERSONAL_DEBT", "DARET")
+    private val ALLOWED_LOAN_STATUSES = setOf("ACTIVE", "PAID_OFF")
 
     fun encodeV3Backup(
         state: DashboardState,
@@ -57,7 +65,9 @@ object BackupV3Codec {
         fiscal: BackupFiscalSnapshot? = null,
         appVersion: String = BuildConfig.VERSION_NAME,
         exportedAtEpochMillis: Long = System.currentTimeMillis(),
-        exportedAtIso: String = PayCycleEngine.todayIso()
+        exportedAtIso: String = PayCycleEngine.todayIso(),
+        loans: List<LoanItem> = state.loans,
+        loanRepayments: List<LoanRepaymentItem> = state.loanRepayments
     ): String {
         val allFinItems = state.presets + state.goals + state.bills + state.debts + state.darets + state.seasonals
         val annualBills = fiscal?.annualBills.orEmpty()
@@ -83,6 +93,8 @@ object BackupV3Codec {
                             put("transactions", state.allTransactions.size)
                             put("savedCredits", savedCredits.size)
                             put("annualBills", annualBills.size)
+                            put("loans", loans.size)
+                            put("loanRepayments", loanRepayments.size)
                         }
                     )
                 }
@@ -199,6 +211,8 @@ object BackupV3Codec {
                         if (t.hourOfDay in 0..23) {
                             put("hourOfDay", t.hourOfDay)
                         }
+                        t.transferGroupId?.takeIf { it.isNotBlank() }?.let { put("transferGroupId", it) }
+                        t.loanId?.takeIf { it.isNotBlank() }?.let { put("loanId", it) }
                     }
                 )
             }
@@ -228,6 +242,48 @@ object BackupV3Codec {
                 )
             }
             put("savedCredits", creditsArr)
+
+            val loansArr = JSONArray()
+            loans.forEach { loan ->
+                loansArr.put(
+                    JSONObject().apply {
+                        put("id", loan.id)
+                        put("title", loan.title)
+                        put("counterparty", loan.counterparty)
+                        put("direction", loan.direction.wire)
+                        put("category", loan.category.wire)
+                        put("principalCentimes", loan.principal.centimes)
+                        put("remainingCentimes", loan.remaining.centimes)
+                        put("monthlyPaymentCentimes", loan.monthlyPayment.centimes)
+                        put("status", loan.status.wire)
+                        loan.linkedAccountId?.takeIf { it.isNotBlank() }?.let { put("linkedAccountId", it) }
+                        loan.sourceFinancialItemId?.takeIf { it.isNotBlank() }?.let { put("sourceFinancialItemId", it) }
+                        loan.sourceSavedCreditId?.takeIf { it.isNotBlank() }?.let { put("sourceSavedCreditId", it) }
+                        loan.dueIsoDate?.takeIf { it.isNotBlank() }?.let { put("dueIsoDate", it) }
+                        put("notes", loan.notes)
+                        put("createdAtEpochMs", loan.createdAtEpochMs)
+                        put("updatedAtEpochMs", loan.updatedAtEpochMs)
+                    }
+                )
+            }
+            put("loans", loansArr)
+
+            val repaymentsArr = JSONArray()
+            loanRepayments.forEach { rep ->
+                repaymentsArr.put(
+                    JSONObject().apply {
+                        put("id", rep.id)
+                        put("loanId", rep.loanId)
+                        put("amountCentimes", rep.amount.centimes)
+                        put("isoDate", rep.isoDate)
+                        rep.linkedAccountId?.takeIf { it.isNotBlank() }?.let { put("linkedAccountId", it) }
+                        rep.linkedTransactionId?.takeIf { it.isNotBlank() }?.let { put("linkedTransactionId", it) }
+                        put("note", rep.note)
+                        put("createdAtEpochMs", rep.createdAtEpochMs)
+                    }
+                )
+            }
+            put("loanRepayments", repaymentsArr)
 
             if (fiscal != null) {
                 put(
@@ -359,6 +415,10 @@ object BackupV3Codec {
         val txArr = obj.optJSONArray("transactions")
             ?: throw IllegalArgumentException("Section 'transactions' manquante dans la sauvegarde v3.")
         val creditsArr = obj.optJSONArray("savedCredits") ?: JSONArray()
+        val hasLoansSection = obj.has("loans") && !obj.isNull("loans")
+        val loansArr = obj.optJSONArray("loans") ?: JSONArray()
+        val hasRepaymentsSection = obj.has("loanRepayments") && !obj.isNull("loanRepayments")
+        val repaymentsArr = obj.optJSONArray("loanRepayments") ?: JSONArray()
         val fiscalObj = obj.optJSONObject("fiscal")
         val annualBillsArr = fiscalObj?.optJSONArray("annualBills")
 
@@ -373,10 +433,17 @@ object BackupV3Codec {
             if (countsObj.has("annualBills")) {
                 verifyCount(countsObj, "annualBills", annualBillsArr?.length() ?: 0)
             }
+            if (countsObj.has("loans")) {
+                verifyCount(countsObj, "loans", loansArr.length())
+            }
+            if (countsObj.has("loanRepayments")) {
+                verifyCount(countsObj, "loanRepayments", repaymentsArr.length())
+            }
         }
 
         val totalDeclaredItems = accArr.length() + envArr.length() + itemsArr.length() +
-            txArr.length() + creditsArr.length() + (annualBillsArr?.length() ?: 0)
+            txArr.length() + creditsArr.length() + loansArr.length() + repaymentsArr.length() +
+            (annualBillsArr?.length() ?: 0)
         require(totalDeclaredItems <= MAX_BACKUP_ITEMS) {
             "Sauvegarde dépassant la limite de sécurité ($totalDeclaredItems éléments > $MAX_BACKUP_ITEMS max)."
         }
@@ -517,16 +584,25 @@ object BackupV3Codec {
             val accountId = item.optString("accountId", "acc_cash").trim().ifBlank { "acc_cash" }
             require(accountId.length in 1..80) { "accountId invalide pour '$id'." }
             val rawToAccountId = item.optString("toAccountId", "").trim()
-            val toAccountId = if (txType == "transfer") {
-                require(rawToAccountId.isNotBlank() && rawToAccountId != accountId && rawToAccountId.length <= 80) {
-                    "Un transfert doit spécifier un compte destinataire distinct ('$id')."
+            val toAccountId = when (txType) {
+                "transfer" -> {
+                    require(rawToAccountId.isNotBlank() && rawToAccountId != accountId && rawToAccountId.length <= 80) {
+                        "Un transfert doit spécifier un compte destinataire distinct ('$id')."
+                    }
+                    rawToAccountId
                 }
-                rawToAccountId
-            } else {
-                require(rawToAccountId.isEmpty()) {
-                    "Une opération '$txType' ne doit pas définir toAccountId ('$id')."
+                "transfer_out", "transfer_in" -> {
+                    require(rawToAccountId.length <= 80) {
+                        "toAccountId invalide pour '$id'."
+                    }
+                    rawToAccountId
                 }
-                ""
+                else -> {
+                    require(rawToAccountId.isEmpty()) {
+                        "Une opération '$txType' ne doit pas définir toAccountId ('$id')."
+                    }
+                    ""
+                }
             }
             val rawIso = item.optString("isoDate", item.optString("iso", ""))
             val validatedIso = PayCycleEngine.requireOrNormalizeIsoDate(rawIso)
@@ -536,6 +612,12 @@ object BackupV3Codec {
             ).trim().ifBlank { "autre" }
             require(envKey.length in 1..60) { "envelopeKey invalide pour '$id'." }
             val rawHour = item.optInt("hourOfDay", -1).let { if (it in 0..23) it else -1 }
+            val transferGroupId = item.optString("transferGroupId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { requireValidBackupId(it, "transaction.transferGroupId") }
+            val loanId = item.optString("loanId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { requireValidBackupId(it, "transaction.loanId") }
 
             txsList.add(
                 TransactionItem(
@@ -549,7 +631,9 @@ object BackupV3Codec {
                     toAccountId = toAccountId,
                     desc = desc,
                     isoDate = validatedIso,
-                    hourOfDay = rawHour
+                    hourOfDay = rawHour,
+                    transferGroupId = transferGroupId,
+                    loanId = loanId
                 )
             )
         }
@@ -684,6 +768,117 @@ object BackupV3Codec {
             )
         } else null
 
+        val loansList = mutableListOf<LoanItem>()
+        for (i in 0 until loansArr.length()) {
+            val l = loansArr.optJSONObject(i) ?: throw IllegalArgumentException("Prêt #$i invalide.")
+            val id = requireValidBackupId(l.optString("id", ""), "loan.id")
+            val title = l.optString("title", "").trim()
+            require(title.length in 1..120) { "Titre du prêt '$id' invalide." }
+            val counterparty = l.optString("counterparty", "").trim()
+            require(counterparty.length <= 120) { "Contrepartie trop longue pour le prêt '$id'." }
+            val dirWire = l.optString("direction", "LIABILITY").trim().uppercase()
+            require(dirWire in ALLOWED_LOAN_DIRECTIONS) { "Direction de prêt invalide ('$dirWire') pour '$id'." }
+            val catWire = l.optString("category", "PERSONAL_DEBT").trim().uppercase()
+            require(catWire in ALLOWED_LOAN_CATEGORIES) { "Catégorie de prêt invalide ('$catWire') pour '$id'." }
+            val statusWire = l.optString("status", "ACTIVE").trim().uppercase()
+            require(statusWire in ALLOWED_LOAN_STATUSES) { "Statut de prêt invalide ('$statusWire') pour '$id'." }
+            val principal = readExactCentimes(
+                l,
+                "principalCentimes",
+                Money.ZERO.centimes,
+                Money.MAX_STORABLE.centimes,
+                "loan.principalCentimes"
+            )
+            val remaining = readExactCentimes(
+                l,
+                "remainingCentimes",
+                Money.ZERO.centimes,
+                principal.centimes,
+                "loan.remainingCentimes"
+            )
+            val monthly = readExactCentimes(
+                l,
+                "monthlyPaymentCentimes",
+                Money.ZERO.centimes,
+                Money.MAX_STORABLE.centimes,
+                "loan.monthlyPaymentCentimes",
+                defaultCentimes = 0L
+            )
+            val linkedAcc = l.optString("linkedAccountId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.also { require(it.length <= 80) { "linkedAccountId invalide pour le prêt '$id'." } }
+            val sourceFinId = l.optString("sourceFinancialItemId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { requireValidBackupId(it, "loan.sourceFinancialItemId") }
+            val sourceCreditId = l.optString("sourceSavedCreditId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { requireValidBackupId(it, "loan.sourceSavedCreditId") }
+            val dueIso = l.optString("dueIsoDate", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { PayCycleEngine.requireOrNormalizeIsoDate(it) }
+            val notes = l.optString("notes", "")
+            require(notes.length <= 250) { "Notes trop longues pour le prêt '$id'." }
+
+            loansList.add(
+                LoanItem(
+                    id = id,
+                    userId = currentUserId,
+                    title = title,
+                    counterparty = counterparty,
+                    direction = LoanDirection.fromWire(dirWire),
+                    category = LoanCategory.fromWire(catWire),
+                    principal = principal,
+                    remaining = remaining,
+                    monthlyPayment = monthly,
+                    status = LoanStatus.fromWire(statusWire),
+                    linkedAccountId = linkedAcc,
+                    sourceFinancialItemId = sourceFinId,
+                    sourceSavedCreditId = sourceCreditId,
+                    dueIsoDate = dueIso,
+                    notes = notes,
+                    createdAtEpochMs = readExactLongOrDefault(l, "createdAtEpochMs", 0L),
+                    updatedAtEpochMs = readExactLongOrDefault(l, "updatedAtEpochMs", 0L)
+                )
+            )
+        }
+
+        val repaymentsList = mutableListOf<LoanRepaymentItem>()
+        for (i in 0 until repaymentsArr.length()) {
+            val r = repaymentsArr.optJSONObject(i) ?: throw IllegalArgumentException("Remboursement #$i invalide.")
+            val id = requireValidBackupId(r.optString("id", ""), "loanRepayment.id")
+            val loanId = requireValidBackupId(r.optString("loanId", ""), "loanRepayment.loanId")
+            val amt = readExactCentimes(
+                r,
+                "amountCentimes",
+                Money.ONE_CENTIME.centimes,
+                Money.MAX_STORABLE.centimes,
+                "loanRepayment.amountCentimes"
+            )
+            val isoDate = PayCycleEngine.requireOrNormalizeIsoDate(r.optString("isoDate", ""))
+            val linkedAcc = r.optString("linkedAccountId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.also { require(it.length <= 80) { "linkedAccountId invalide pour '$id'." } }
+            val linkedTx = r.optString("linkedTransactionId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { requireValidBackupId(it, "loanRepayment.linkedTransactionId") }
+            val note = r.optString("note", "")
+            require(note.length <= 250) { "Note trop longue pour le remboursement '$id'." }
+
+            repaymentsList.add(
+                LoanRepaymentItem(
+                    id = id,
+                    loanId = loanId,
+                    userId = currentUserId,
+                    amount = amt,
+                    isoDate = isoDate,
+                    linkedAccountId = linkedAcc,
+                    linkedTransactionId = linkedTx,
+                    note = note,
+                    createdAtEpochMs = readExactLongOrDefault(r, "createdAtEpochMs", 0L)
+                )
+            )
+        }
+
         return ParsedBackupPayload(
             backupVersion = BACKUP_VERSION_V3,
             exportedAtIso = exportedAtIso,
@@ -698,7 +893,11 @@ object BackupV3Codec {
             learnedCategories = learnedMap,
             savedCredits = creditsList,
             hasSavedCreditsSection = obj.has("savedCredits"),
-            fiscal = parsedFiscal
+            fiscal = parsedFiscal,
+            loans = loansList,
+            loanRepayments = repaymentsList,
+            hasLoansSection = hasLoansSection,
+            hasLoanRepaymentsSection = hasRepaymentsSection
         )
     }
 

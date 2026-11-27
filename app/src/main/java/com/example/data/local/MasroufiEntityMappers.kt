@@ -6,6 +6,11 @@ import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
+import com.example.domain.LoanCategory
+import com.example.domain.LoanDirection
+import com.example.domain.LoanItem
+import com.example.domain.LoanRepaymentItem
+import com.example.domain.LoanStatus
 import com.example.domain.PayCycleEngine
 import com.google.firebase.Timestamp
 import com.masroufi.core.Money
@@ -95,7 +100,11 @@ internal object MasroufiEntityMappers {
 
     fun TransactionItem.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): TransactionEntity {
         val safeId = sanitizeId(id, "tx", nowMs)
-        val safeType = if (type in listOf("expense", "income", "transfer")) type else "expense"
+        val safeType = if (type in listOf("expense", "income", "transfer", "transfer_out", "transfer_in")) {
+            type
+        } else {
+            "expense"
+        }
         val validatedDate = PayCycleEngine.requireOrNormalizeIsoDate(isoDate)
         val safeAccountId = accountId.ifBlank { "acc_cash" }.take(80)
         val safeToAccountId = when (safeType) {
@@ -107,6 +116,7 @@ internal object MasroufiEntityMappers {
                     if (safeAccountId == "acc_cash") "acc_bank" else "acc_cash"
                 }
             }
+            "transfer_out", "transfer_in" -> toAccountId.trim().take(80)
             else -> ""
         }
         val normalizedCat = DefaultCategoryResolver.normalizeStoredCategoryValue(category, envelopeKey).take(120)
@@ -117,6 +127,8 @@ internal object MasroufiEntityMappers {
             ).take(60)
         val createdMs = timestampToEpochMs(createdAt).takeIf { it > 0L } ?: nowMs
         val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
+        val cleanTransferGroup = transferGroupId?.trim()?.takeIf { it.isNotBlank() }?.take(128)
+        val cleanLoanId = loanId?.trim()?.takeIf { it.isNotBlank() }?.take(128)
         return TransactionEntity(
             id = safeId,
             userId = uid,
@@ -130,7 +142,9 @@ internal object MasroufiEntityMappers {
             isoDate = validatedDate.take(20),
             hourOfDay = if (hourOfDay in 0..23) hourOfDay else -1,
             createdAtEpochMs = createdMs,
-            updatedAtEpochMs = updatedMs
+            updatedAtEpochMs = updatedMs,
+            transferGroupId = cleanTransferGroup,
+            loanId = cleanLoanId
         )
     }
 
@@ -151,6 +165,8 @@ internal object MasroufiEntityMappers {
             desc = desc,
             isoDate = isoDate,
             hourOfDay = hourOfDay,
+            transferGroupId = transferGroupId,
+            loanId = loanId,
             createdAt = epochMsToTimestamp(createdAtEpochMs),
             updatedAt = epochMsToTimestamp(updatedAtEpochMs)
         )
@@ -284,5 +300,86 @@ internal object MasroufiEntityMappers {
         maxAllowedDti = maxAllowedDti,
         linkToMonthlyExpenses = linkToMonthlyExpenses,
         createdAt = epochMsToTimestamp(createdAtEpochMs)
+    )
+
+    fun LoanItem.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): LoanEntity {
+        val safeId = sanitizeId(id, "loan", nowMs)
+        val safePrincipal = principal.coerceIn(Money.ZERO, Money.MAX_STORABLE).centimes
+        val safeRemaining = remaining.coerceIn(Money.ZERO, Money.fromCentimes(safePrincipal)).centimes
+        val safeMonthly = monthlyPayment.coerceIn(Money.ZERO, Money.MAX_STORABLE).centimes
+        val effectiveStatus = if (safeRemaining == 0L || status == LoanStatus.PAID_OFF) {
+            LoanStatus.PAID_OFF
+        } else {
+            LoanStatus.ACTIVE
+        }
+        val createdMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs
+        val updatedMs = updatedAtEpochMs.takeIf { it > 0L } ?: nowMs
+        return LoanEntity(
+            id = safeId,
+            userId = uid,
+            title = title.trim().ifBlank { "Prêt" }.take(120),
+            counterparty = counterparty.trim().take(120),
+            direction = direction.wire,
+            category = category.wire,
+            principalCentimes = safePrincipal,
+            remainingCentimes = if (effectiveStatus == LoanStatus.PAID_OFF) 0L else safeRemaining,
+            monthlyPaymentCentimes = safeMonthly,
+            status = effectiveStatus.wire,
+            linkedAccountId = linkedAccountId?.trim()?.takeIf { it.isNotBlank() }?.take(80),
+            sourceFinancialItemId = sourceFinancialItemId?.trim()?.takeIf { it.isNotBlank() }?.take(128),
+            sourceSavedCreditId = sourceSavedCreditId?.trim()?.takeIf { it.isNotBlank() }?.take(128),
+            dueIsoDate = dueIsoDate?.trim()?.takeIf { it.isNotBlank() }?.take(20),
+            notes = notes.trim().take(250),
+            createdAtEpochMs = createdMs,
+            updatedAtEpochMs = updatedMs
+        )
+    }
+
+    fun LoanEntity.toDomain(): LoanItem = LoanItem(
+        id = id,
+        userId = userId,
+        title = title,
+        counterparty = counterparty,
+        direction = LoanDirection.fromWire(direction),
+        category = LoanCategory.fromWire(category),
+        principal = Money.fromCentimes(principalCentimes.coerceAtLeast(0L)),
+        remaining = Money.fromCentimes(remainingCentimes.coerceAtLeast(0L)),
+        monthlyPayment = Money.fromCentimes(monthlyPaymentCentimes.coerceAtLeast(0L)),
+        status = LoanStatus.fromWire(status),
+        linkedAccountId = linkedAccountId,
+        sourceFinancialItemId = sourceFinancialItemId,
+        sourceSavedCreditId = sourceSavedCreditId,
+        dueIsoDate = dueIsoDate,
+        notes = notes,
+        createdAtEpochMs = createdAtEpochMs,
+        updatedAtEpochMs = updatedAtEpochMs
+    )
+
+    fun LoanRepaymentItem.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): LoanRepaymentEntity {
+        val safeId = sanitizeId(id, "repay", nowMs)
+        val validatedIso = PayCycleEngine.requireOrNormalizeIsoDate(isoDate)
+        return LoanRepaymentEntity(
+            id = safeId,
+            loanId = loanId.trim().take(128),
+            userId = uid,
+            amountCentimes = amount.coerceIn(Money.ONE_CENTIME, Money.MAX_STORABLE).centimes,
+            isoDate = validatedIso.take(20),
+            linkedAccountId = linkedAccountId?.trim()?.takeIf { it.isNotBlank() }?.take(80),
+            linkedTransactionId = linkedTransactionId?.trim()?.takeIf { it.isNotBlank() }?.take(128),
+            note = note.trim().take(250),
+            createdAtEpochMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs
+        )
+    }
+
+    fun LoanRepaymentEntity.toDomain(): LoanRepaymentItem = LoanRepaymentItem(
+        id = id,
+        loanId = loanId,
+        userId = userId,
+        amount = Money.fromCentimes(amountCentimes.coerceAtLeast(0L)),
+        isoDate = isoDate,
+        linkedAccountId = linkedAccountId,
+        linkedTransactionId = linkedTransactionId,
+        note = note,
+        createdAtEpochMs = createdAtEpochMs
     )
 }

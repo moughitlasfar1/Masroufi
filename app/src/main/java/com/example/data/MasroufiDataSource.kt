@@ -74,6 +74,51 @@ interface MasroufiDataSource {
 
     suspend fun getSavedCredits(userId: String = requireUserId()): List<com.masroufi.credit.data.SavedCreditEntity> = emptyList()
 
+    // --- Phase 5: Accounts Atomic Transfers & Loans ---
+    fun observeLoans(userId: String = requireUserId()): Flow<List<com.example.domain.LoanItem>> =
+        kotlinx.coroutines.flow.flowOf(emptyList())
+
+    suspend fun getLoans(userId: String = requireUserId()): List<com.example.domain.LoanItem> = emptyList()
+
+    fun observeLoanRepayments(userId: String = requireUserId()): Flow<List<com.example.domain.LoanRepaymentItem>> =
+        kotlinx.coroutines.flow.flowOf(emptyList())
+
+    suspend fun getLoanRepayments(userId: String = requireUserId()): List<com.example.domain.LoanRepaymentItem> = emptyList()
+
+    suspend fun upsertLoan(
+        loan: com.example.domain.LoanItem,
+        userId: String = requireUserId()
+    ): String = loan.id
+
+    suspend fun deleteLoan(loanId: String, userId: String = requireUserId()) {}
+
+    suspend fun executeInternalTransfer(
+        fromAccountId: String,
+        toAccountId: String,
+        amount: com.masroufi.core.Money,
+        isoDate: String,
+        desc: String = "",
+        userId: String = requireUserId()
+    ): com.example.domain.InternalTransferResult = com.example.domain.InternalTransferResult.InvalidAccounts
+
+    suspend fun deleteTransferGroup(transferGroupId: String, userId: String = requireUserId()): Int = 0
+
+    suspend fun recordLoanRepayment(
+        loanId: String,
+        amount: com.masroufi.core.Money,
+        linkedAccountId: String? = null,
+        isoDate: String = com.example.domain.PayCycleEngine.todayIso(),
+        note: String = "",
+        userId: String = requireUserId()
+    ): com.example.domain.LoanRepaymentResult = com.example.domain.LoanRepaymentResult.LoanNotFound(loanId)
+
+    suspend fun promoteSavedCreditToLoan(
+        savedCreditId: String,
+        linkedAccountId: String? = null,
+        titleOverride: String? = null,
+        userId: String = requireUserId()
+    ): Result<com.example.domain.LoanItem> = Result.failure(UnsupportedOperationException("Not supported"))
+
     suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -88,7 +133,11 @@ interface MasroufiDataSource {
         onChunkProgress: (completedChunks: Int, totalChunks: Int) -> Unit = { _, _ -> },
         userId: String = requireUserId(),
         savedCredits: List<com.masroufi.credit.data.SavedCreditEntity> = emptyList(),
-        staleSavedCreditIdsToDelete: List<String> = emptyList()
+        staleSavedCreditIdsToDelete: List<String> = emptyList(),
+        loans: List<com.example.domain.LoanItem> = emptyList(),
+        loanRepayments: List<com.example.domain.LoanRepaymentItem> = emptyList(),
+        staleLoanIdsToDelete: List<String> = emptyList(),
+        staleLoanRepaymentIdsToDelete: List<String> = emptyList()
     )
 
     suspend fun adoptLocalDataIntoUser(

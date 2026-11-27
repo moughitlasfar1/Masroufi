@@ -103,7 +103,7 @@ fun DashboardRecentTransactions(
             val accMap = state.accounts.associate { it.account.id to it.account.name }
             recentTransactions.forEach { tx ->
                 val isIncome = tx.type == "income"
-                val isTransfer = tx.type == "transfer"
+                val isTransfer = tx.isTransferType()
                 // Semantic colors strictly reserved for transaction amounts
                 val amtColor = when {
                     isIncome -> semanticIncomeColor(isDark)

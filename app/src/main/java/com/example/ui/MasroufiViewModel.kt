@@ -18,6 +18,12 @@ import com.example.domain.AccountWithBalance
 import com.example.domain.CycleSpendProjection
 import com.example.domain.DetectedSubscription
 import com.example.domain.EnvelopeStatus
+import com.example.domain.InternalTransferResult
+import com.example.domain.LoanItem
+import com.example.domain.LoanRepaymentItem
+import com.example.domain.LoanRepaymentResult
+import com.example.domain.NetWorthCalculator
+import com.example.domain.NetWorthSnapshot
 import com.example.domain.PayCycleEngine
 import com.example.domain.PayCycleWindow
 import com.example.domain.SmartInsight
@@ -76,7 +82,11 @@ data class ParsedBackupPayload(
     val appVersion: String = "",
     val savedCredits: List<SavedCreditEntity> = emptyList(),
     val hasSavedCreditsSection: Boolean = false,
-    val fiscal: BackupFiscalSnapshot? = null
+    val fiscal: BackupFiscalSnapshot? = null,
+    val loans: List<LoanItem> = emptyList(),
+    val loanRepayments: List<LoanRepaymentItem> = emptyList(),
+    val hasLoansSection: Boolean = false,
+    val hasLoanRepaymentsSection: Boolean = false
 )
 
 data class BackupImportPreview(
@@ -93,7 +103,8 @@ data class BackupImportPreview(
     val savedCreditsCount: Int = 0,
     val annualBillsCount: Int = 0,
     val encryptionVersion: Int = 0,
-    val appVersion: String = ""
+    val appVersion: String = "",
+    val loansCount: Int = 0
 )
 
 sealed class BackupRestoreResult {
@@ -156,7 +167,9 @@ object BackupSerializer {
         fiscal: BackupFiscalSnapshot? = null,
         appVersion: String = com.example.BuildConfig.VERSION_NAME,
         exportedAtEpochMillis: Long = System.currentTimeMillis(),
-        exportedAtIso: String = PayCycleEngine.todayIso()
+        exportedAtIso: String = PayCycleEngine.todayIso(),
+        loans: List<LoanItem> = state.loans,
+        loanRepayments: List<LoanRepaymentItem> = state.loanRepayments
     ): String {
         return BackupV3Codec.encodeV3Backup(
             state = state,
@@ -164,7 +177,9 @@ object BackupSerializer {
             fiscal = fiscal,
             appVersion = appVersion,
             exportedAtEpochMillis = exportedAtEpochMillis,
-            exportedAtIso = exportedAtIso
+            exportedAtIso = exportedAtIso,
+            loans = loans,
+            loanRepayments = loanRepayments
         )
     }
 
@@ -775,6 +790,9 @@ data class DashboardState(
     val activeWindow: PayCycleWindow = PayCycleEngine.computeWindow("2026-10", 1),
     val accounts: List<AccountWithBalance> = emptyList(),
     val totalNetWorth: Money = Money.ZERO,
+    val netWorthSnapshot: NetWorthSnapshot = NetWorthSnapshot(),
+    val loans: List<LoanItem> = emptyList(),
+    val loanRepayments: List<LoanRepaymentItem> = emptyList(),
     val envelopes: List<EnvelopeStatus> = emptyList(),
     val cycleTransactions: List<TransactionItem> = emptyList(),
     val filteredHistory: List<TransactionItem> = emptyList(),
@@ -981,9 +999,38 @@ class MasroufiViewModel(
         _localItems
     ) { remote, local -> local ?: remote }
 
+    private val loansFlow = repository.observeLoans(currentUserId).catch {
+        if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing loans")
+        emit(emptyList())
+    }
+
+    private val loanRepaymentsFlow = repository.observeLoanRepayments(currentUserId).catch {
+        if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing loan repayments")
+        emit(emptyList())
+    }
+
+    /**
+     * Single reactive source of truth for Account Balances & Unified Net Worth
+     * (`totalLiquidAssets + totalReceivables - totalLiabilities`), using exact `Long` centimes.
+     */
+    val netWorthSnapshot: StateFlow<NetWorthSnapshot> = combine(
+        accountsFlow,
+        transactionsFlow,
+        loansFlow,
+        itemsFlow
+    ) { accs, txs, loans, finItems ->
+        NetWorthCalculator.compute(
+            accounts = accs.sortedBy { it.name },
+            transactions = txs,
+            loans = loans,
+            legacyFinancialItems = finItems
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, NetWorthSnapshot())
+
     val uiState: StateFlow<DashboardState> = combine(
         combine(profileFlow, _optimisticProfile, transactionsFlow) { p, optP, t -> Triple(optP ?: p, t, Unit) },
         combine(accountsFlow, envelopesFlow, itemsFlow) { a, e, i -> Triple(a, e, i) },
+        combine(loansFlow, loanRepaymentsFlow) { l, r -> Pair(l, r) },
         combine(
             combine(_selectedCycleKey, _filterState, _whatIfState) { c, f, w -> Triple(c, f, w) },
             combine(_optimisticCustomPrefs, _errorMessage, _hideAmounts) { cp, err, hide -> Triple(cp, err, hide) },
@@ -993,7 +1040,7 @@ class MasroufiViewModel(
         ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs, verifiedDates) ->
             listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs, verifiedDates)
         }
-    ) { (profileOpt, txs, _), (accs, envs, finItems), extraList ->
+    ) { (profileOpt, txs, _), (accs, envs, finItems), (loans, loanRepayments), extraList ->
         val selCycle = extraList[0] as? String
         val filter = extraList[1] as FilterState
         val whatIf = extraList[2] as WhatIfSimulatorState
@@ -1037,8 +1084,14 @@ class MasroufiViewModel(
         val prevWindow = PayCycleEngine.computeWindow(prevCycleKey, profile.payCycleDay, todayIso)
 
         val sortedAccounts = accs.sortedBy { it.name }
-        val accountBalances = PayCycleEngine.computeAccountBalances(sortedAccounts, txs)
-        val netWorth = accountBalances.map { it.currentBalance }.sumMoney()
+        val computedNetWorthSnapshot = NetWorthCalculator.compute(
+            accounts = sortedAccounts,
+            transactions = txs,
+            loans = loans,
+            legacyFinancialItems = finItems
+        )
+        val accountBalances = computedNetWorthSnapshot.accountBalances
+        val netWorth = computedNetWorthSnapshot.totalLiquidAssets
 
         val sortedEnvelopes = envs.sortedByDescending { it.hasCap }.sortedByDescending { it.percentage }
         val envelopeStatuses = PayCycleEngine.computeEnvelopes(
@@ -1192,7 +1245,11 @@ class MasroufiViewModel(
             val matchesAcc = filter.selectedAccountId == "all" ||
                 tx.accountId == filter.selectedAccountId ||
                 tx.toAccountId == filter.selectedAccountId
-            val matchesType = filter.selectedType == "all" || tx.type == filter.selectedType
+            val matchesType = when (filter.selectedType) {
+                "all" -> true
+                "transfer" -> tx.isTransferType()
+                else -> tx.type == filter.selectedType
+            }
             val matchesMin = filter.minAmount == null || tx.amount >= filter.minAmount
             return matchesQuery && matchesCat && matchesAcc && matchesType && matchesMin
         }
@@ -1208,6 +1265,9 @@ class MasroufiViewModel(
             activeWindow = window,
             accounts = accountBalances,
             totalNetWorth = netWorth,
+            netWorthSnapshot = computedNetWorthSnapshot,
+            loans = loans,
+            loanRepayments = loanRepayments,
             envelopes = envelopeStatuses,
             cycleTransactions = cycleTxs,
             filteredHistory = filteredList,
@@ -1540,8 +1600,98 @@ class MasroufiViewModel(
         if (_verifiedActiveDates.value != null) {
             recordActiveOrConfirmedDate(validatedDate)
         }
+        if (existingId.isBlank() && type == "transfer") {
+            val cleanFrom = accountId.ifBlank { "acc_cash" }
+            val cleanTo = toAccountId.trim()
+            if (cleanTo.isNotBlank() && cleanTo != cleanFrom) {
+                safeLaunch("executeInternalTransfer") {
+                    repository.executeInternalTransfer(
+                        fromAccountId = cleanFrom,
+                        toAccountId = cleanTo,
+                        amount = amount,
+                        isoDate = validatedDate,
+                        desc = desc.ifBlank { "Transfert entre comptes" },
+                        userId = currentUserId
+                    )
+                }
+                return
+            }
+        }
         safeLaunch("saveTransaction") {
             repository.upsertTransaction(newTx.copy(id = existingId))
+        }
+    }
+
+    fun executeInternalTransfer(
+        fromAccountId: String,
+        toAccountId: String,
+        amount: Money,
+        isoDate: String = PayCycleEngine.todayIso(),
+        desc: String = "",
+        onResult: (InternalTransferResult) -> Unit = {}
+    ) {
+        safeLaunch("executeInternalTransfer") {
+            val res = repository.executeInternalTransfer(
+                fromAccountId = fromAccountId,
+                toAccountId = toAccountId,
+                amount = amount,
+                isoDate = isoDate,
+                desc = desc,
+                userId = currentUserId
+            )
+            onResult(res)
+        }
+    }
+
+    fun saveLoan(loan: LoanItem, onDone: (String) -> Unit = {}) {
+        safeLaunch("saveLoan") {
+            val id = repository.upsertLoan(loan.copy(userId = currentUserId), currentUserId)
+            onDone(id)
+        }
+    }
+
+    fun deleteLoan(loanId: String) {
+        if (loanId.isBlank()) return
+        safeLaunch("deleteLoan") {
+            repository.deleteLoan(loanId, currentUserId)
+        }
+    }
+
+    fun recordLoanRepayment(
+        loanId: String,
+        amount: Money,
+        linkedAccountId: String? = null,
+        isoDate: String = PayCycleEngine.todayIso(),
+        note: String = "",
+        onResult: (LoanRepaymentResult) -> Unit = {}
+    ) {
+        safeLaunch("recordLoanRepayment") {
+            val res = repository.recordLoanRepayment(
+                loanId = loanId,
+                amount = amount,
+                linkedAccountId = linkedAccountId,
+                isoDate = isoDate,
+                note = note,
+                userId = currentUserId
+            )
+            onResult(res)
+        }
+    }
+
+    fun promoteSavedCreditToLoan(
+        savedCreditId: String,
+        linkedAccountId: String? = null,
+        titleOverride: String? = null,
+        onResult: (Result<LoanItem>) -> Unit = {}
+    ) {
+        safeLaunch("promoteSavedCreditToLoan") {
+            val res = repository.promoteSavedCreditToLoan(
+                savedCreditId = savedCreditId,
+                linkedAccountId = linkedAccountId,
+                titleOverride = titleOverride,
+                userId = currentUserId
+            )
+            onResult(res)
         }
     }
 
@@ -1642,7 +1792,12 @@ class MasroufiViewModel(
     fun deleteTransactionWithUndo(tx: TransactionItem) {
         _lastDeletedTx.value = tx
         safeLaunch("deleteTransactionWithUndo") {
-            repository.deleteTransaction(tx.id)
+            val groupId = tx.transferGroupId?.trim()
+            if (!groupId.isNullOrBlank()) {
+                repository.deleteTransferGroup(groupId, currentUserId)
+            } else {
+                repository.deleteTransaction(tx.id)
+            }
         }
     }
 
@@ -2074,22 +2229,38 @@ class MasroufiViewModel(
 
     fun settleDebt(debt: FinancialItem, payment: Money) {
         if (!payment.isPositive) return
-        val newPaid = (debt.secondaryAmount + payment).coerceAtMost(debt.amount)
+        val remainingDebt = (debt.amount - debt.secondaryAmount).coerceAtLeast(Money.ZERO)
+        val effectivePayment = payment.coerceAtMost(remainingDebt)
+        if (!effectivePayment.isPositive) return
+        val newPaid = (debt.secondaryAmount + effectivePayment).coerceAtMost(debt.amount)
         val isLent = debt.dateOrCycle != "borrowed"
         val updatedDebt = debt.copy(secondaryAmount = newPaid)
+        val matchedLoan = uiState.value.loans.find { it.sourceFinancialItemId == debt.id }
+        val today = PayCycleEngine.todayIso()
         val tx = TransactionItem(
             id = "tx_debt_${debt.id}_${System.currentTimeMillis()}",
             userId = currentUserId,
             type = if (isLent) "income" else "expense",
-            amount = payment,
+            amount = effectivePayment,
             category = "autre",
             envelopeKey = "autre",
             accountId = "acc_cash",
             desc = "Remboursement: ${debt.name}",
-            isoDate = PayCycleEngine.todayIso()
+            isoDate = today,
+            loanId = matchedLoan?.id
         )
         safeLaunch("settleDebt") {
             repository.upsertItemAndTransactionAtomically(updatedDebt, tx)
+            if (matchedLoan != null && !matchedLoan.isPaidOff) {
+                repository.recordLoanRepayment(
+                    loanId = matchedLoan.id,
+                    amount = effectivePayment.coerceAtMost(matchedLoan.remaining),
+                    linkedAccountId = null, // Settlement tx already persisted above atomically with legacy debt
+                    isoDate = today,
+                    note = debt.name,
+                    userId = currentUserId
+                )
+            }
         }
     }
 
@@ -2116,14 +2287,19 @@ class MasroufiViewModel(
         wipePassphrase: Boolean = true
     ): PortableCryptoResult<String> {
         val currentState = uiState.value
-        val savedCredits = withContext(Dispatchers.IO) {
-            runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
+        val (savedCredits, loans, loanRepayments) = withContext(Dispatchers.IO) {
+            val credits = runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
+            val repoLoans = runCatching { repository.getLoans(currentUserId) }.getOrDefault(currentState.loans)
+            val repoRepayments = runCatching { repository.getLoanRepayments(currentUserId) }.getOrDefault(currentState.loanRepayments)
+            Triple(credits, repoLoans, repoRepayments)
         }
         val plainV3 = BackupSerializer.encodeV3Backup(
             state = currentState,
             savedCredits = savedCredits,
             fiscal = fiscal,
-            appVersion = appVersion
+            appVersion = appVersion,
+            loans = loans,
+            loanRepayments = loanRepayments
         )
         return PortableBackupCrypto.encrypt(
             plaintextUtf8 = plainV3,
@@ -2215,7 +2391,9 @@ class MasroufiViewModel(
                     parsed.envelopes.size +
                     parsed.financialItems.size +
                     parsed.transactions.size +
-                    parsed.savedCredits.size
+                    parsed.savedCredits.size +
+                    parsed.loans.size +
+                    parsed.loanRepayments.size
                 val chunks = ceil(totalOps.coerceAtLeast(1) / 400.0).toInt().coerceAtLeast(1)
                 BackupImportPreview(
                     isEncrypted = isEnc,
@@ -2231,7 +2409,8 @@ class MasroufiViewModel(
                     savedCreditsCount = parsed.savedCredits.size,
                     annualBillsCount = parsed.fiscal?.annualBills?.size ?: 0,
                     encryptionVersion = encVersion,
-                    appVersion = parsed.appVersion
+                    appVersion = parsed.appVersion,
+                    loansCount = parsed.loans.size
                 )
             }
         } finally {
@@ -2330,14 +2509,19 @@ class MasroufiViewModel(
         }
 
         // Phase 2: Prepare complete snapshot & commit inside a single atomic Room @Transaction
-        val existingCredits = withContext(Dispatchers.IO) {
-            runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
+        val (existingCredits, existingLoans, existingRepayments) = withContext(Dispatchers.IO) {
+            val credits = runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
+            val repoLoans = runCatching { repository.getLoans(currentUserId) }.getOrDefault(currentState.loans)
+            val repoRepayments = runCatching { repository.getLoanRepayments(currentUserId) }.getOrDefault(currentState.loanRepayments)
+            Triple(credits, repoLoans, repoRepayments)
         }
         val rollbackSnapshot = if (!isRollbackReplay) {
             BackupSerializer.encodeV3Backup(
                 state = currentState,
                 savedCredits = existingCredits,
-                fiscal = currentFiscal
+                fiscal = currentFiscal,
+                loans = existingLoans,
+                loanRepayments = existingRepayments
             )
         } else null
 
@@ -2404,6 +2588,12 @@ class MasroufiViewModel(
         val staleCreditIds = if (replaceExisting && parsed.hasSavedCreditsSection) {
             existingCredits.map { it.id }
         } else emptyList()
+        val staleLoanIds = if (replaceExisting && parsed.hasLoansSection) {
+            existingLoans.map { it.id }
+        } else emptyList()
+        val staleRepaymentIds = if (replaceExisting && parsed.hasLoanRepaymentsSection) {
+            existingRepayments.map { it.id }
+        } else emptyList()
 
         return try {
             var finalChunks = 1
@@ -2422,7 +2612,11 @@ class MasroufiViewModel(
                     onChunkProgress = { _, total -> finalChunks = total },
                     userId = currentUserId,
                     savedCredits = parsed.savedCredits,
-                    staleSavedCreditIdsToDelete = staleCreditIds
+                    staleSavedCreditIdsToDelete = staleCreditIds,
+                    loans = parsed.loans,
+                    loanRepayments = parsed.loanRepayments,
+                    staleLoanIdsToDelete = staleLoanIds,
+                    staleLoanRepaymentIdsToDelete = staleRepaymentIds
                 )
             }
 
