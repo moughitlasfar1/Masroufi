@@ -86,8 +86,10 @@ class RoomCreditRepository private constructor(
         } catch (ce: CancellationException) {
             throw ce
         } catch (t: Throwable) {
-            runCatching {
-                Log.w(TAG, "RemoteMirror hook failed after local Room credit commit ($opName): ${t.message}")
+            if (com.example.BuildConfig.DEBUG) {
+                runCatching {
+                    Log.w(TAG, "RemoteMirror hook failed after local Room credit commit ($opName): ${t.javaClass.simpleName}")
+                }
             }
         }
     }

@@ -54,8 +54,10 @@ class RoomMasroufiRepository(
         } catch (ce: CancellationException) {
             throw ce
         } catch (t: Throwable) {
-            runCatching {
-                Log.w(TAG, "RemoteMirror hook failed after local Room commit ($opName): ${t.message}")
+            if (com.example.BuildConfig.DEBUG) {
+                runCatching {
+                    Log.w(TAG, "RemoteMirror hook failed after local Room commit ($opName): ${t.javaClass.simpleName}")
+                }
             }
         }
     }

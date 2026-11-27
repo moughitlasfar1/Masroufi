@@ -2322,7 +2322,7 @@ class MasroufiViewModel(
             )
         } catch (e: Exception) {
             if (com.example.BuildConfig.DEBUG) {
-                Log.w("MasroufiVM", "Phase 1 backup validation failed: ${e.message}")
+                Log.w("MasroufiVM", "Phase 1 backup validation failed: ${e.javaClass.simpleName}")
             }
             return BackupRestoreResult.CorruptedOrInvalid(
                 e.localizedMessage ?: "Format de sauvegarde invalide ou corrompu."

@@ -49,6 +49,10 @@
 -keep class * extends androidx.room.RoomDatabase {
     public <init>();
 }
+-keep class com.example.data.local.MasroufiDatabase { *; }
+-keep class com.example.data.local.MasroufiDatabase_Impl { *; }
+-keep class com.example.data.local.MasroufiDao_Impl { *; }
+-keep class com.example.data.local.*Entity { *; }
 -keep class androidx.work.impl.WorkDatabase_Impl { *; }
 -keep class * extends androidx.work.ListenableWorker {
     public <init>(android.content.Context, androidx.work.WorkerParameters);
@@ -56,6 +60,19 @@
 -keep class com.example.notifications.MasroufiNotificationWorker { *; }
 -keep class com.example.notifications.EveningReminderWorker { *; }
 -keep class com.example.notifications.BankListenerHealthWorker { *; }
+
+# Explicit defense-in-depth keep rules for manifest-registered components
+-keep class com.example.MasroufiApplication { *; }
+-keep class com.example.notifications.BankNotificationListenerService { *; }
+-keep class com.example.notifications.QuickCaptureBootReceiver { *; }
+-keep class com.example.notifications.NotificationActionReceiver { *; }
+-keep class com.example.widget.MasroufiAppWidget { *; }
+-keep class com.example.widget.MasroufiQuickTileService { *; }
+-keep class com.example.widget.MasroufiVoiceTileService { *; }
+-keep class com.example.widget.MasroufiSafeTodayTileService { *; }
+-keep class com.example.widget.WidgetConfigActivity { *; }
+-keep class com.example.widget.QuickCaptureActivity { *; }
+-keep class com.example.widget.AssistantEntryActivity { *; }
 
 # R8 Full Mode fix: versionedparcelable consumer rule omits <init>()
 -keep class * implements androidx.versionedparcelable.VersionedParcelable {
