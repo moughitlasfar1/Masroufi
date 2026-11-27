@@ -43,7 +43,8 @@ data class AccountEntity(
         Index(value = ["accountId"]),
         Index(value = ["envelopeKey"]),
         Index(value = ["transferGroupId"]),
-        Index(value = ["loanId"])
+        Index(value = ["loanId"]),
+        Index(value = ["recurringOccurrenceKey"], unique = true)
     ]
 )
 data class TransactionEntity(
@@ -61,7 +62,8 @@ data class TransactionEntity(
     val createdAtEpochMs: Long = 0L,
     val updatedAtEpochMs: Long = 0L,
     val transferGroupId: String? = null,
-    val loanId: String? = null
+    val loanId: String? = null,
+    val recurringOccurrenceKey: String? = null
 )
 
 @Entity(
@@ -203,4 +205,41 @@ data class LoanRepaymentEntity(
     val linkedTransactionId: String? = null,
     val note: String = "",
     val createdAtEpochMs: Long = 0L
+)
+
+/**
+ * Room v4 recurring rule entity for scheduled expenses, incomes, and loan installments
+ * using exact `Long` centimes.
+ */
+@Entity(
+    tableName = "recurring_rules",
+    indices = [
+        Index(value = ["userId"]),
+        Index(value = ["userId", "isPaused", "nextDueIsoDate"]),
+        Index(value = ["linkedLoanId"]),
+        Index(value = ["sourceFinancialItemId"])
+    ]
+)
+data class RecurringRuleEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val title: String,
+    val direction: String = "EXPENSE", // "EXPENSE" | "INCOME" | "LOAN_REPAYMENT"
+    val amountCentimes: Long = 0L,
+    val frequency: String = "MONTHLY", // "WEEKLY" | "BIWEEKLY" | "MONTHLY" | "YEARLY"
+    val anchorDayOfMonth: Int = 1,
+    val startIsoDate: String = "",
+    val nextDueIsoDate: String = "",
+    val endIsoDate: String? = null,
+    val postingMode: String = "CONFIRM", // "AUTO_POST" | "CONFIRM"
+    val accountId: String = "acc_cash",
+    val envelopeKey: String = "charges",
+    val category: String = "charges",
+    val linkedLoanId: String? = null,
+    val sourceFinancialItemId: String? = null,
+    val isPaused: Boolean = false,
+    val lastPostedOccurrenceKey: String? = null,
+    val skippedOccurrenceKeys: String = "",
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L
 )

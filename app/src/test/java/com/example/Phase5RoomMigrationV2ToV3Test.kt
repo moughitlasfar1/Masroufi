@@ -187,7 +187,11 @@ class Phase5RoomMigrationV2ToV3Test {
         // Open through Room DAO to verify exact domain mapping & Net Worth deduplication
         val context = ApplicationProvider.getApplicationContext<Context>()
         val roomDb = Room.databaseBuilder(context, MasroufiDatabase::class.java, TEST_DB_V2_TO_V3)
-            .addMigrations(MasroufiDatabase.MIGRATION_1_2, MasroufiDatabase.MIGRATION_2_3)
+            .addMigrations(
+                MasroufiDatabase.MIGRATION_1_2,
+                MasroufiDatabase.MIGRATION_2_3,
+                MasroufiDatabase.MIGRATION_3_4
+            )
             .allowMainThreadQueries()
             .build()
         try {
@@ -297,7 +301,11 @@ class Phase5RoomMigrationV2ToV3Test {
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         val roomDb = Room.databaseBuilder(context, MasroufiDatabase::class.java, TEST_DB_V1_TO_V3)
-            .addMigrations(MasroufiDatabase.MIGRATION_1_2, MasroufiDatabase.MIGRATION_2_3)
+            .addMigrations(
+                MasroufiDatabase.MIGRATION_1_2,
+                MasroufiDatabase.MIGRATION_2_3,
+                MasroufiDatabase.MIGRATION_3_4
+            )
             .allowMainThreadQueries()
             .build()
         try {

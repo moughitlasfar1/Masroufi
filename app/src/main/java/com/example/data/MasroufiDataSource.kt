@@ -119,6 +119,37 @@ interface MasroufiDataSource {
         userId: String = requireUserId()
     ): Result<com.example.domain.LoanItem> = Result.failure(UnsupportedOperationException("Not supported"))
 
+    // --- Phase 6: Recurrence Engine ---
+    fun observeRecurringRules(userId: String = requireUserId()): Flow<List<com.example.domain.RecurringRuleItem>> =
+        kotlinx.coroutines.flow.flowOf(emptyList())
+
+    suspend fun getRecurringRules(userId: String = requireUserId()): List<com.example.domain.RecurringRuleItem> = emptyList()
+
+    suspend fun upsertRecurringRule(
+        rule: com.example.domain.RecurringRuleItem,
+        userId: String = requireUserId()
+    ): String = rule.id
+
+    suspend fun deleteRecurringRule(ruleId: String, userId: String = requireUserId()) {}
+
+    suspend fun postRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        amountOverride: com.masroufi.core.Money? = null,
+        userId: String = requireUserId()
+    ): com.example.domain.RecurringPostResult = com.example.domain.RecurringPostResult.RuleNotFound(ruleId)
+
+    suspend fun skipRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        userId: String = requireUserId()
+    ): Boolean = false
+
+    suspend fun processDueAutoPostRules(
+        todayIso: String = com.example.domain.PayCycleEngine.todayIso(),
+        userId: String = requireUserId()
+    ): Int = 0
+
     suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -137,7 +168,9 @@ interface MasroufiDataSource {
         loans: List<com.example.domain.LoanItem> = emptyList(),
         loanRepayments: List<com.example.domain.LoanRepaymentItem> = emptyList(),
         staleLoanIdsToDelete: List<String> = emptyList(),
-        staleLoanRepaymentIdsToDelete: List<String> = emptyList()
+        staleLoanRepaymentIdsToDelete: List<String> = emptyList(),
+        recurringRules: List<com.example.domain.RecurringRuleItem> = emptyList(),
+        staleRecurringRuleIdsToDelete: List<String> = emptyList()
     )
 
     suspend fun adoptLocalDataIntoUser(

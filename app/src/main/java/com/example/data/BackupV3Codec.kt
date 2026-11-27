@@ -7,6 +7,10 @@ import com.example.domain.LoanItem
 import com.example.domain.LoanRepaymentItem
 import com.example.domain.LoanStatus
 import com.example.domain.PayCycleEngine
+import com.example.domain.RecurrenceDirection
+import com.example.domain.RecurrenceFrequency
+import com.example.domain.RecurrencePostingMode
+import com.example.domain.RecurringRuleItem
 import com.example.ui.DashboardState
 import com.example.ui.ParsedBackupPayload
 import com.google.firebase.Timestamp
@@ -58,6 +62,9 @@ object BackupV3Codec {
     private val ALLOWED_LOAN_DIRECTIONS = setOf("LIABILITY", "RECEIVABLE")
     private val ALLOWED_LOAN_CATEGORIES = setOf("BANK_CREDIT", "PERSONAL_DEBT", "DARET")
     private val ALLOWED_LOAN_STATUSES = setOf("ACTIVE", "PAID_OFF")
+    private val ALLOWED_REC_FREQUENCIES = setOf("WEEKLY", "BIWEEKLY", "MONTHLY", "YEARLY")
+    private val ALLOWED_REC_DIRECTIONS = setOf("EXPENSE", "INCOME", "LOAN_REPAYMENT")
+    private val ALLOWED_REC_POSTING_MODES = setOf("AUTO_POST", "CONFIRM")
 
     fun encodeV3Backup(
         state: DashboardState,
@@ -67,7 +74,8 @@ object BackupV3Codec {
         exportedAtEpochMillis: Long = System.currentTimeMillis(),
         exportedAtIso: String = PayCycleEngine.todayIso(),
         loans: List<LoanItem> = state.loans,
-        loanRepayments: List<LoanRepaymentItem> = state.loanRepayments
+        loanRepayments: List<LoanRepaymentItem> = state.loanRepayments,
+        recurringRules: List<RecurringRuleItem> = state.recurringRules
     ): String {
         val allFinItems = state.presets + state.goals + state.bills + state.debts + state.darets + state.seasonals
         val annualBills = fiscal?.annualBills.orEmpty()
@@ -95,6 +103,7 @@ object BackupV3Codec {
                             put("annualBills", annualBills.size)
                             put("loans", loans.size)
                             put("loanRepayments", loanRepayments.size)
+                            put("recurringRules", recurringRules.size)
                         }
                     )
                 }
@@ -120,6 +129,10 @@ object BackupV3Codec {
                     put("customSubtitle", state.customPrefs.customSubtitle)
                     put("visibilityMask", state.customPrefs.toVisibilityMask())
                     put("dashboardOrder", state.customPrefs.normalizedOrder().joinToString(","))
+                    put("showForecastCard", state.customPrefs.showForecastCard)
+                    put("showUpcomingRecurringCard", state.customPrefs.showUpcomingRecurringCard)
+                    put("showRecentTransactionsCard", state.customPrefs.showRecentTransactionsCard)
+                    put("extendedDashboardOrder", state.customPrefs.resolvedDashboardOrder().joinToString(","))
                     put("themeMode", state.customPrefs.normalizedThemeMode())
                     put("eurToMadRate", state.customPrefs.normalizedEurRate())
                     put("usdToMadRate", state.customPrefs.normalizedUsdRate())
@@ -213,6 +226,7 @@ object BackupV3Codec {
                         }
                         t.transferGroupId?.takeIf { it.isNotBlank() }?.let { put("transferGroupId", it) }
                         t.loanId?.takeIf { it.isNotBlank() }?.let { put("loanId", it) }
+                        t.recurringOccurrenceKey?.takeIf { it.isNotBlank() }?.let { put("recurringOccurrenceKey", it) }
                     }
                 )
             }
@@ -284,6 +298,37 @@ object BackupV3Codec {
                 )
             }
             put("loanRepayments", repaymentsArr)
+
+            val recurringArr = JSONArray()
+            recurringRules.forEach { rule ->
+                recurringArr.put(
+                    JSONObject().apply {
+                        put("id", rule.id)
+                        put("title", rule.title)
+                        put("direction", rule.direction.wire)
+                        put("amountCentimes", rule.amount.centimes)
+                        put("frequency", rule.frequency.wire)
+                        put("anchorDayOfMonth", rule.anchorDayOfMonth)
+                        put("startIsoDate", rule.startIsoDate)
+                        put("nextDueIsoDate", rule.nextDueIsoDate)
+                        rule.endIsoDate?.takeIf { it.isNotBlank() }?.let { put("endIsoDate", it) }
+                        put("postingMode", rule.postingMode.wire)
+                        put("accountId", rule.accountId)
+                        put("envelopeKey", rule.envelopeKey)
+                        put("category", rule.category)
+                        rule.linkedLoanId?.takeIf { it.isNotBlank() }?.let { put("linkedLoanId", it) }
+                        rule.sourceFinancialItemId?.takeIf { it.isNotBlank() }?.let { put("sourceFinancialItemId", it) }
+                        put("isPaused", rule.isPaused)
+                        rule.lastPostedOccurrenceKey?.takeIf { it.isNotBlank() }?.let { put("lastPostedOccurrenceKey", it) }
+                        if (rule.skippedOccurrenceKeys.isNotEmpty()) {
+                            put("skippedOccurrenceKeys", rule.skippedOccurrenceKeys.joinToString(","))
+                        }
+                        put("createdAtEpochMs", rule.createdAtEpochMs)
+                        put("updatedAtEpochMs", rule.updatedAtEpochMs)
+                    }
+                )
+            }
+            put("recurringRules", recurringArr)
 
             if (fiscal != null) {
                 put(
@@ -397,7 +442,13 @@ object BackupV3Codec {
                 showMonthlyReviewCard = (mask and 16) != 0,
                 showBillsCard = (mask and 32) != 0,
                 showSmartInsightsCard = if (hasInsightsBit) (mask and 64) != 0 else true,
+                showForecastCard = customObj.optBoolean("showForecastCard", true),
+                showUpcomingRecurringCard = customObj.optBoolean("showUpcomingRecurringCard", true),
+                showRecentTransactionsCard = customObj.optBoolean("showRecentTransactionsCard", true),
                 dashboardOrder = CustomizationPrefs.normalizeOrderString(orderStr),
+                extendedDashboardOrder = CustomizationPrefs.normalizeExtendedOrderString(
+                    customObj.optString("extendedDashboardOrder", "")
+                ),
                 themeMode = CustomizationPrefs.normalizeThemeMode(customObj.optString("themeMode", "system")),
                 eurToMadRate = customObj.optDouble("eurToMadRate", 10.85)
                     .let { if (!it.isNaN() && !it.isInfinite() && it in 0.5..500.0) it else 10.85 },
@@ -419,6 +470,8 @@ object BackupV3Codec {
         val loansArr = obj.optJSONArray("loans") ?: JSONArray()
         val hasRepaymentsSection = obj.has("loanRepayments") && !obj.isNull("loanRepayments")
         val repaymentsArr = obj.optJSONArray("loanRepayments") ?: JSONArray()
+        val hasRecurringRulesSection = obj.has("recurringRules") && !obj.isNull("recurringRules")
+        val recurringRulesArr = obj.optJSONArray("recurringRules") ?: JSONArray()
         val fiscalObj = obj.optJSONObject("fiscal")
         val annualBillsArr = fiscalObj?.optJSONArray("annualBills")
 
@@ -439,11 +492,14 @@ object BackupV3Codec {
             if (countsObj.has("loanRepayments")) {
                 verifyCount(countsObj, "loanRepayments", repaymentsArr.length())
             }
+            if (countsObj.has("recurringRules")) {
+                verifyCount(countsObj, "recurringRules", recurringRulesArr.length())
+            }
         }
 
         val totalDeclaredItems = accArr.length() + envArr.length() + itemsArr.length() +
             txArr.length() + creditsArr.length() + loansArr.length() + repaymentsArr.length() +
-            (annualBillsArr?.length() ?: 0)
+            recurringRulesArr.length() + (annualBillsArr?.length() ?: 0)
         require(totalDeclaredItems <= MAX_BACKUP_ITEMS) {
             "Sauvegarde dépassant la limite de sécurité ($totalDeclaredItems éléments > $MAX_BACKUP_ITEMS max)."
         }
@@ -618,6 +674,9 @@ object BackupV3Codec {
             val loanId = item.optString("loanId", "").trim()
                 .takeIf { it.isNotBlank() }
                 ?.let { requireValidBackupId(it, "transaction.loanId") }
+            val recKey = item.optString("recurringOccurrenceKey", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.also { require(it.length <= 160) { "recurringOccurrenceKey invalide pour '$id'." } }
 
             txsList.add(
                 TransactionItem(
@@ -633,7 +692,8 @@ object BackupV3Codec {
                     isoDate = validatedIso,
                     hourOfDay = rawHour,
                     transferGroupId = transferGroupId,
-                    loanId = loanId
+                    loanId = loanId,
+                    recurringOccurrenceKey = recKey
                 )
             )
         }
@@ -879,6 +939,78 @@ object BackupV3Codec {
             )
         }
 
+        val recurringList = mutableListOf<RecurringRuleItem>()
+        for (i in 0 until recurringRulesArr.length()) {
+            val rr = recurringRulesArr.optJSONObject(i) ?: throw IllegalArgumentException("Règle récurrente #$i invalide.")
+            val id = requireValidBackupId(rr.optString("id", ""), "recurringRule.id")
+            val title = rr.optString("title", "").trim()
+            require(title.length in 1..120) { "Titre de règle récurrente invalide pour '$id'." }
+            val dirWire = rr.optString("direction", "EXPENSE").trim().uppercase()
+            require(dirWire in ALLOWED_REC_DIRECTIONS) { "Direction de règle invalide ('$dirWire') pour '$id'." }
+            val freqWire = rr.optString("frequency", "MONTHLY").trim().uppercase()
+            require(freqWire in ALLOWED_REC_FREQUENCIES) { "Fréquence de règle invalide ('$freqWire') pour '$id'." }
+            val modeWire = rr.optString("postingMode", "CONFIRM").trim().uppercase()
+            require(modeWire in ALLOWED_REC_POSTING_MODES) { "Mode de publication invalide ('$modeWire') pour '$id'." }
+            val amount = readExactCentimes(
+                rr,
+                "amountCentimes",
+                Money.ONE_CENTIME.centimes,
+                Money.MAX_STORABLE.centimes,
+                "recurringRule.amountCentimes"
+            )
+            val anchorDay = readExactInt(rr, "anchorDayOfMonth", 1, 31, "recurringRule.anchorDayOfMonth", defaultValue = 1)
+            val startIso = PayCycleEngine.requireOrNormalizeIsoDate(rr.optString("startIsoDate", ""))
+            val nextDueIso = PayCycleEngine.requireOrNormalizeIsoDate(rr.optString("nextDueIsoDate", startIso))
+            val endIso = rr.optString("endIsoDate", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { PayCycleEngine.requireOrNormalizeIsoDate(it) }
+            val accountId = rr.optString("accountId", "acc_cash").trim().ifBlank { "acc_cash" }
+            require(accountId.length in 1..80) { "accountId invalide pour la règle '$id'." }
+            val envKey = rr.optString("envelopeKey", "charges").trim().ifBlank { "charges" }.take(60)
+            val category = rr.optString("category", envKey).trim().ifBlank { envKey }.take(120)
+            val linkedLoanId = rr.optString("linkedLoanId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { requireValidBackupId(it, "recurringRule.linkedLoanId") }
+            val sourceFinId = rr.optString("sourceFinancialItemId", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { requireValidBackupId(it, "recurringRule.sourceFinancialItemId") }
+            val lastPostedKey = rr.optString("lastPostedOccurrenceKey", "").trim()
+                .takeIf { it.isNotBlank() }
+                ?.take(160)
+            val skippedKeys = rr.optString("skippedOccurrenceKeys", "")
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .take(64)
+                .toSet()
+
+            recurringList.add(
+                RecurringRuleItem(
+                    id = id,
+                    userId = currentUserId,
+                    title = title,
+                    direction = RecurrenceDirection.fromWire(dirWire),
+                    amount = amount,
+                    frequency = RecurrenceFrequency.fromWire(freqWire),
+                    anchorDayOfMonth = anchorDay,
+                    startIsoDate = startIso,
+                    nextDueIsoDate = nextDueIso,
+                    endIsoDate = endIso,
+                    postingMode = RecurrencePostingMode.fromWire(modeWire),
+                    accountId = accountId,
+                    envelopeKey = envKey,
+                    category = category,
+                    linkedLoanId = linkedLoanId,
+                    sourceFinancialItemId = sourceFinId,
+                    isPaused = rr.optBoolean("isPaused", false),
+                    lastPostedOccurrenceKey = lastPostedKey,
+                    skippedOccurrenceKeys = skippedKeys,
+                    createdAtEpochMs = readExactLongOrDefault(rr, "createdAtEpochMs", 0L),
+                    updatedAtEpochMs = readExactLongOrDefault(rr, "updatedAtEpochMs", 0L)
+                )
+            )
+        }
+
         return ParsedBackupPayload(
             backupVersion = BACKUP_VERSION_V3,
             exportedAtIso = exportedAtIso,
@@ -897,7 +1029,9 @@ object BackupV3Codec {
             loans = loansList,
             loanRepayments = repaymentsList,
             hasLoansSection = hasLoansSection,
-            hasLoanRepaymentsSection = hasRepaymentsSection
+            hasLoanRepaymentsSection = hasRepaymentsSection,
+            recurringRules = recurringList,
+            hasRecurringRulesSection = hasRecurringRulesSection
         )
     }
 

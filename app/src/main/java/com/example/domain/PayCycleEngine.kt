@@ -1457,7 +1457,7 @@ object PayCycleEngine {
         return bill.dateOrCycle.split(",").map { it.trim() }.contains(cycleKey)
     }
 
-    private fun daysInMonth(year: Int, month: Int): Int {
+    fun daysInMonth(year: Int, month: Int): Int {
         val cal = Calendar.getInstance(UTC_TZ).apply {
             clear()
             set(Calendar.YEAR, year)

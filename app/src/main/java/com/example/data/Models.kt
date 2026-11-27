@@ -280,6 +280,7 @@ data class TransactionItem(
     val hourOfDay: Int = -1,
     val transferGroupId: String? = null,
     val loanId: String? = null,
+    val recurringOccurrenceKey: String? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -410,7 +411,11 @@ data class CustomizationPrefs(
     val showMonthlyReviewCard: Boolean = true,
     val showBillsCard: Boolean = true,
     val showSmartInsightsCard: Boolean = true,
+    val showForecastCard: Boolean = true,
+    val showUpcomingRecurringCard: Boolean = true,
+    val showRecentTransactionsCard: Boolean = true,
     val dashboardOrder: List<String> = DEFAULT_DASHBOARD_ORDER,
+    val extendedDashboardOrder: List<String> = DEFAULT_EXTENDED_DASHBOARD_ORDER,
     val themeMode: String = "system", // "system", "light", "dark"
     val eurToMadRate: Double = 10.85,
     val usdToMadRate: Double = 9.95
@@ -439,30 +444,94 @@ data class CustomizationPrefs(
         return mask
     }
 
+    fun toPhase6VisibilityMask(): Int {
+        var mask = 0
+        if (showForecastCard) mask = mask or 1
+        if (showUpcomingRecurringCard) mask = mask or 2
+        if (showRecentTransactionsCard) mask = mask or 4
+        return mask
+    }
+
     fun normalizedOrder(): List<String> {
         val valid = dashboardOrder.filter { it in DEFAULT_DASHBOARD_ORDER }.distinct()
         val missing = DEFAULT_DASHBOARD_ORDER.filter { it !in valid }
         return valid + missing
     }
 
+    fun resolvedDashboardOrder(): List<String> {
+        val validExt = extendedDashboardOrder.filter { it in DEFAULT_EXTENDED_DASHBOARD_ORDER }.distinct()
+        val missingExt = DEFAULT_EXTENDED_DASHBOARD_ORDER.filter { it !in validExt }
+        val normalizedExt = validExt + missingExt
+        if (normalizedExt != DEFAULT_EXTENDED_DASHBOARD_ORDER) {
+            return normalizedExt
+        }
+        val legacyNorm = normalizedOrder()
+        if (legacyNorm != DEFAULT_DASHBOARD_ORDER) {
+            return listOf("forecast", "upcoming_recurring") + legacyNorm + listOf("recent_transactions")
+        }
+        return DEFAULT_EXTENDED_DASHBOARD_ORDER
+    }
+
     fun isSectionVisible(sectionKey: String): Boolean = when (sectionKey) {
+        "forecast" -> showForecastCard
+        "upcoming_recurring" -> showUpcomingRecurringCard
         "accounts" -> showAccountsCard
         "presets" -> showQuickPresetsCard
         "insights" -> showSmartInsightsCard
         "bills" -> showBillsCard
         "week_summary" -> showWeekSummaryRow
         "monthly_review" -> showMonthlyReviewCard
+        "recent_transactions" -> showRecentTransactionsCard
         else -> true
     }
 
     fun withSectionVisibility(sectionKey: String, visible: Boolean): CustomizationPrefs = when (sectionKey) {
+        "forecast" -> copy(showForecastCard = visible)
+        "upcoming_recurring" -> copy(showUpcomingRecurringCard = visible)
         "accounts" -> copy(showAccountsCard = visible)
         "presets" -> copy(showQuickPresetsCard = visible)
         "insights" -> copy(showSmartInsightsCard = visible)
         "bills" -> copy(showBillsCard = visible)
         "week_summary" -> copy(showWeekSummaryRow = visible)
         "monthly_review" -> copy(showMonthlyReviewCard = visible)
+        "recent_transactions" -> copy(showRecentTransactionsCard = visible)
         else -> this
+    }
+
+    fun withMovedSection(sectionKey: String, direction: Int): CustomizationPrefs {
+        val currentExt = resolvedDashboardOrder().toMutableList()
+        val idx = currentExt.indexOf(sectionKey)
+        if (idx == -1) return this
+        val target = (idx + direction).coerceIn(0, currentExt.lastIndex)
+        if (target == idx) return this
+        val removed = currentExt.removeAt(idx)
+        currentExt.add(target, removed)
+        val updatedLegacy = currentExt.filter { it in DEFAULT_DASHBOARD_ORDER }
+        return copy(
+            dashboardOrder = if (updatedLegacy.size == DEFAULT_DASHBOARD_ORDER.size) updatedLegacy else normalizedOrder(),
+            extendedDashboardOrder = currentExt
+        )
+    }
+
+    fun resetDashboardLayout(): CustomizationPrefs = copy(
+        showSafeToSpend = true,
+        showAccountsCard = true,
+        showQuickPresetsCard = true,
+        showWeekSummaryRow = true,
+        showMonthlyReviewCard = true,
+        showBillsCard = true,
+        showSmartInsightsCard = true,
+        showForecastCard = true,
+        showUpcomingRecurringCard = true,
+        showRecentTransactionsCard = true,
+        dashboardOrder = DEFAULT_DASHBOARD_ORDER,
+        extendedDashboardOrder = DEFAULT_EXTENDED_DASHBOARD_ORDER
+    )
+
+    fun encodeSubtitlePipe(): String {
+        val legacyOrder = normalizedOrder().joinToString(",")
+        val extOrder = resolvedDashboardOrder().joinToString(",")
+        return "$accentPalette|$currencySymbol|$legacyOrder|${normalizedThemeMode()}|${normalizedEurRate()}|${normalizedUsdRate()}|${toPhase6VisibilityMask()}|$extOrder"
     }
 
     companion object {
@@ -473,6 +542,18 @@ data class CustomizationPrefs(
             "bills",
             "week_summary",
             "monthly_review"
+        )
+
+        val DEFAULT_EXTENDED_DASHBOARD_ORDER = listOf(
+            "forecast",
+            "upcoming_recurring",
+            "accounts",
+            "presets",
+            "insights",
+            "bills",
+            "week_summary",
+            "monthly_review",
+            "recent_transactions"
         )
 
         fun normalizeThemeMode(raw: String?): String = when (raw?.trim()?.lowercase(Locale.ROOT)) {
@@ -488,6 +569,13 @@ data class CustomizationPrefs(
             return parsed + missing
         }
 
+        fun normalizeExtendedOrderString(rawOrder: String?): List<String> {
+            if (rawOrder.isNullOrBlank()) return DEFAULT_EXTENDED_DASHBOARD_ORDER
+            val parsed = rawOrder.split(",").map { it.trim() }.filter { it in DEFAULT_EXTENDED_DASHBOARD_ORDER }.distinct()
+            val missing = DEFAULT_EXTENDED_DASHBOARD_ORDER.filter { it !in parsed }
+            return parsed + missing
+        }
+
         fun fromFinancialItem(item: FinancialItem?): CustomizationPrefs {
             if (item == null) return CustomizationPrefs()
             val parts = item.subtitle.split("|")
@@ -499,6 +587,11 @@ data class CustomizationPrefs(
                 ?.takeIf { it.isFinite() && it in 0.5..500.0 } ?: 10.85
             val parsedUsdRate = parts.getOrNull(5)?.replace(",", ".")?.toDoubleOrNull()
                 ?.takeIf { it.isFinite() && it in 0.5..500.0 } ?: 9.95
+            val rawPhase6Mask = parts.getOrNull(6)?.trim()?.toIntOrNull()
+            val showForecast = if (rawPhase6Mask != null) (rawPhase6Mask and 1) != 0 else true
+            val showUpcoming = if (rawPhase6Mask != null) (rawPhase6Mask and 2) != 0 else true
+            val showRecent = if (rawPhase6Mask != null) (rawPhase6Mask and 4) != 0 else true
+            val extOrder = normalizeExtendedOrderString(parts.getOrNull(7))
             val rawMask = if (item.dayOrTurn > 0) item.dayOrTurn else 127
             val hasInsightsBit = item.dayOrTurn >= 64 || item.dayOrTurn <= 0
             return CustomizationPrefs(
@@ -513,7 +606,11 @@ data class CustomizationPrefs(
                 showMonthlyReviewCard = (rawMask and 16) != 0,
                 showBillsCard = (rawMask and 32) != 0,
                 showSmartInsightsCard = if (hasInsightsBit) (rawMask and 64) != 0 else true,
+                showForecastCard = showForecast,
+                showUpcomingRecurringCard = showUpcoming,
+                showRecentTransactionsCard = showRecent,
                 dashboardOrder = orderList,
+                extendedDashboardOrder = extOrder,
                 themeMode = parsedThemeMode,
                 eurToMadRate = parsedEurRate,
                 usdToMadRate = parsedUsdRate

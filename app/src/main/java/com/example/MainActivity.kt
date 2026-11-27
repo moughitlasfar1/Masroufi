@@ -227,6 +227,8 @@ sealed interface ActiveSheet {
     data object SplitBill : ActiveSheet
     data object BankDetections : ActiveSheet
     data object StatementImport : ActiveSheet
+    data object DashboardLayout : ActiveSheet
+    data class RecurringRuleEditor(val existingRule: com.example.domain.RecurringRuleItem? = null) : ActiveSheet
 }
 
 /**
@@ -330,6 +332,9 @@ class MainActivity : FragmentActivity() {
         runCatching { enableEdgeToEdge() }
         runCatching {
             AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
+        }
+        runCatching {
+            com.example.notifications.RecurringAutoPostWorker.schedulePeriodic(this)
         }
         val launchedFromQuickAdd = intent?.action == MasroufiAppWidget.ACTION_QUICK_ADD
         val launchedFromQuickVoice = intent?.action == MasroufiAppWidget.ACTION_QUICK_VOICE
@@ -1404,6 +1409,59 @@ fun MainFeatureScreen(
                                         pendingBankDetectionsCount = pendingBankDetections.size,
                                         onOpenBankDetections = {
                                             activeSheet = ActiveSheet.BankDetections
+                                        },
+                                        onOpenDashboardLayoutSheet = {
+                                            activeSheet = ActiveSheet.DashboardLayout
+                                        },
+                                        onSetForecastHorizon = { horizon ->
+                                            viewModel.setForecastHorizon(horizon)
+                                        },
+                                        onOpenRecurringRuleEditor = { rule ->
+                                            activeSheet = ActiveSheet.RecurringRuleEditor(existingRule = rule)
+                                        },
+                                        onPostRecurringOccurrence = { occ ->
+                                            viewModel.postRecurringOccurrence(
+                                                ruleId = occ.rule.id,
+                                                occurrenceIsoDate = occ.occurrenceIsoDate
+                                            ) { res ->
+                                                val langCode = state.profile.language
+                                                val msg = when (res) {
+                                                    is com.example.domain.RecurringPostResult.Success -> when (langCode) {
+                                                        "ar" -> "تم تسجيل «${occ.rule.title}» بنجاح"
+                                                        "darija" -> "تسجّلات «${occ.rule.title}» بنجاح"
+                                                        "en" -> "Posted \"${occ.rule.title}\""
+                                                        else -> "« ${occ.rule.title} » enregistrée"
+                                                    }
+                                                    is com.example.domain.RecurringPostResult.AlreadyPosted -> when (langCode) {
+                                                        "ar" -> "مسجّلة مسبقاً لهذه الفترة"
+                                                        "darija" -> "سبق تسجّلات لهاد الفترة"
+                                                        "en" -> "Already posted for this date"
+                                                        else -> "Déjà enregistrée pour cette échéance"
+                                                    }
+                                                    is com.example.domain.RecurringPostResult.LoanAlreadyPaidOff -> when (langCode) {
+                                                        "ar" -> "تم سداد القرض بالكامل"
+                                                        "darija" -> "الكريدي تخلّص كامل"
+                                                        "en" -> "Linked loan is already paid off"
+                                                        else -> "Prêt lié déjà soldé"
+                                                    }
+                                                    is com.example.domain.RecurringPostResult.OverpaymentBlocked -> when (langCode) {
+                                                        "ar" -> "تم منع الدفع الزائد عن المتبقي"
+                                                        "darija" -> "تمنع الخلاص كثر من الباقي"
+                                                        "en" -> "Overpayment blocked"
+                                                        else -> "Surpaiement bloqué"
+                                                    }
+                                                    else -> null
+                                                }
+                                                if (msg != null) {
+                                                    scope.launch { snackbarHostState.showSnackbar(msg) }
+                                                }
+                                            }
+                                        },
+                                        onSkipRecurringOccurrence = { occ ->
+                                            viewModel.skipRecurringOccurrence(
+                                                ruleId = occ.rule.id,
+                                                occurrenceIsoDate = occ.occurrenceIsoDate
+                                            )
                                         }
                                     )
 
@@ -1908,7 +1966,43 @@ fun MainFeatureScreen(
                     onSaveCustomPrefs = { prefs ->
                         viewModel.setThemeMode(prefs.themeMode, systemInDark)
                         viewModel.saveCustomizationPrefs(prefs)
+                    },
+                    onMoveDashboardSection = { sectionKey, dir ->
+                        viewModel.moveDashboardSection(sectionKey, dir)
+                    },
+                    onSetDashboardSectionVisibility = { sectionKey, visible ->
+                        viewModel.setDashboardSectionVisibility(sectionKey, visible)
+                    },
+                    onResetDashboardLayout = {
+                        viewModel.resetDashboardLayout()
                     }
+                )
+
+                ActiveSheet.DashboardLayout -> com.example.ui.dashboard.DashboardLayoutBottomSheet(
+                    customPrefs = state.customPrefs,
+                    lang = state.profile.language,
+                    onMoveSection = { sectionKey, dir ->
+                        viewModel.moveDashboardSection(sectionKey, dir)
+                    },
+                    onSetSectionVisibility = { sectionKey, visible ->
+                        viewModel.setDashboardSectionVisibility(sectionKey, visible)
+                    },
+                    onResetToDefault = {
+                        viewModel.resetDashboardLayout()
+                    },
+                    onDismiss = { activeSheet = ActiveSheet.None }
+                )
+
+                is ActiveSheet.RecurringRuleEditor -> com.example.ui.dashboard.RecurringRuleEditorSheet(
+                    state = state,
+                    existingRule = sheet.existingRule,
+                    onSave = { rule ->
+                        viewModel.saveRecurringRule(rule)
+                    },
+                    onDelete = { ruleId ->
+                        viewModel.deleteRecurringRule(ruleId)
+                    },
+                    onDismiss = { activeSheet = ActiveSheet.None }
                 )
 
                 ActiveSheet.EnvelopesEditor -> CustomizeEnvelopesSheet(

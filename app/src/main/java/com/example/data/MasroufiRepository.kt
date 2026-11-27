@@ -875,7 +875,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         loans: List<com.example.domain.LoanItem>,
         loanRepayments: List<com.example.domain.LoanRepaymentItem>,
         staleLoanIdsToDelete: List<String>,
-        staleLoanRepaymentIdsToDelete: List<String>
+        staleLoanRepaymentIdsToDelete: List<String>,
+        recurringRules: List<com.example.domain.RecurringRuleItem>,
+        staleRecurringRuleIdsToDelete: List<String>
     ) {
         val uid = requireUserId(userId)
         val userRef = db.collection("users").document(uid)

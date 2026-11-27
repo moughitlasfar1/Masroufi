@@ -15,9 +15,12 @@ import com.example.data.TransactionItem
 import com.example.data.UnsupportedBackupVersionException
 import com.example.data.UserProfile
 import com.example.domain.AccountWithBalance
+import com.example.domain.CashFlowForecastEngine
+import com.example.domain.CashFlowForecastSnapshot
 import com.example.domain.CycleSpendProjection
 import com.example.domain.DetectedSubscription
 import com.example.domain.EnvelopeStatus
+import com.example.domain.ForecastHorizon
 import com.example.domain.InternalTransferResult
 import com.example.domain.LoanItem
 import com.example.domain.LoanRepaymentItem
@@ -26,6 +29,10 @@ import com.example.domain.NetWorthCalculator
 import com.example.domain.NetWorthSnapshot
 import com.example.domain.PayCycleEngine
 import com.example.domain.PayCycleWindow
+import com.example.domain.RecurrenceScheduleEngine
+import com.example.domain.RecurringOccurrence
+import com.example.domain.RecurringPostResult
+import com.example.domain.RecurringRuleItem
 import com.example.domain.SmartInsight
 import com.example.domain.SmartReminder
 import com.example.security.AppSecurityManager
@@ -86,7 +93,9 @@ data class ParsedBackupPayload(
     val loans: List<LoanItem> = emptyList(),
     val loanRepayments: List<LoanRepaymentItem> = emptyList(),
     val hasLoansSection: Boolean = false,
-    val hasLoanRepaymentsSection: Boolean = false
+    val hasLoanRepaymentsSection: Boolean = false,
+    val recurringRules: List<RecurringRuleItem> = emptyList(),
+    val hasRecurringRulesSection: Boolean = false
 )
 
 data class BackupImportPreview(
@@ -104,7 +113,8 @@ data class BackupImportPreview(
     val annualBillsCount: Int = 0,
     val encryptionVersion: Int = 0,
     val appVersion: String = "",
-    val loansCount: Int = 0
+    val loansCount: Int = 0,
+    val recurringRulesCount: Int = 0
 )
 
 sealed class BackupRestoreResult {
@@ -169,7 +179,8 @@ object BackupSerializer {
         exportedAtEpochMillis: Long = System.currentTimeMillis(),
         exportedAtIso: String = PayCycleEngine.todayIso(),
         loans: List<LoanItem> = state.loans,
-        loanRepayments: List<LoanRepaymentItem> = state.loanRepayments
+        loanRepayments: List<LoanRepaymentItem> = state.loanRepayments,
+        recurringRules: List<RecurringRuleItem> = state.recurringRules
     ): String {
         return BackupV3Codec.encodeV3Backup(
             state = state,
@@ -179,7 +190,8 @@ object BackupSerializer {
             exportedAtEpochMillis = exportedAtEpochMillis,
             exportedAtIso = exportedAtIso,
             loans = loans,
-            loanRepayments = loanRepayments
+            loanRepayments = loanRepayments,
+            recurringRules = recurringRules
         )
     }
 
@@ -683,7 +695,10 @@ object BackupSerializer {
             parsed.envelopes.size +
             parsed.financialItems.size +
             parsed.transactions.size +
-            parsed.savedCredits.size
+            parsed.savedCredits.size +
+            parsed.loans.size +
+            parsed.loanRepayments.size +
+            parsed.recurringRules.size
         val chunks = ceil(totalOps.coerceAtLeast(1) / 400.0).toInt().coerceAtLeast(1)
         return BackupImportPreview(
             isEncrypted = isEnc,
@@ -699,7 +714,9 @@ object BackupSerializer {
             savedCreditsCount = parsed.savedCredits.size,
             annualBillsCount = parsed.fiscal?.annualBills?.size ?: 0,
             encryptionVersion = encVersion,
-            appVersion = parsed.appVersion
+            appVersion = parsed.appVersion,
+            loansCount = parsed.loans.size,
+            recurringRulesCount = parsed.recurringRules.size
         )
     }
 
@@ -793,6 +810,10 @@ data class DashboardState(
     val netWorthSnapshot: NetWorthSnapshot = NetWorthSnapshot(),
     val loans: List<LoanItem> = emptyList(),
     val loanRepayments: List<LoanRepaymentItem> = emptyList(),
+    val recurringRules: List<RecurringRuleItem> = emptyList(),
+    val dueRecurringOccurrences: List<RecurringOccurrence> = emptyList(),
+    val cashFlowForecast: CashFlowForecastSnapshot = CashFlowForecastSnapshot(),
+    val forecastHorizon: ForecastHorizon = ForecastHorizon.ACTIVE_PAY_CYCLE,
     val envelopes: List<EnvelopeStatus> = emptyList(),
     val cycleTransactions: List<TransactionItem> = emptyList(),
     val filteredHistory: List<TransactionItem> = emptyList(),
@@ -859,6 +880,8 @@ class MasroufiViewModel(
 ) : ViewModel() {
 
     private val _selectedCycleKey = MutableStateFlow<String?>(null)
+    private val _forecastHorizon = MutableStateFlow(ForecastHorizon.ACTIVE_PAY_CYCLE)
+    val forecastHorizon: StateFlow<ForecastHorizon> = _forecastHorizon.asStateFlow()
     private val _historyMinIsoDate = MutableStateFlow<String?>(null)
     private val _filterState = MutableStateFlow(FilterState())
     private val _whatIfState = MutableStateFlow(WhatIfSimulatorState())
@@ -1009,6 +1032,11 @@ class MasroufiViewModel(
         emit(emptyList())
     }
 
+    private val recurringRulesFlow = repository.observeRecurringRules(currentUserId).catch {
+        if (com.example.BuildConfig.DEBUG) Log.w("MasroufiVM", "Error observing recurring rules")
+        emit(emptyList())
+    }
+
     /**
      * Single reactive source of truth for Account Balances & Unified Net Worth
      * (`totalLiquidAssets + totalReceivables - totalLiabilities`), using exact `Long` centimes.
@@ -1027,20 +1055,50 @@ class MasroufiViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, NetWorthSnapshot())
 
+    /**
+     * Single reactive source of truth for Phase 6 Cash-Flow Forecasting aligned with [PayCycleEngine]
+     * and [netWorthSnapshot], using exact `Long` centimes.
+     */
+    val cashFlowForecast: StateFlow<CashFlowForecastSnapshot> = combine(
+        combine(netWorthSnapshot, profileFlow, _optimisticProfile) { nw, p, optP -> Pair(nw, optP ?: p) },
+        combine(recurringRulesFlow, loansFlow, itemsFlow) { rr, l, fi -> Triple(rr, l, fi) },
+        combine(transactionsFlow, _forecastHorizon, _selectedCycleKey) { txs, horizon, selCycle ->
+            Triple(txs, horizon, selCycle)
+        }
+    ) { (nw, profileOpt), (rules, loans, finItems), (txs, horizon, selCycle) ->
+        val profile = profileOpt ?: UserProfile(userId = currentUserId)
+        val todayIso = PayCycleEngine.todayIso()
+        val defaultCycle = PayCycleEngine.currentCycleKey(profile.payCycleDay, todayIso)
+        val activeCycleKey = selCycle ?: defaultCycle
+        val window = PayCycleEngine.computeWindow(activeCycleKey, profile.payCycleDay, todayIso)
+        CashFlowForecastEngine.compute(
+            netWorthSnapshot = nw,
+            payCycleDay = profile.payCycleDay,
+            todayIso = todayIso,
+            horizon = horizon,
+            recurringRules = rules,
+            loans = loans,
+            legacyFinancialItems = finItems,
+            transactions = txs,
+            activeWindowOverride = window
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, CashFlowForecastSnapshot())
+
     val uiState: StateFlow<DashboardState> = combine(
         combine(profileFlow, _optimisticProfile, transactionsFlow) { p, optP, t -> Triple(optP ?: p, t, Unit) },
         combine(accountsFlow, envelopesFlow, itemsFlow) { a, e, i -> Triple(a, e, i) },
-        combine(loansFlow, loanRepaymentsFlow) { l, r -> Pair(l, r) },
+        combine(loansFlow, loanRepaymentsFlow, recurringRulesFlow) { l, r, rr -> Triple(l, r, rr) },
         combine(
             combine(_selectedCycleKey, _filterState, _whatIfState) { c, f, w -> Triple(c, f, w) },
             combine(_optimisticCustomPrefs, _errorMessage, _hideAmounts) { cp, err, hide -> Triple(cp, err, hide) },
             combine(_pendingWritesCount, _dismissedSubscriptions, _verifiedActiveDates) { pCount, dismissed, verified ->
                 Triple(pCount, dismissed, verified)
-            }
-        ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs, verifiedDates) ->
-            listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs, verifiedDates)
+            },
+            _forecastHorizon
+        ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs, verifiedDates), horizon ->
+            listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs, verifiedDates, horizon)
         }
-    ) { (profileOpt, txs, _), (accs, envs, finItems), (loans, loanRepayments), extraList ->
+    ) { (profileOpt, txs, _), (accs, envs, finItems), (loans, loanRepayments, recurringRules), extraList ->
         val selCycle = extraList[0] as? String
         val filter = extraList[1] as FilterState
         val whatIf = extraList[2] as WhatIfSimulatorState
@@ -1052,6 +1110,7 @@ class MasroufiViewModel(
         val dismissedSubs = (extraList.getOrNull(7) as? Set<String>) ?: emptySet()
         @Suppress("UNCHECKED_CAST")
         val verifiedDates = extraList.getOrNull(8) as? Set<String>
+        val activeHorizon = (extraList.getOrNull(9) as? ForecastHorizon) ?: ForecastHorizon.ACTIVE_PAY_CYCLE
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find {
@@ -1258,6 +1317,28 @@ class MasroufiViewModel(
         val upcomingList = txs.filter { it.isoDate > todayIso && matchesFilter(it) }
             .sortedWith(compareBy<TransactionItem> { it.isoDate }.thenByDescending { it.id })
 
+        val postedOccurrenceKeys = txs.mapNotNull { it.recurringOccurrenceKey?.takeIf(String::isNotBlank) }.toSet()
+        val loansById = loans.associateBy { it.id }
+        val upcomingCutoffIso = RecurrenceScheduleEngine.addDays(todayIso, 14)
+        val dueRecurringList = RecurrenceScheduleEngine.findDueOccurrences(
+            rules = recurringRules,
+            upToIso = upcomingCutoffIso,
+            todayIso = todayIso,
+            postedOccurrenceKeys = postedOccurrenceKeys,
+            loansById = loansById
+        )
+        val computedForecast = CashFlowForecastEngine.compute(
+            netWorthSnapshot = computedNetWorthSnapshot,
+            payCycleDay = profile.payCycleDay,
+            todayIso = todayIso,
+            horizon = activeHorizon,
+            recurringRules = recurringRules,
+            loans = loans,
+            legacyFinancialItems = finItems,
+            transactions = txs,
+            activeWindowOverride = window
+        )
+
         DashboardState(
             isLoading = false,
             profile = profile,
@@ -1268,6 +1349,10 @@ class MasroufiViewModel(
             netWorthSnapshot = computedNetWorthSnapshot,
             loans = loans,
             loanRepayments = loanRepayments,
+            recurringRules = recurringRules,
+            dueRecurringOccurrences = dueRecurringList,
+            cashFlowForecast = computedForecast,
+            forecastHorizon = activeHorizon,
             envelopes = envelopeStatuses,
             cycleTransactions = cycleTxs,
             filteredHistory = filteredList,
@@ -1331,6 +1416,10 @@ class MasroufiViewModel(
         }
         safeLaunch("ensureSeeded") {
             repository.ensureSeeded()
+            repository.processDueAutoPostRules(
+                todayIso = PayCycleEngine.todayIso(),
+                userId = currentUserId
+            )
         }
     }
 
@@ -1478,14 +1567,10 @@ class MasroufiViewModel(
 
     fun moveDashboardSection(sectionKey: String, direction: Int) {
         val curPrefs = uiState.value.customPrefs
-        val order = curPrefs.normalizedOrder().toMutableList()
-        val idx = order.indexOf(sectionKey)
-        if (idx == -1) return
-        val targetIdx = (idx + direction).coerceIn(0, order.lastIndex)
-        if (targetIdx == idx) return
-        val item = order.removeAt(idx)
-        order.add(targetIdx, item)
-        saveCustomizationPrefs(curPrefs.copy(dashboardOrder = order))
+        val updated = curPrefs.withMovedSection(sectionKey, direction)
+        if (updated != curPrefs) {
+            saveCustomizationPrefs(updated)
+        }
     }
 
     fun setDashboardSectionVisibility(sectionKey: String, visible: Boolean) {
@@ -1493,14 +1578,77 @@ class MasroufiViewModel(
         saveCustomizationPrefs(curPrefs.withSectionVisibility(sectionKey, visible))
     }
 
+    fun resetDashboardLayout() {
+        val curPrefs = uiState.value.customPrefs
+        saveCustomizationPrefs(curPrefs.resetDashboardLayout())
+    }
+
+    fun setForecastHorizon(horizon: ForecastHorizon) {
+        _forecastHorizon.value = horizon
+    }
+
+    fun saveRecurringRule(rule: RecurringRuleItem, onDone: (String) -> Unit = {}) {
+        safeLaunch("saveRecurringRule") {
+            val id = repository.upsertRecurringRule(rule.copy(userId = currentUserId), currentUserId)
+            onDone(id)
+        }
+    }
+
+    fun deleteRecurringRule(ruleId: String) {
+        if (ruleId.isBlank()) return
+        safeLaunch("deleteRecurringRule") {
+            repository.deleteRecurringRule(ruleId, currentUserId)
+        }
+    }
+
+    fun toggleRecurringRulePaused(rule: RecurringRuleItem, paused: Boolean) {
+        saveRecurringRule(rule.copy(isPaused = paused))
+    }
+
+    fun postRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        amountOverride: Money? = null,
+        onResult: (RecurringPostResult) -> Unit = {}
+    ) {
+        safeLaunch("postRecurringOccurrence") {
+            val res = repository.postRecurringOccurrence(
+                ruleId = ruleId,
+                occurrenceIsoDate = occurrenceIsoDate,
+                amountOverride = amountOverride,
+                userId = currentUserId
+            )
+            onResult(res)
+        }
+    }
+
+    fun skipRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        onResult: (Boolean) -> Unit = {}
+    ) {
+        safeLaunch("skipRecurringOccurrence") {
+            val ok = repository.skipRecurringOccurrence(
+                ruleId = ruleId,
+                occurrenceIsoDate = occurrenceIsoDate,
+                userId = currentUserId
+            )
+            onResult(ok)
+        }
+    }
+
+    fun processDueAutoPostRulesNow(todayIso: String = PayCycleEngine.todayIso(), onDone: (Int) -> Unit = {}) {
+        safeLaunch("processDueAutoPostRules") {
+            val count = repository.processDueAutoPostRules(todayIso = todayIso, userId = currentUserId)
+            onDone(count)
+        }
+    }
+
     private fun buildCustomPrefsFinancialItem(
         prefs: CustomizationPrefs,
         existingCreatedAt: com.google.firebase.Timestamp? = null
     ): FinancialItem {
-        val orderCsv = prefs.normalizedOrder().joinToString(",")
-        val eurStr = String.format(java.util.Locale.US, "%.4f", prefs.normalizedEurRate())
-        val usdStr = String.format(java.util.Locale.US, "%.4f", prefs.normalizedUsdRate())
-        val encodedSub = "${prefs.accentPalette}|${prefs.currencySymbol.ifBlank { "DH" }}|$orderCsv|${prefs.normalizedThemeMode()}|$eurStr|$usdStr".take(250)
+        val encodedSub = prefs.encodeSubtitlePipe().take(500)
         return FinancialItem(
             id = "custom_prefs",
             userId = currentUserId,
@@ -2275,8 +2423,15 @@ class MasroufiViewModel(
     private val _preRestoreRollbackJson = MutableStateFlow<String?>(initialRollbackSnapshot)
     val preRestoreRollbackJson: StateFlow<String?> = _preRestoreRollbackJson.asStateFlow()
 
+    private data class BackupRepoLists(
+        val credits: List<SavedCreditEntity>,
+        val loans: List<LoanItem>,
+        val repayments: List<LoanRepaymentItem>,
+        val recurringRules: List<RecurringRuleItem>
+    )
+
     /**
-     * Phase 3: Portable Backup v3 (all Room v2 user tables incl. saved_credits + FiscalRepository,
+     * Phase 3: Portable Backup v3 (all Room user tables incl. saved_credits, loans, recurring_rules + FiscalRepository,
      * exact Long centimes, PBKDF2-HMAC-SHA256 600k iterations + AES-256-GCM with AAD, zero Keystore).
      * Runs KDF & encryption off the main thread on [Dispatchers.Default].
      */
@@ -2287,19 +2442,22 @@ class MasroufiViewModel(
         wipePassphrase: Boolean = true
     ): PortableCryptoResult<String> {
         val currentState = uiState.value
-        val (savedCredits, loans, loanRepayments) = withContext(Dispatchers.IO) {
-            val credits = runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
-            val repoLoans = runCatching { repository.getLoans(currentUserId) }.getOrDefault(currentState.loans)
-            val repoRepayments = runCatching { repository.getLoanRepayments(currentUserId) }.getOrDefault(currentState.loanRepayments)
-            Triple(credits, repoLoans, repoRepayments)
+        val repoLists = withContext(Dispatchers.IO) {
+            BackupRepoLists(
+                credits = runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList()),
+                loans = runCatching { repository.getLoans(currentUserId) }.getOrDefault(currentState.loans),
+                repayments = runCatching { repository.getLoanRepayments(currentUserId) }.getOrDefault(currentState.loanRepayments),
+                recurringRules = runCatching { repository.getRecurringRules(currentUserId) }.getOrDefault(currentState.recurringRules)
+            )
         }
         val plainV3 = BackupSerializer.encodeV3Backup(
             state = currentState,
-            savedCredits = savedCredits,
+            savedCredits = repoLists.credits,
             fiscal = fiscal,
             appVersion = appVersion,
-            loans = loans,
-            loanRepayments = loanRepayments
+            loans = repoLists.loans,
+            loanRepayments = repoLists.repayments,
+            recurringRules = repoLists.recurringRules
         )
         return PortableBackupCrypto.encrypt(
             plaintextUtf8 = plainV3,
@@ -2393,7 +2551,8 @@ class MasroufiViewModel(
                     parsed.transactions.size +
                     parsed.savedCredits.size +
                     parsed.loans.size +
-                    parsed.loanRepayments.size
+                    parsed.loanRepayments.size +
+                    parsed.recurringRules.size
                 val chunks = ceil(totalOps.coerceAtLeast(1) / 400.0).toInt().coerceAtLeast(1)
                 BackupImportPreview(
                     isEncrypted = isEnc,
@@ -2410,7 +2569,8 @@ class MasroufiViewModel(
                     annualBillsCount = parsed.fiscal?.annualBills?.size ?: 0,
                     encryptionVersion = encVersion,
                     appVersion = parsed.appVersion,
-                    loansCount = parsed.loans.size
+                    loansCount = parsed.loans.size,
+                    recurringRulesCount = parsed.recurringRules.size
                 )
             }
         } finally {
@@ -2509,19 +2669,26 @@ class MasroufiViewModel(
         }
 
         // Phase 2: Prepare complete snapshot & commit inside a single atomic Room @Transaction
-        val (existingCredits, existingLoans, existingRepayments) = withContext(Dispatchers.IO) {
-            val credits = runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList())
-            val repoLoans = runCatching { repository.getLoans(currentUserId) }.getOrDefault(currentState.loans)
-            val repoRepayments = runCatching { repository.getLoanRepayments(currentUserId) }.getOrDefault(currentState.loanRepayments)
-            Triple(credits, repoLoans, repoRepayments)
+        val existingRepoLists = withContext(Dispatchers.IO) {
+            BackupRepoLists(
+                credits = runCatching { repository.getSavedCredits(currentUserId) }.getOrDefault(emptyList()),
+                loans = runCatching { repository.getLoans(currentUserId) }.getOrDefault(currentState.loans),
+                repayments = runCatching { repository.getLoanRepayments(currentUserId) }.getOrDefault(currentState.loanRepayments),
+                recurringRules = runCatching { repository.getRecurringRules(currentUserId) }.getOrDefault(currentState.recurringRules)
+            )
         }
+        val existingCredits = existingRepoLists.credits
+        val existingLoans = existingRepoLists.loans
+        val existingRepayments = existingRepoLists.repayments
+        val existingRecurringRules = existingRepoLists.recurringRules
         val rollbackSnapshot = if (!isRollbackReplay) {
             BackupSerializer.encodeV3Backup(
                 state = currentState,
                 savedCredits = existingCredits,
                 fiscal = currentFiscal,
                 loans = existingLoans,
-                loanRepayments = existingRepayments
+                loanRepayments = existingRepayments,
+                recurringRules = existingRecurringRules
             )
         } else null
 
@@ -2594,6 +2761,9 @@ class MasroufiViewModel(
         val staleRepaymentIds = if (replaceExisting && parsed.hasLoanRepaymentsSection) {
             existingRepayments.map { it.id }
         } else emptyList()
+        val staleRecurringRuleIds = if (replaceExisting && parsed.hasRecurringRulesSection) {
+            existingRecurringRules.map { it.id }
+        } else emptyList()
 
         return try {
             var finalChunks = 1
@@ -2616,7 +2786,9 @@ class MasroufiViewModel(
                     loans = parsed.loans,
                     loanRepayments = parsed.loanRepayments,
                     staleLoanIdsToDelete = staleLoanIds,
-                    staleLoanRepaymentIdsToDelete = staleRepaymentIds
+                    staleLoanRepaymentIdsToDelete = staleRepaymentIds,
+                    recurringRules = parsed.recurringRules,
+                    staleRecurringRuleIdsToDelete = staleRecurringRuleIds
                 )
             }
 

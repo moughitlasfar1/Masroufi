@@ -8,6 +8,10 @@ import androidx.room.Transaction
 import com.example.domain.LoanDirection
 import com.example.domain.LoanRepaymentResult
 import com.example.domain.LoanStatus
+import com.example.domain.RecurrenceDirection
+import com.example.domain.RecurrenceFrequency
+import com.example.domain.RecurrenceScheduleEngine
+import com.example.domain.RecurringPostResult
 import com.example.data.local.MasroufiEntityMappers.toDomain
 import com.masroufi.core.Money
 import kotlinx.coroutines.flow.Flow
@@ -74,6 +78,9 @@ interface MasroufiDao {
 
     @Query("DELETE FROM transactions WHERE userId = :userId AND transferGroupId = :transferGroupId")
     suspend fun deleteTransactionsByTransferGroup(userId: String, transferGroupId: String): Int
+
+    @Query("SELECT * FROM transactions WHERE recurringOccurrenceKey = :occurrenceKey LIMIT 1")
+    suspend fun getTransactionByOccurrenceKey(occurrenceKey: String): TransactionEntity?
 
     @Query("SELECT COUNT(*) FROM transactions WHERE userId = :userId")
     suspend fun countTransactions(userId: String): Int
@@ -187,6 +194,28 @@ interface MasroufiDao {
     @Query("DELETE FROM loan_repayments WHERE userId = :userId AND loanId = :loanId")
     suspend fun deleteRepaymentsForLoan(userId: String, loanId: String)
 
+    // --- Phase 6: Recurring Rules ---
+    @Query("SELECT * FROM recurring_rules WHERE userId = :userId ORDER BY isPaused ASC, nextDueIsoDate ASC, title ASC")
+    fun observeRecurringRules(userId: String): Flow<List<RecurringRuleEntity>>
+
+    @Query("SELECT * FROM recurring_rules WHERE userId = :userId ORDER BY isPaused ASC, nextDueIsoDate ASC, title ASC")
+    suspend fun getRecurringRules(userId: String): List<RecurringRuleEntity>
+
+    @Query("SELECT * FROM recurring_rules WHERE userId = :userId AND id = :ruleId LIMIT 1")
+    suspend fun getRecurringRuleById(userId: String, ruleId: String): RecurringRuleEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRecurringRule(rule: RecurringRuleEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertRecurringRules(rules: List<RecurringRuleEntity>)
+
+    @Query("DELETE FROM recurring_rules WHERE userId = :userId AND id = :ruleId")
+    suspend fun deleteRecurringRule(userId: String, ruleId: String)
+
+    @Query("DELETE FROM recurring_rules WHERE userId = :userId")
+    suspend fun deleteAllRecurringRulesForUser(userId: String)
+
     // --- Import Metadata ---
     @Query("SELECT * FROM import_metadata WHERE userId = :userId LIMIT 1")
     suspend fun getImportMetadata(userId: String): ImportMetadataEntity?
@@ -261,7 +290,8 @@ interface MasroufiDao {
         note: String,
         repaymentId: String,
         linkedTxId: String?,
-        nowMs: Long
+        nowMs: Long,
+        recurringOccurrenceKey: String? = null
     ): LoanRepaymentResult {
         if (amountCentimes <= 0L) {
             return LoanRepaymentResult.InvalidAmount
@@ -291,6 +321,7 @@ interface MasroufiDao {
         upsertLoan(updatedLoanEntity)
 
         val cleanLinkedAcc = linkedAccountId?.trim()?.takeIf { it.isNotBlank() }?.take(80)
+        val cleanOccurrenceKey = recurringOccurrenceKey?.trim()?.takeIf { it.isNotBlank() }?.take(160)
         val createdTxEntity = if (cleanLinkedAcc != null && !linkedTxId.isNullOrBlank()) {
             val direction = LoanDirection.fromWire(currentLoan.direction)
             val txType = if (direction == LoanDirection.RECEIVABLE) "transfer_in" else "transfer_out"
@@ -314,7 +345,8 @@ interface MasroufiDao {
                 createdAtEpochMs = nowMs,
                 updatedAtEpochMs = nowMs,
                 transferGroupId = null,
-                loanId = loanId
+                loanId = loanId,
+                recurringOccurrenceKey = cleanOccurrenceKey
             ).also { upsertTransaction(it) }
         } else {
             null
@@ -340,6 +372,187 @@ interface MasroufiDao {
         )
     }
 
+    /**
+     * Atomically and idempotently posts a single occurrence of [ruleId] on [occurrenceIsoDate]
+     * inside one Room `@Transaction`.
+     *
+     * Guarantees:
+     * - Deterministic `occurrenceKey = "$ruleId:$occurrenceIsoDate"`.
+     * - If a transaction already exists with `recurringOccurrenceKey == occurrenceKey` or the rule's
+     *   `lastPostedOccurrenceKey == occurrenceKey`, returns [RecurringPostResult.AlreadyPosted] with ZERO mutations.
+     * - If linked to a [LoanEntity], delegates to [recordLoanRepaymentAtomically] (inheriting full
+     *   overpayment protection, `PAID_OFF` status transition, and Net Worth Δ = 0), and auto-pauses
+     *   the rule once the loan reaches `PAID_OFF`.
+     * - Advances `nextDueIsoDate` deterministically using [RecurrenceScheduleEngine.advanceDate]
+     *   with month-end clamping (`31 -> Feb 28/29 -> Mar 31`).
+     */
+    @Transaction
+    suspend fun postRecurringOccurrenceAtomically(
+        userId: String,
+        ruleId: String,
+        occurrenceIsoDate: String,
+        txId: String,
+        repaymentId: String,
+        nowMs: Long,
+        amountOverrideCentimes: Long? = null
+    ): RecurringPostResult {
+        val rule = getRecurringRuleById(userId, ruleId)
+            ?: return RecurringPostResult.RuleNotFound(ruleId)
+
+        val baseAmount = amountOverrideCentimes ?: rule.amountCentimes
+        if (baseAmount <= 0L) {
+            return RecurringPostResult.InvalidRule
+        }
+
+        val occurrenceKey = RecurrenceScheduleEngine.occurrenceKey(rule.id, occurrenceIsoDate)
+        if (rule.lastPostedOccurrenceKey == occurrenceKey || getTransactionByOccurrenceKey(occurrenceKey) != null) {
+            return RecurringPostResult.AlreadyPosted(occurrenceKey)
+        }
+
+        val frequency = RecurrenceFrequency.fromWire(rule.frequency)
+        val anchorDay = rule.anchorDayOfMonth.coerceIn(1, 31)
+        val nextDateCandidate = if (occurrenceIsoDate >= rule.nextDueIsoDate) {
+            RecurrenceScheduleEngine.advanceDate(occurrenceIsoDate, frequency, anchorDay)
+        } else {
+            rule.nextDueIsoDate
+        }
+        val passedEnd = !rule.endIsoDate.isNullOrBlank() && nextDateCandidate > rule.endIsoDate
+
+        val direction = RecurrenceDirection.fromWire(rule.direction)
+        val linkedLoanId = rule.linkedLoanId?.trim()?.takeIf { it.isNotBlank() }
+
+        if (direction == RecurrenceDirection.LOAN_REPAYMENT || linkedLoanId != null) {
+            val targetLoanId = linkedLoanId ?: return RecurringPostResult.InvalidRule
+            val currentLoan = getLoanById(userId, targetLoanId)
+                ?: return RecurringPostResult.InvalidRule
+            if (LoanStatus.fromWire(currentLoan.status) == LoanStatus.PAID_OFF || currentLoan.remainingCentimes <= 0L) {
+                if (!rule.isPaused) {
+                    upsertRecurringRule(rule.copy(isPaused = true, updatedAtEpochMs = nowMs))
+                }
+                return RecurringPostResult.LoanAlreadyPaidOff(targetLoanId)
+            }
+            val effectiveAmount = if (amountOverrideCentimes != null) {
+                amountOverrideCentimes
+            } else {
+                minOf(rule.amountCentimes, currentLoan.remainingCentimes)
+            }
+            val loanAccount = rule.accountId.trim().ifBlank { currentLoan.linkedAccountId ?: "acc_cash" }
+            val repayRes = recordLoanRepaymentAtomically(
+                userId = userId,
+                loanId = targetLoanId,
+                amountCentimes = effectiveAmount,
+                isoDate = occurrenceIsoDate,
+                linkedAccountId = loanAccount,
+                note = rule.title,
+                repaymentId = repaymentId,
+                linkedTxId = txId,
+                nowMs = nowMs,
+                recurringOccurrenceKey = occurrenceKey
+            )
+            return when (repayRes) {
+                is LoanRepaymentResult.Success -> {
+                    val loanNowPaidOff = repayRes.updatedLoan.isPaidOff
+                    val updatedRule = rule.copy(
+                        nextDueIsoDate = nextDateCandidate,
+                        lastPostedOccurrenceKey = occurrenceKey,
+                        isPaused = rule.isPaused || passedEnd || loanNowPaidOff,
+                        updatedAtEpochMs = nowMs
+                    )
+                    upsertRecurringRule(updatedRule)
+                    RecurringPostResult.Success(
+                        occurrenceKey = occurrenceKey,
+                        postedTransaction = repayRes.linkedTransaction,
+                        updatedRule = updatedRule.toDomain(),
+                        loanRepaymentResult = repayRes
+                    )
+                }
+                is LoanRepaymentResult.AlreadyPaidOff -> {
+                    if (!rule.isPaused) {
+                        upsertRecurringRule(rule.copy(isPaused = true, updatedAtEpochMs = nowMs))
+                    }
+                    RecurringPostResult.LoanAlreadyPaidOff(repayRes.loanId)
+                }
+                is LoanRepaymentResult.OverpaymentBlocked -> {
+                    RecurringPostResult.OverpaymentBlocked(
+                        loanId = repayRes.loanId,
+                        remaining = repayRes.remaining,
+                        attempted = repayRes.attempted
+                    )
+                }
+                is LoanRepaymentResult.InvalidAmount -> RecurringPostResult.InvalidRule
+                is LoanRepaymentResult.LoanNotFound -> RecurringPostResult.InvalidRule
+            }
+        }
+
+        val txType = if (direction == RecurrenceDirection.INCOME) "income" else "expense"
+        val txEntity = TransactionEntity(
+            id = txId,
+            userId = userId,
+            type = txType,
+            amountCentimes = baseAmount,
+            category = rule.category.ifBlank { rule.envelopeKey.ifBlank { "charges" } },
+            envelopeKey = rule.envelopeKey.ifBlank { "charges" },
+            accountId = rule.accountId.ifBlank { "acc_cash" },
+            toAccountId = "",
+            desc = rule.title.take(250),
+            isoDate = occurrenceIsoDate,
+            hourOfDay = -1,
+            createdAtEpochMs = nowMs,
+            updatedAtEpochMs = nowMs,
+            transferGroupId = null,
+            loanId = null,
+            recurringOccurrenceKey = occurrenceKey
+        )
+        upsertTransaction(txEntity)
+
+        val updatedRule = rule.copy(
+            nextDueIsoDate = nextDateCandidate,
+            lastPostedOccurrenceKey = occurrenceKey,
+            isPaused = rule.isPaused || passedEnd,
+            updatedAtEpochMs = nowMs
+        )
+        upsertRecurringRule(updatedRule)
+
+        return RecurringPostResult.Success(
+            occurrenceKey = occurrenceKey,
+            postedTransaction = txEntity.toDomain(),
+            updatedRule = updatedRule.toDomain(),
+            loanRepaymentResult = null
+        )
+    }
+
+    @Transaction
+    suspend fun skipRecurringOccurrenceAtomically(
+        userId: String,
+        ruleId: String,
+        occurrenceIsoDate: String,
+        nowMs: Long
+    ): Boolean {
+        val rule = getRecurringRuleById(userId, ruleId) ?: return false
+        val key = RecurrenceScheduleEngine.occurrenceKey(rule.id, occurrenceIsoDate)
+        val existingSkipped = rule.skippedOccurrenceKeys.split(",")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toMutableSet()
+        existingSkipped.add(key)
+        val frequency = RecurrenceFrequency.fromWire(rule.frequency)
+        val nextDateCandidate = if (occurrenceIsoDate >= rule.nextDueIsoDate) {
+            RecurrenceScheduleEngine.advanceDate(occurrenceIsoDate, frequency, rule.anchorDayOfMonth.coerceIn(1, 31))
+        } else {
+            rule.nextDueIsoDate
+        }
+        val passedEnd = !rule.endIsoDate.isNullOrBlank() && nextDateCandidate > rule.endIsoDate
+        upsertRecurringRule(
+            rule.copy(
+                nextDueIsoDate = nextDateCandidate,
+                skippedOccurrenceKeys = existingSkipped.toList().takeLast(64).joinToString(","),
+                isPaused = rule.isPaused || passedEnd,
+                updatedAtEpochMs = nowMs
+            )
+        )
+        return true
+    }
+
     @Transaction
     suspend fun upsertItemAndTransactionAtomically(
         item: FinancialItemEntity,
@@ -362,6 +575,7 @@ interface MasroufiDao {
         accountIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteAccount(userId, id) }
         deleteAllLoanRepaymentsForUser(userId)
         deleteAllLoansForUser(userId)
+        deleteAllRecurringRulesForUser(userId)
         if (cleanAccounts.isNotEmpty()) upsertAccounts(cleanAccounts)
     }
 
@@ -383,7 +597,9 @@ interface MasroufiDao {
         loans: List<LoanEntity> = emptyList(),
         loanRepayments: List<LoanRepaymentEntity> = emptyList(),
         staleLoanIdsToDelete: List<String> = emptyList(),
-        staleLoanRepaymentIdsToDelete: List<String> = emptyList()
+        staleLoanRepaymentIdsToDelete: List<String> = emptyList(),
+        recurringRules: List<RecurringRuleEntity> = emptyList(),
+        staleRecurringRuleIdsToDelete: List<String> = emptyList()
     ) {
         if (profile != null) upsertProfile(profile)
         if (customPrefsItem != null) upsertFinancialItem(customPrefsItem)
@@ -394,6 +610,7 @@ interface MasroufiDao {
         if (savedCredits.isNotEmpty()) upsertSavedCredits(savedCredits)
         if (loans.isNotEmpty()) upsertLoans(loans)
         if (loanRepayments.isNotEmpty()) upsertLoanRepayments(loanRepayments)
+        if (recurringRules.isNotEmpty()) upsertRecurringRules(recurringRules)
         staleTxIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteTransaction(userId, id) }
         staleItemIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteFinancialItem(userId, id) }
         staleAccountIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteAccount(userId, id) }
@@ -401,6 +618,7 @@ interface MasroufiDao {
         staleSavedCreditIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteSavedCredit(userId, id) }
         staleLoanRepaymentIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteLoanRepayment(userId, id) }
         staleLoanIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteLoan(userId, id) }
+        staleRecurringRuleIdsToDelete.forEach { id -> if (id.isNotBlank()) deleteRecurringRule(userId, id) }
     }
 
     @Transaction
@@ -413,7 +631,8 @@ interface MasroufiDao {
         financialItems: List<FinancialItemEntity>,
         savedCredits: List<SavedCreditLocalEntity>,
         loans: List<LoanEntity> = emptyList(),
-        loanRepayments: List<LoanRepaymentEntity> = emptyList()
+        loanRepayments: List<LoanRepaymentEntity> = emptyList(),
+        recurringRules: List<RecurringRuleEntity> = emptyList()
     ) {
         deleteAllTransactionsForUser(userId)
         deleteAllAccountsForUser(userId)
@@ -422,6 +641,7 @@ interface MasroufiDao {
         deleteAllSavedCreditsForUser(userId)
         deleteAllLoanRepaymentsForUser(userId)
         deleteAllLoansForUser(userId)
+        deleteAllRecurringRulesForUser(userId)
         deleteProfileForUser(userId)
         if (profile != null) upsertProfile(profile)
         if (accounts.isNotEmpty()) upsertAccounts(accounts)
@@ -431,6 +651,7 @@ interface MasroufiDao {
         if (savedCredits.isNotEmpty()) upsertSavedCredits(savedCredits)
         if (loans.isNotEmpty()) upsertLoans(loans)
         if (loanRepayments.isNotEmpty()) upsertLoanRepayments(loanRepayments)
+        if (recurringRules.isNotEmpty()) upsertRecurringRules(recurringRules)
     }
 
     // --- Ownership lookups (prevent cross-user PK collision during seeding) ---
@@ -465,6 +686,9 @@ interface MasroufiDao {
     @Query("UPDATE loan_repayments SET userId = :targetUserId WHERE userId = :sourceUserId")
     suspend fun reassignLoanRepaymentsOwner(sourceUserId: String, targetUserId: String): Int
 
+    @Query("UPDATE recurring_rules SET userId = :targetUserId WHERE userId = :sourceUserId")
+    suspend fun reassignRecurringRulesOwner(sourceUserId: String, targetUserId: String): Int
+
     @Transaction
     suspend fun adoptUserDataAtomically(sourceUserId: String, targetUserId: String): Int {
         if (sourceUserId.isBlank() || targetUserId.isBlank() || sourceUserId == targetUserId) {
@@ -481,6 +705,7 @@ interface MasroufiDao {
         adoptedCount += reassignSavedCreditsOwner(sourceUserId, targetUserId)
         adoptedCount += reassignLoansOwner(sourceUserId, targetUserId)
         adoptedCount += reassignLoanRepaymentsOwner(sourceUserId, targetUserId)
+        adoptedCount += reassignRecurringRulesOwner(sourceUserId, targetUserId)
 
         if (sourceProfile != null) {
             if (targetProfile == null) {

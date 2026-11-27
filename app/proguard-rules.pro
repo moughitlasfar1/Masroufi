@@ -60,6 +60,7 @@
 -keep class com.example.notifications.MasroufiNotificationWorker { *; }
 -keep class com.example.notifications.EveningReminderWorker { *; }
 -keep class com.example.notifications.BankListenerHealthWorker { *; }
+-keep class com.example.notifications.RecurringAutoPostWorker { *; }
 
 # Explicit defense-in-depth keep rules for manifest-registered components
 -keep class com.example.MasroufiApplication { *; }

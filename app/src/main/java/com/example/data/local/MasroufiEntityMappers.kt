@@ -12,6 +12,11 @@ import com.example.domain.LoanItem
 import com.example.domain.LoanRepaymentItem
 import com.example.domain.LoanStatus
 import com.example.domain.PayCycleEngine
+import com.example.domain.RecurrenceDirection
+import com.example.domain.RecurrenceFrequency
+import com.example.domain.RecurrencePostingMode
+import com.example.domain.RecurrenceScheduleEngine
+import com.example.domain.RecurringRuleItem
 import com.google.firebase.Timestamp
 import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
@@ -129,6 +134,7 @@ internal object MasroufiEntityMappers {
         val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
         val cleanTransferGroup = transferGroupId?.trim()?.takeIf { it.isNotBlank() }?.take(128)
         val cleanLoanId = loanId?.trim()?.takeIf { it.isNotBlank() }?.take(128)
+        val cleanOccurrenceKey = recurringOccurrenceKey?.trim()?.takeIf { it.isNotBlank() }?.take(160)
         return TransactionEntity(
             id = safeId,
             userId = uid,
@@ -144,7 +150,8 @@ internal object MasroufiEntityMappers {
             createdAtEpochMs = createdMs,
             updatedAtEpochMs = updatedMs,
             transferGroupId = cleanTransferGroup,
-            loanId = cleanLoanId
+            loanId = cleanLoanId,
+            recurringOccurrenceKey = cleanOccurrenceKey
         )
     }
 
@@ -167,6 +174,7 @@ internal object MasroufiEntityMappers {
             hourOfDay = hourOfDay,
             transferGroupId = transferGroupId,
             loanId = loanId,
+            recurringOccurrenceKey = recurringOccurrenceKey,
             createdAt = epochMsToTimestamp(createdAtEpochMs),
             updatedAt = epochMsToTimestamp(updatedAtEpochMs)
         )
@@ -230,7 +238,7 @@ internal object MasroufiEntityMappers {
             userId = uid,
             itemType = safeType,
             name = name.ifBlank { "Élément" }.take(120),
-            subtitle = subtitle.take(250),
+            subtitle = if (safeType == "custom_prefs") subtitle.take(500) else subtitle.take(250),
             amountCentimes = amount.coerceIn(Money.ZERO, Money.MAX_STORABLE).centimes,
             secondaryAmountCentimes = resolvedSecondaryCentimes,
             daretMembers = resolvedDaretMembers,
@@ -381,5 +389,73 @@ internal object MasroufiEntityMappers {
         linkedTransactionId = linkedTransactionId,
         note = note,
         createdAtEpochMs = createdAtEpochMs
+    )
+
+    fun RecurringRuleItem.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): RecurringRuleEntity {
+        val safeId = sanitizeId(id, "rec", nowMs)
+        val safeStart = if (PayCycleEngine.isValidIsoDate(startIsoDate)) startIsoDate.trim() else PayCycleEngine.todayIso()
+        val safeNext = if (PayCycleEngine.isValidIsoDate(nextDueIsoDate)) nextDueIsoDate.trim() else safeStart
+        val safeEnd = endIsoDate?.trim()?.takeIf { PayCycleEngine.isValidIsoDate(it) }
+        val resolvedAnchor = if (anchorDayOfMonth in 1..31) {
+            anchorDayOfMonth
+        } else {
+            RecurrenceScheduleEngine.parseIsoParts(safeStart)?.third ?: 1
+        }
+        val cleanSkipped = skippedOccurrenceKeys
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .takeLast(64)
+            .joinToString(",")
+        return RecurringRuleEntity(
+            id = safeId,
+            userId = uid,
+            title = title.trim().ifBlank { "Récurrence" }.take(120),
+            direction = direction.wire,
+            amountCentimes = amount.coerceIn(Money.ONE_CENTIME, Money.MAX_STORABLE).centimes,
+            frequency = frequency.wire,
+            anchorDayOfMonth = resolvedAnchor.coerceIn(1, 31),
+            startIsoDate = safeStart.take(20),
+            nextDueIsoDate = safeNext.take(20),
+            endIsoDate = safeEnd?.take(20),
+            postingMode = postingMode.wire,
+            accountId = accountId.trim().ifBlank { "acc_cash" }.take(80),
+            envelopeKey = envelopeKey.trim().ifBlank { "charges" }.take(60),
+            category = category.trim().ifBlank { "charges" }.take(120),
+            linkedLoanId = linkedLoanId?.trim()?.takeIf { it.isNotBlank() }?.take(128),
+            sourceFinancialItemId = sourceFinancialItemId?.trim()?.takeIf { it.isNotBlank() }?.take(128),
+            isPaused = isPaused,
+            lastPostedOccurrenceKey = lastPostedOccurrenceKey?.trim()?.takeIf { it.isNotBlank() }?.take(160),
+            skippedOccurrenceKeys = cleanSkipped.take(1500),
+            createdAtEpochMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs,
+            updatedAtEpochMs = updatedAtEpochMs.takeIf { it > 0L } ?: nowMs
+        )
+    }
+
+    fun RecurringRuleEntity.toDomain(): RecurringRuleItem = RecurringRuleItem(
+        id = id,
+        userId = userId,
+        title = title,
+        direction = RecurrenceDirection.fromWire(direction),
+        amount = Money.fromCentimes(amountCentimes.coerceAtLeast(0L)),
+        frequency = RecurrenceFrequency.fromWire(frequency),
+        anchorDayOfMonth = anchorDayOfMonth.coerceIn(1, 31),
+        startIsoDate = startIsoDate,
+        nextDueIsoDate = nextDueIsoDate,
+        endIsoDate = endIsoDate,
+        postingMode = RecurrencePostingMode.fromWire(postingMode),
+        accountId = accountId.ifBlank { "acc_cash" },
+        envelopeKey = envelopeKey.ifBlank { "charges" },
+        category = category.ifBlank { "charges" },
+        linkedLoanId = linkedLoanId,
+        sourceFinancialItemId = sourceFinancialItemId,
+        isPaused = isPaused,
+        lastPostedOccurrenceKey = lastPostedOccurrenceKey,
+        skippedOccurrenceKeys = skippedOccurrenceKeys.split(",")
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toSet(),
+        createdAtEpochMs = createdAtEpochMs,
+        updatedAtEpochMs = updatedAtEpochMs
     )
 }

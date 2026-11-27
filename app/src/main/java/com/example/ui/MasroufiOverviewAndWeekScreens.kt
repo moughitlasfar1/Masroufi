@@ -24,20 +24,29 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -64,10 +73,15 @@ import com.example.data.FinancialItem
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.DetectedSubscription
+import com.example.domain.ForecastHorizon
 import com.example.domain.PayCycleEngine
+import com.example.domain.RecurringOccurrence
+import com.example.domain.RecurringRuleItem
 import com.example.domain.SmartReminder
+import com.example.ui.dashboard.CashFlowForecastCard
 import com.example.ui.dashboard.DashboardHeroCard
 import com.example.ui.dashboard.DashboardRecentTransactions
+import com.example.ui.dashboard.UpcomingRecurringCard
 import com.example.ui.theme.CardTier
 import com.example.ui.theme.ExpressiveAccordionCard
 import com.example.ui.theme.ExpressiveAnimatedProgressBar
@@ -101,6 +115,18 @@ internal fun Float.safeFraction(minVal: Float = 0f, maxVal: Float = 1f): Float {
 }
 
 internal fun dashboardSectionLabel(sectionKey: String, lang: String): String = when (sectionKey) {
+    "forecast" -> when (lang) {
+        "ar" -> "توقعات التدفق النقدي"
+        "darija" -> "توقعات الفلوس"
+        "en" -> "Cash-Flow Forecast"
+        else -> "Prévision Trésorerie"
+    }
+    "upcoming_recurring" -> when (lang) {
+        "ar" -> "المواعيد المتكررة"
+        "darija" -> "الالتزامات المتكررة"
+        "en" -> "Upcoming Recurring"
+        else -> "Échéances Récurrentes"
+    }
     "accounts" -> when (lang) {
         "ar" -> "الحسابات"
         "darija" -> "الحسابات"
@@ -136,6 +162,12 @@ internal fun dashboardSectionLabel(sectionKey: String, lang: String): String = w
         "darija" -> "الشهر"
         "en" -> "Monthly Review"
         else -> "Bilan Mois"
+    }
+    "recent_transactions" -> when (lang) {
+        "ar" -> "أحدث العمليات"
+        "darija" -> "آخر العمليات"
+        "en" -> "Recent Transactions"
+        else -> "Opérations Récentes"
     }
     else -> sectionKey
 }
@@ -242,7 +274,12 @@ fun OverviewScreen(
     onEditTransaction: (TransactionItem) -> Unit = {},
     onSeeAllTransactions: () -> Unit = {},
     pendingBankDetectionsCount: Int = 0,
-    onOpenBankDetections: () -> Unit = {}
+    onOpenBankDetections: () -> Unit = {},
+    onOpenDashboardLayoutSheet: () -> Unit = onOpenCustomizationModal,
+    onSetForecastHorizon: (ForecastHorizon) -> Unit = {},
+    onOpenRecurringRuleEditor: (RecurringRuleItem?) -> Unit = {},
+    onPostRecurringOccurrence: (RecurringOccurrence) -> Unit = {},
+    onSkipRecurringOccurrence: (RecurringOccurrence) -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val lang = state.profile.language
@@ -481,121 +518,187 @@ fun OverviewScreen(
             }
         }
 
-        // 4. Mini Weekly Chart + Top 3 Categories (Tesler's Law single-open accordion, collapsed by default)
-        if (state.customPrefs.showWeekSummaryRow && (state.weekTotalSpend.isPositive || topThreeCategories.isNotEmpty())) {
-            item(key = "home_mini_weekly_and_top_categories") {
-                val topCatSubtitle = topThreeCategories.firstOrNull()?.let { top ->
-                    "${top.config.localizedName(lang)} · ${top.usagePercent}%"
-                } ?: state.weekRangeLabel
-                ExpressiveAccordionCard(
-                    title = strings.thisWeek,
-                    subtitle = topCatSubtitle,
-                    summaryBadge = "-${fmt(state.weekTotalSpend)} $cur",
-                    summaryBadgeColor = semanticExpenseColor(isDark),
-                    icon = Icons.Default.BarChart,
-                    accentColor = MaterialTheme.colorScheme.primary,
-                    isExpanded = expandedHomeSection == "week_preview",
-                    onToggle = {
-                        expandedHomeSection = if (expandedHomeSection == "week_preview") null else "week_preview"
-                    },
-                    headerTestTag = "accordion_home_week_preview",
-                    modifier = Modifier.testTag("home_mini_week_and_top_categories_card")
+        // 3b. Dashboard Customize quick action bar (48.dp touch target)
+        item(key = "home_customize_action_bar") {
+            val customizeLabel = when (lang) {
+                "ar" -> "تخصيص الرئيسية"
+                "darija" -> "تخصيص البطاقات"
+                "en" -> "Customize"
+                else -> "Personnaliser"
+            }
+            val addRecurringLabel = when (lang) {
+                "ar" -> "قاعدة متكررة"
+                "darija" -> "التزام متكرر"
+                "en" -> "Recurring"
+                else -> "Récurrence"
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = onOpenDashboardLayoutSheet,
+                    modifier = Modifier
+                        .weight(1f)
+                        .defaultMinSize(minHeight = 48.dp)
+                        .testTag("btn_dashboard_customize")
                 ) {
-                    val maxDay = (state.weekDaysSpend.maxOrNull() ?: Money.fromDh(1L)).coerceAtLeast(Money.fromDh(1L))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        state.weekDaysSpend.forEachIndexed { idx, dayVal ->
-                            val ratio = (dayVal.centimes.toDouble() / maxDay.centimes.toDouble()).toFloat().safeFraction(0.10f, 1f)
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxHeight(),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Bottom
+                    Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(customizeLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                FilledTonalButton(
+                    onClick = { onOpenRecurringRuleEditor(null) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .defaultMinSize(minHeight = 48.dp)
+                        .testTag("btn_dashboard_add_recurring")
+                ) {
+                    Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(addRecurringLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+            }
+        }
+
+        // 4. Dynamic Modular Dashboard Cards (respecting user-persisted order & visibility)
+        val orderedSections = state.customPrefs.resolvedDashboardOrder()
+        orderedSections.forEach { sectionKey ->
+            if (!state.customPrefs.isSectionVisible(sectionKey)) return@forEach
+            when (sectionKey) {
+                "forecast" -> item(key = "home_section_forecast") {
+                    CashFlowForecastCard(
+                        snapshot = state.cashFlowForecast,
+                        horizon = state.forecastHorizon,
+                        currency = cur,
+                        lang = lang,
+                        isDark = isDark,
+                        hideAmounts = hide,
+                        onSelectHorizon = onSetForecastHorizon
+                    )
+                }
+
+                "upcoming_recurring" -> item(key = "home_section_upcoming_recurring") {
+                    UpcomingRecurringCard(
+                        dueOccurrences = state.dueRecurringOccurrences,
+                        totalRulesCount = state.recurringRules.count { !it.isPaused },
+                        currency = cur,
+                        lang = lang,
+                        isDark = isDark,
+                        hideAmounts = hide,
+                        onPostOccurrence = onPostRecurringOccurrence,
+                        onSkipOccurrence = onSkipRecurringOccurrence,
+                        onAddOrEditRule = onOpenRecurringRuleEditor
+                    )
+                }
+
+                "accounts" -> if (state.accounts.isNotEmpty()) {
+                    item(key = "home_section_accounts") {
+                        ExpressiveGlassCard(
+                            cornerRadius = 26.dp,
+                            accentRimColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("dashboard_accounts_card")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.65f)
-                                        .fillMaxHeight(ratio * 0.68f)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            if (dayVal.isPositive) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.surfaceContainerHighest
-                                        )
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AccountBalanceWallet,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Text(
+                                        text = dashboardSectionLabel("accounts", lang),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
                                 Text(
-                                    text = strings.daysShort.getOrElse(idx) { "" },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
+                                    text = "${fmt(state.netWorthSnapshot.netWorth)} $cur",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (state.netWorthSnapshot.netWorth >= Money.ZERO) semanticIncomeColor(isDark) else semanticExpenseColor(isDark)
                                 )
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                state.accounts.forEach { accBal ->
+                                    Surface(
+                                        shape = RoundedCornerShape(14.dp),
+                                        color = MaterialTheme.colorScheme.surfaceContainer,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .defaultMinSize(minHeight = 48.dp)
+                                            .clip(RoundedCornerShape(14.dp))
+                                            .clickable { onOpenAccountModal(accBal.account) }
+                                    ) {
+                                        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                            Text(
+                                                text = accBal.account.name,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = "${fmt(accBal.currentBalance)} $cur",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
+                }
 
-                    // Top 3 categories with category icons & soft tints
-                    if (topThreeCategories.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(MasroufiTokens.Spacing.sm))
-                        Column(verticalArrangement = Arrangement.spacedBy(MasroufiTokens.Spacing.sm)) {
-                            topThreeCategories.forEach { envStatus ->
-                                val catName = envStatus.config.localizedName(lang)
-                                val visual = categoryVisualStyle("${envStatus.config.key} $catName", isDark)
-                                val progress = if (envStatus.totalAvailable.isPositive) {
-                                    (envStatus.spent.centimes.toDouble() / envStatus.totalAvailable.centimes.toDouble()).toFloat().safeFraction(0f, 1f)
-                                } else {
-                                    (envStatus.spent.centimes.toDouble() / state.cycleExpenses.coerceAtLeast(Money.fromDh(1L)).centimes.toDouble()).toFloat().safeFraction(0f, 1f)
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(32.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(visual.container),
-                                        contentAlignment = Alignment.Center
+                "presets" -> if (state.presets.isNotEmpty()) {
+                    item(key = "home_section_presets") {
+                        ExpressiveGlassCard(
+                            cornerRadius = 26.dp,
+                            accentRimColor = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("dashboard_presets_card")
+                        ) {
+                            Text(
+                                text = dashboardSectionLabel("presets", lang),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                state.presets.take(6).forEach { preset ->
+                                    FilledTonalButton(
+                                        onClick = { onQuickPresetTap(preset) },
+                                        modifier = Modifier.defaultMinSize(minHeight = 48.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = visual.icon,
-                                            contentDescription = null,
-                                            tint = visual.foreground,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = catName,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            Text(
-                                                text = "-${fmt(envStatus.spent)} $cur",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = semanticExpenseColor(isDark)
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        ExpressiveAnimatedProgressBar(
-                                            progress = progress,
-                                            color = visual.foreground,
-                                            height = 6.dp
+                                        Text(
+                                            text = "${preset.name} · ${fmt(preset.amount)} $cur",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1
                                         )
                                     }
                                 }
@@ -603,47 +706,319 @@ fun OverviewScreen(
                         }
                     }
                 }
+
+                "insights" -> if (state.smartInsights.isNotEmpty()) {
+                    item(key = "home_section_insights") {
+                        ExpressiveGlassCard(
+                            cornerRadius = 26.dp,
+                            accentRimColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("dashboard_insights_card")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lightbulb,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = dashboardSectionLabel("insights", lang),
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                state.smartInsights.forEach { insight ->
+                                    Text(
+                                        text = "${insight.title} — ${insight.body}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                "bills" -> {
+                    val coveredLegacyIds = state.recurringRules.mapNotNull { it.sourceFinancialItemId }.toSet()
+                    val unpaidLegacyBills = state.bills.filter {
+                        it.id !in coveredLegacyIds && !PayCycleEngine.isBillPaidInCycle(it, state.activeWindow.cycleKey)
+                    }
+                    if (unpaidLegacyBills.isNotEmpty()) {
+                        item(key = "home_section_bills") {
+                            ExpressiveGlassCard(
+                                cornerRadius = 26.dp,
+                                accentRimColor = semanticWarningColor(isDark),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("dashboard_bills_card")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ReceiptLong,
+                                        contentDescription = null,
+                                        tint = semanticWarningColor(isDark),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = dashboardSectionLabel("bills", lang),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    unpaidLegacyBills.take(3).forEach { bill ->
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "${bill.name} (J${bill.dayOrTurn})",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.weight(1f),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            FilledTonalButton(
+                                                onClick = { onPayBill(bill) },
+                                                modifier = Modifier.defaultMinSize(minHeight = 48.dp)
+                                            ) {
+                                                Text("${fmt(bill.amount)} $cur", fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                "week_summary" -> if (state.weekTotalSpend.isPositive || topThreeCategories.isNotEmpty()) {
+                    item(key = "home_mini_weekly_and_top_categories") {
+                        val topCatSubtitle = topThreeCategories.firstOrNull()?.let { top ->
+                            "${top.config.localizedName(lang)} · ${top.usagePercent}%"
+                        } ?: state.weekRangeLabel
+                        ExpressiveAccordionCard(
+                            title = strings.thisWeek,
+                            subtitle = topCatSubtitle,
+                            summaryBadge = "-${fmt(state.weekTotalSpend)} $cur",
+                            summaryBadgeColor = semanticExpenseColor(isDark),
+                            icon = Icons.Default.BarChart,
+                            accentColor = MaterialTheme.colorScheme.primary,
+                            isExpanded = expandedHomeSection == "week_preview",
+                            onToggle = {
+                                expandedHomeSection = if (expandedHomeSection == "week_preview") null else "week_preview"
+                            },
+                            headerTestTag = "accordion_home_week_preview",
+                            modifier = Modifier.testTag("home_mini_week_and_top_categories_card")
+                        ) {
+                            val maxDay = (state.weekDaysSpend.maxOrNull() ?: Money.fromDh(1L)).coerceAtLeast(Money.fromDh(1L))
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.Bottom
+                            ) {
+                                state.weekDaysSpend.forEachIndexed { idx, dayVal ->
+                                    val ratio = (dayVal.centimes.toDouble() / maxDay.centimes.toDouble()).toFloat().safeFraction(0.10f, 1f)
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Bottom
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(0.65f)
+                                                .fillMaxHeight(ratio * 0.68f)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(
+                                                    if (dayVal.isPositive) MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.surfaceContainerHighest
+                                                )
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = strings.daysShort.getOrElse(idx) { "" },
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (topThreeCategories.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(MasroufiTokens.Spacing.sm))
+                                Column(verticalArrangement = Arrangement.spacedBy(MasroufiTokens.Spacing.sm)) {
+                                    topThreeCategories.forEach { envStatus ->
+                                        val catName = envStatus.config.localizedName(lang)
+                                        val visual = categoryVisualStyle("${envStatus.config.key} $catName", isDark)
+                                        val progress = if (envStatus.totalAvailable.isPositive) {
+                                            (envStatus.spent.centimes.toDouble() / envStatus.totalAvailable.centimes.toDouble()).toFloat().safeFraction(0f, 1f)
+                                        } else {
+                                            (envStatus.spent.centimes.toDouble() / state.cycleExpenses.coerceAtLeast(Money.fromDh(1L)).centimes.toDouble()).toFloat().safeFraction(0f, 1f)
+                                        }
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .background(visual.container),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = visual.icon,
+                                                    contentDescription = null,
+                                                    tint = visual.foreground,
+                                                    modifier = Modifier.size(17.dp)
+                                                )
+                                            }
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = catName,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.onSurface,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = "-${fmt(envStatus.spent)} $cur",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = semanticExpenseColor(isDark)
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                ExpressiveAnimatedProgressBar(
+                                                    progress = progress,
+                                                    color = visual.foreground,
+                                                    height = 6.dp
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                "monthly_review" -> if (state.cycleTransactions.isNotEmpty()) {
+                    item(key = "home_section_monthly_review") {
+                        ExpressiveGlassCard(
+                            cornerRadius = 26.dp,
+                            accentRimColor = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("dashboard_monthly_review_card")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CalendarMonth,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = dashboardSectionLabel("monthly_review", lang),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                                Text(
+                                    text = "${fmt(state.cycleSavings)} $cur",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = semanticIncomeColor(isDark)
+                                )
+                            }
+                            if (state.monthEndForecastMessage.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = state.monthEndForecastMessage,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+
+                "recent_transactions" -> item(key = "home_recent_transactions") {
+                    val recentTitle = dashboardSectionLabel("recent_transactions", lang)
+                    val recentSubtitle = recentThree.firstOrNull()?.let { latest ->
+                        "${latest.desc.ifBlank { latest.category }} · ${fmt(latest.amount)} $cur"
+                    } ?: when (lang) {
+                        "en" -> "Tap to view or add an entry"
+                        "ar" -> "اضغط للعرض أو الإضافة"
+                        "darija" -> "برك باش تشوف ولا تزيد عملية"
+                        else -> "Appuyez pour consulter ou ajouter"
+                    }
+                    ExpressiveAccordionCard(
+                        title = recentTitle,
+                        subtitle = recentSubtitle,
+                        summaryBadge = "${recentThree.size} op.",
+                        summaryBadgeColor = MaterialTheme.colorScheme.primary,
+                        icon = Icons.Default.History,
+                        accentColor = MaterialTheme.colorScheme.primary,
+                        isExpanded = expandedHomeSection == "recent_txs",
+                        onToggle = {
+                            expandedHomeSection = if (expandedHomeSection == "recent_txs") null else "recent_txs"
+                        },
+                        headerTestTag = "accordion_home_recent_txs"
+                    ) {
+                        DashboardRecentTransactions(
+                            state = state,
+                            strings = strings,
+                            recentTransactions = recentThree,
+                            onEditTransaction = onEditTransaction,
+                            onSeeAllTransactions = onSeeAllTransactions,
+                            onAddFirstTransaction = { onOpenAddModal("expense") }
+                        )
+                    }
+                }
             }
         }
 
-        // 5. Recent Transactions (Tesler's Law single-open accordion, collapsed by default)
-        item(key = "home_recent_transactions") {
-            val recentTitle = when (lang) {
-                "en" -> "Recent transactions"
-                "ar" -> "أحدث العمليات"
-                "darija" -> "آخر العمليات"
-                else -> "Opérations récentes"
-            }
-            val recentSubtitle = recentThree.firstOrNull()?.let { latest ->
-                "${latest.desc.ifBlank { latest.category }} · ${fmt(latest.amount)} $cur"
-            } ?: when (lang) {
-                "en" -> "Tap to view or add an entry"
-                "ar" -> "اضغط للعرض أو الإضافة"
-                "darija" -> "برك باش تشوف ولا تزيد عملية"
-                else -> "Appuyez pour consulter ou ajouter"
-            }
-            ExpressiveAccordionCard(
-                title = recentTitle,
-                subtitle = recentSubtitle,
-                summaryBadge = "${recentThree.size} op.",
-                summaryBadgeColor = MaterialTheme.colorScheme.primary,
-                icon = Icons.Default.History,
-                accentColor = MaterialTheme.colorScheme.primary,
-                isExpanded = expandedHomeSection == "recent_txs",
-                onToggle = {
-                    expandedHomeSection = if (expandedHomeSection == "recent_txs") null else "recent_txs"
-                },
-                headerTestTag = "accordion_home_recent_txs"
-            ) {
-                DashboardRecentTransactions(
-                    state = state,
-                    strings = strings,
-                    recentTransactions = recentThree,
-                    onEditTransaction = onEditTransaction,
-                    onSeeAllTransactions = onSeeAllTransactions,
-                    onAddFirstTransaction = { onOpenAddModal("expense") }
-                )
-            }
+        item(key = "home_bottom_nav_spacer") {
             Spacer(modifier = Modifier.height(92.dp))
         }
     }

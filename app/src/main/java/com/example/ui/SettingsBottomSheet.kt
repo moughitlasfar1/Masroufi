@@ -1611,7 +1611,10 @@ fun SettingsBottomSheet(
 fun CustomizationStudioSheet(
     state: DashboardState,
     onDismiss: () -> Unit,
-    onSaveCustomPrefs: (CustomizationPrefs) -> Unit
+    onSaveCustomPrefs: (CustomizationPrefs) -> Unit,
+    onMoveDashboardSection: (String, Int) -> Unit = { _, _ -> },
+    onSetDashboardSectionVisibility: (String, Boolean) -> Unit = { _, _ -> },
+    onResetDashboardLayout: () -> Unit = {}
 ) {
     var selectedPalette by remember { mutableStateOf(state.customPrefs.accentPalette) }
     var currencySymbol by remember { mutableStateOf(state.customPrefs.currencySymbol.ifBlank { "DH" }) }
@@ -1779,6 +1782,15 @@ fun CustomizationStudioSheet(
                         .testTag("studio_usd_rate_input")
                 )
             }
+
+            // Phase 6: Dashboard Card Visibility, Ordering & Reset to Default inside Studio
+            com.example.ui.dashboard.DashboardCustomizeSection(
+                customPrefs = state.customPrefs,
+                lang = lang,
+                onMoveSection = onMoveDashboardSection,
+                onSetSectionVisibility = onSetDashboardSectionVisibility,
+                onResetToDefault = onResetDashboardLayout
+            )
 
             Button(
                 onClick = {

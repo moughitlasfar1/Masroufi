@@ -357,6 +357,54 @@ class LocalRoomMasroufiDataSource(
         return repo.promoteSavedCreditToLoan(savedCreditId, linkedAccountId, titleOverride, userId)
     }
 
+    // --- Phase 6: Recurrence Engine ---
+
+    override fun observeRecurringRules(userId: String): Flow<List<com.example.domain.RecurringRuleItem>> =
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeRecurringRules(userId) ?: flowOf(emptyList())
+        }
+
+    override suspend fun getRecurringRules(userId: String): List<com.example.domain.RecurringRuleItem> {
+        return requireOpenRepo()?.getRecurringRules(userId) ?: emptyList()
+    }
+
+    override suspend fun upsertRecurringRule(
+        rule: com.example.domain.RecurringRuleItem,
+        userId: String
+    ): String {
+        val repo = requireOpenRepo() ?: return rule.id
+        return repo.upsertRecurringRule(rule, userId)
+    }
+
+    override suspend fun deleteRecurringRule(ruleId: String, userId: String) {
+        requireOpenRepo()?.deleteRecurringRule(ruleId, userId)
+    }
+
+    override suspend fun postRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        amountOverride: com.masroufi.core.Money?,
+        userId: String
+    ): com.example.domain.RecurringPostResult {
+        val repo = requireOpenRepo() ?: return com.example.domain.RecurringPostResult.RuleNotFound(ruleId)
+        return repo.postRecurringOccurrence(ruleId, occurrenceIsoDate, amountOverride, userId)
+    }
+
+    override suspend fun skipRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        userId: String
+    ): Boolean {
+        return requireOpenRepo()?.skipRecurringOccurrence(ruleId, occurrenceIsoDate, userId) ?: false
+    }
+
+    override suspend fun processDueAutoPostRules(
+        todayIso: String,
+        userId: String
+    ): Int {
+        return requireOpenRepo()?.processDueAutoPostRules(todayIso, userId) ?: 0
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -375,7 +423,9 @@ class LocalRoomMasroufiDataSource(
         loans: List<com.example.domain.LoanItem>,
         loanRepayments: List<com.example.domain.LoanRepaymentItem>,
         staleLoanIdsToDelete: List<String>,
-        staleLoanRepaymentIdsToDelete: List<String>
+        staleLoanRepaymentIdsToDelete: List<String>,
+        recurringRules: List<com.example.domain.RecurringRuleItem>,
+        staleRecurringRuleIdsToDelete: List<String>
     ) {
         requireOpenRepo()?.restoreFullBackupAtomically(
             profile,
@@ -395,7 +445,9 @@ class LocalRoomMasroufiDataSource(
             loans,
             loanRepayments,
             staleLoanIdsToDelete,
-            staleLoanRepaymentIdsToDelete
+            staleLoanRepaymentIdsToDelete,
+            recurringRules,
+            staleRecurringRuleIdsToDelete
         )
     }
 

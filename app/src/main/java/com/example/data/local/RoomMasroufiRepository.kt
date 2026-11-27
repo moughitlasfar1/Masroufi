@@ -19,6 +19,10 @@ import com.example.domain.LoanRepaymentItem
 import com.example.domain.LoanRepaymentResult
 import com.example.domain.LoanStatus
 import com.example.domain.PayCycleEngine
+import com.example.domain.RecurrencePostingMode
+import com.example.domain.RecurrenceScheduleEngine
+import com.example.domain.RecurringPostResult
+import com.example.domain.RecurringRuleItem
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.masroufi.core.Money
@@ -610,6 +614,136 @@ class RoomMasroufiRepository(
         return Result.success(entity.toDomain())
     }
 
+    // --- Phase 6: Recurrence Engine ---
+
+    override fun observeRecurringRules(userId: String): Flow<List<RecurringRuleItem>> {
+        val uid = requireUserId(userId)
+        return dao.observeRecurringRules(uid).map { list -> list.map { it.toDomain() } }
+    }
+
+    override suspend fun getRecurringRules(userId: String): List<RecurringRuleItem> {
+        val uid = requireUserId(userId)
+        return dao.getRecurringRules(uid).map { it.toDomain() }
+    }
+
+    override suspend fun upsertRecurringRule(rule: RecurringRuleItem, userId: String): String {
+        val uid = requireUserId(userId)
+        val now = System.currentTimeMillis()
+        val existing = rule.id.takeIf { it.isNotBlank() }?.let { dao.getRecurringRuleById(uid, it) }
+        val entity = rule.toEntity(uid, now).copy(
+            createdAtEpochMs = existing?.createdAtEpochMs?.takeIf { it > 0L } ?: now,
+            updatedAtEpochMs = now
+        )
+        dao.upsertRecurringRule(entity)
+        return entity.id
+    }
+
+    override suspend fun deleteRecurringRule(ruleId: String, userId: String) {
+        if (ruleId.isBlank()) return
+        val uid = requireUserId(userId)
+        dao.deleteRecurringRule(uid, ruleId)
+    }
+
+    override suspend fun postRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        amountOverride: Money?,
+        userId: String
+    ): RecurringPostResult {
+        val cleanRuleId = ruleId.trim()
+        if (cleanRuleId.isBlank()) return RecurringPostResult.RuleNotFound(ruleId)
+        if (amountOverride != null && (!amountOverride.isPositive || amountOverride > Money.MAX_STORABLE)) {
+            return RecurringPostResult.InvalidRule
+        }
+        val uid = requireUserId(userId)
+        val validatedDate = try {
+            PayCycleEngine.requireOrNormalizeIsoDate(occurrenceIsoDate)
+        } catch (_: IllegalArgumentException) {
+            PayCycleEngine.todayIso()
+        }
+        val now = System.currentTimeMillis()
+        val token = UUID.randomUUID().toString().replace("-", "").take(10)
+        val txId = "tx_rec_${now}_$token"
+        val repaymentId = "repay_rec_${now}_$token"
+
+        val result = dao.postRecurringOccurrenceAtomically(
+            userId = uid,
+            ruleId = cleanRuleId,
+            occurrenceIsoDate = validatedDate,
+            txId = txId,
+            repaymentId = repaymentId,
+            nowMs = now,
+            amountOverrideCentimes = amountOverride?.centimes
+        )
+        if (result is RecurringPostResult.Success && result.postedTransaction != null) {
+            notifyRemoteMirror("postRecurringOccurrence") {
+                it.onTransactionUpserted(uid, result.postedTransaction)
+            }
+        }
+        return result
+    }
+
+    override suspend fun skipRecurringOccurrence(
+        ruleId: String,
+        occurrenceIsoDate: String,
+        userId: String
+    ): Boolean {
+        val cleanRuleId = ruleId.trim()
+        if (cleanRuleId.isBlank()) return false
+        val uid = requireUserId(userId)
+        val validatedDate = try {
+            PayCycleEngine.requireOrNormalizeIsoDate(occurrenceIsoDate)
+        } catch (_: IllegalArgumentException) {
+            PayCycleEngine.todayIso()
+        }
+        return dao.skipRecurringOccurrenceAtomically(
+            userId = uid,
+            ruleId = cleanRuleId,
+            occurrenceIsoDate = validatedDate,
+            nowMs = System.currentTimeMillis()
+        )
+    }
+
+    override suspend fun processDueAutoPostRules(
+        todayIso: String,
+        userId: String
+    ): Int {
+        val uid = requireUserId(userId)
+        val safeToday = try {
+            PayCycleEngine.requireOrNormalizeIsoDate(todayIso)
+        } catch (_: IllegalArgumentException) {
+            PayCycleEngine.todayIso()
+        }
+        val rules = dao.getRecurringRules(uid).map { it.toDomain() }
+        if (rules.isEmpty()) return 0
+        val loansById = dao.getLoans(uid).map { it.toDomain() }.associateBy { it.id }
+        val postedKeys = dao.getTransactions(uid)
+            .mapNotNull { it.recurringOccurrenceKey?.takeIf(String::isNotBlank) }
+            .toSet()
+
+        val dueOccurrences = RecurrenceScheduleEngine.findDueOccurrences(
+            rules = rules,
+            upToIso = safeToday,
+            todayIso = safeToday,
+            postedOccurrenceKeys = postedKeys,
+            loansById = loansById,
+            postingModeFilter = RecurrencePostingMode.AUTO_POST
+        )
+        var postedCount = 0
+        for (occ in dueOccurrences) {
+            val res = postRecurringOccurrence(
+                ruleId = occ.rule.id,
+                occurrenceIsoDate = occ.occurrenceIsoDate,
+                amountOverride = null,
+                userId = uid
+            )
+            if (res is RecurringPostResult.Success) {
+                postedCount++
+            }
+        }
+        return postedCount
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
@@ -628,7 +762,9 @@ class RoomMasroufiRepository(
         loans: List<LoanItem>,
         loanRepayments: List<LoanRepaymentItem>,
         staleLoanIdsToDelete: List<String>,
-        staleLoanRepaymentIdsToDelete: List<String>
+        staleLoanRepaymentIdsToDelete: List<String>,
+        recurringRules: List<RecurringRuleItem>,
+        staleRecurringRuleIdsToDelete: List<String>
     ) {
         val uid = requireUserId(userId)
         val now = System.currentTimeMillis()
@@ -680,6 +816,12 @@ class RoomMasroufiRepository(
         }
         val restoredRepaymentIds = repaymentEntities.map { it.id }.toSet()
 
+        val recurringEntities = recurringRules.mapIndexed { idx, rule ->
+            val cleanId = rule.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "rec_restored_$idx" }
+            rule.copy(id = cleanId).toEntity(uid, now)
+        }
+        val restoredRecurringIds = recurringEntities.map { it.id }.toSet()
+
         val safeStaleTxs = staleTxIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
             .filter { it.isNotBlank() && it !in restoredTxIds }
         val safeStaleItems = staleItemIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
@@ -698,6 +840,8 @@ class RoomMasroufiRepository(
             .filter { it.isNotBlank() && it !in restoredLoanIds }
         val safeStaleRepayments = staleLoanRepaymentIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
             .filter { it.isNotBlank() && it !in restoredRepaymentIds }
+        val safeStaleRecurring = staleRecurringRuleIdsToDelete.map { it.replace(Regex("[^a-zA-Z0-9_\\-]"), "_") }
+            .filter { it.isNotBlank() && it !in restoredRecurringIds }
 
         dao.restoreBackupSnapshotAtomically(
             userId = uid,
@@ -716,7 +860,9 @@ class RoomMasroufiRepository(
             loans = loanEntities,
             loanRepayments = repaymentEntities,
             staleLoanIdsToDelete = safeStaleLoans,
-            staleLoanRepaymentIdsToDelete = safeStaleRepayments
+            staleLoanRepaymentIdsToDelete = safeStaleRepayments,
+            recurringRules = recurringEntities,
+            staleRecurringRuleIdsToDelete = safeStaleRecurring
         )
         onChunkProgress(1, 1)
 
