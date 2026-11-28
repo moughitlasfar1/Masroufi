@@ -88,26 +88,34 @@ jobs:
               echo "NOTICE: GOOGLE_SERVICES_JSON secret did not match package com.masroufi.app; keeping repository app/google-services.json."
             fi
           fi
-          gradle :app:bundleRelease :app:assembleRelease --stacktrace --no-daemon \
+          gradle :app:bundlePlayRelease :app:assemblePlayRelease :app:assembleFossRelease --stacktrace --no-daemon \
             -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
 
-      - name: Upload Signed Production AAB (Private Artifact Only — Google Play)
+      - name: Upload Signed Production Play AAB (Private Artifact Only — Google Play)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: masroufi-release-aab
-          path: app/build/outputs/bundle/release/*.aab
+          name: masroufi-play-release-aab
+          path: app/build/outputs/bundle/playRelease/*.aab
           retention-days: 30
           if-no-files-found: error
 
-      - name: Upload Signed Production APK (Private Artifact)
+      - name: Upload Signed Production Play APK (Private Artifact)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: masroufi-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: masroufi-play-release-apk
+          path: app/build/outputs/apk/play/release/*.apk
           retention-days: 30
           if-no-files-found: error
 
-      - name: Publish Signed Production Release (APK & AAB)
+      - name: Upload Signed Production FOSS APK (Private Artifact — F-Droid / Direct)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: masroufi-foss-release-apk
+          path: app/build/outputs/apk/foss/release/*.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish Signed Production Release (Play APK/AAB & FOSS APK)
         if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -123,16 +131,18 @@ jobs:
             exit 1
           fi
           if gh release view "$TAG_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release ${TAG_NAME} already exists — updating signed APK & AAB assets (--clobber)."
+            echo "Release ${TAG_NAME} already exists — updating signed Play & FOSS assets (--clobber)."
             gh release upload "$TAG_NAME" \
-              app/build/outputs/apk/release/*.apk \
-              app/build/outputs/bundle/release/*.aab \
+              app/build/outputs/apk/play/release/*.apk \
+              app/build/outputs/apk/foss/release/*.apk \
+              app/build/outputs/bundle/playRelease/*.aab \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
             gh release create "$TAG_NAME" \
-              app/build/outputs/apk/release/*.apk \
-              app/build/outputs/bundle/release/*.aab \
+              app/build/outputs/apk/play/release/*.apk \
+              app/build/outputs/apk/foss/release/*.apk \
+              app/build/outputs/bundle/playRelease/*.aab \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Masroufi ${TAG_NAME}" \

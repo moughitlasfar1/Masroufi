@@ -29,15 +29,15 @@ import androidx.work.WorkerParameters
 import com.example.MainActivity
 import com.example.R
 import com.example.data.DefaultCategoryResolver
-import com.example.data.MasroufiRepository
+import com.example.data.LOCAL_DEVICE_USER_ID
 import com.example.data.TransactionItem
 import com.example.domain.PayCycleEngine
 import com.example.domain.Translations
 import com.example.domain.VoiceParsedTransaction
+import com.example.platform.PlatformCloudBridge
+import com.example.platform.PlatformIntegrityBridge
 import com.example.security.AppSecurityManager
 import com.example.ui.DashboardState
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -83,15 +83,14 @@ object MasroufiWidgetStore {
 
     fun resolveActiveUserId(context: Context): String {
         val appCtx = context.applicationContext
-        runCatching { com.example.ensureFirebaseInitialized(appCtx) }
-        val firebaseUid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
-            ?.takeIf { it.isNotBlank() }
-        if (firebaseUid != null) return firebaseUid
+        runCatching { PlatformIntegrityBridge.initializeFirebaseOnly(appCtx) }
+        val cloudUid = PlatformCloudBridge.currentAuthenticatedUidOrNull()
+        if (cloudUid != null) return cloudUid
         val storedUid = runCatching {
             appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getString(KEY_ACTIVE_USER_ID, null)
         }.getOrNull()?.takeIf { it.isNotBlank() }
-        return storedUid ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+        return storedUid ?: LOCAL_DEVICE_USER_ID
     }
 
     private fun readSafeLegacyFloatMoney(

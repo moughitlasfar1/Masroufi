@@ -2,18 +2,16 @@ package com.masroufi.credit.data
 
 import android.content.Context
 import android.util.Log
-import com.example.data.MasroufiRepository
+import com.example.data.LOCAL_DEVICE_USER_ID
 import com.example.data.local.MasroufiDao
 import com.example.data.local.MasroufiDatabaseProvider
 import com.example.data.local.MasroufiEntityMappers.toDomain
 import com.example.data.local.MasroufiEntityMappers.toLocalEntity
 import com.example.data.local.NoOpRemoteMirror
 import com.example.data.local.RemoteMirror
-import com.google.firebase.Timestamp
 import com.masroufi.core.Money
 import com.masroufi.credit.domain.CreditInput
 import com.masroufi.credit.domain.CreditResult
-import java.util.Date
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +39,7 @@ class RoomCreditRepository private constructor(
 
     constructor(
         dao: MasroufiDao,
-        userIdProvider: () -> String = { MasroufiRepository.LOCAL_DEVICE_USER_ID },
+        userIdProvider: () -> String = { LOCAL_DEVICE_USER_ID },
         remoteMirror: RemoteMirror = NoOpRemoteMirror
     ) : this(
         directDao = dao,
@@ -62,7 +60,7 @@ class RoomCreditRepository private constructor(
     )
 
     override fun currentUid(): String =
-        userIdProvider().takeIf { it.isNotBlank() } ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+        userIdProvider().takeIf { it.isNotBlank() } ?: LOCAL_DEVICE_USER_ID
 
     private fun openDaoOrNull(): MasroufiDao? {
         return directDao ?: MasroufiDatabaseProvider.getOpenInstanceOrNull()?.masroufiDao()
@@ -128,7 +126,7 @@ class RoomCreditRepository private constructor(
             debtToIncomeRatio = result.debtToIncomeRatio.coerceIn(0.0, 10_000.0),
             maxAllowedDti = result.maxAllowedDti,
             linkToMonthlyExpenses = linkToMonthlyExpenses,
-            createdAt = Timestamp(Date(now))
+            createdAtEpochMs = now
         )
 
         return try {

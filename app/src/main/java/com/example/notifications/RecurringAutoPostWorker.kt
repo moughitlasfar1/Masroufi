@@ -8,12 +8,11 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.BuildConfig
-import com.example.data.MasroufiRepository
+import com.example.data.LOCAL_DEVICE_USER_ID
 import com.example.data.local.MasroufiDatabaseProvider
 import com.example.data.local.RoomMasroufiRepository
 import com.example.domain.PayCycleEngine
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
+import com.example.platform.PlatformCloudBridge
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -35,10 +34,8 @@ class RecurringAutoPostWorker(
         try {
             val db = MasroufiDatabaseProvider.getOrOpen(applicationContext)
                 ?: return@withContext Result.retry()
-            val uid = runCatching { Firebase.auth.currentUser?.uid }
-                .getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+            val uid = PlatformCloudBridge.currentAuthenticatedUidOrNull()
+                ?: LOCAL_DEVICE_USER_ID
             val repo = RoomMasroufiRepository(
                 dao = db.masroufiDao(),
                 userIdProvider = { uid }

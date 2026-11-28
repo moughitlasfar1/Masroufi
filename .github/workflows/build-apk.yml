@@ -108,38 +108,68 @@ jobs:
             rm -f app/google-services.json
           fi
 
-      - name: Build Debug APK
+      - name: Verify FOSS Runtime Classpath Has Zero Proprietary SDKs
         run: |
-          gradle :app:assembleDebug --stacktrace --no-daemon \
+          DEPS_OUT=$(gradle :app:dependencies --configuration fossDebugRuntimeClasspath --no-daemon \
+            -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8")
+          if printf '%s\n' "$DEPS_OUT" | grep -E "com\.google\.(firebase|android\.gms|mlkit|android\.libraries\.identity)|androidx\.credentials"; then
+            echo "ERROR: Proprietary Google/Firebase/ML Kit dependency leaked into fossDebugRuntimeClasspath!"
+            exit 1
+          fi
+          echo "Verified fossDebugRuntimeClasspath contains ZERO Firebase, GMS, Credential Manager, or ML Kit artifacts."
+
+      - name: Build Debug APKs (Play & FOSS)
+        run: |
+          gradle :app:assemblePlayDebug :app:assembleFossDebug --stacktrace --no-daemon \
             -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
 
-      - name: Run Unit and Security Tests
+      - name: Run Unit and Security Tests (Play & FOSS)
         run: |
-          gradle :app:testDebugUnitTest --stacktrace --no-daemon \
+          gradle :app:testPlayDebugUnitTest :app:testFossDebugUnitTest --stacktrace --no-daemon \
             -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8"
 
-      - name: Upload Unit Test Report on Failure
+      - name: Upload Play Unit Test Report on Failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: unit-test-report
-          path: app/build/reports/tests/testDebugUnitTest/
+          name: unit-test-report-play
+          path: app/build/reports/tests/testPlayDebugUnitTest/
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Verify debug APK
-        run: |
-          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$APK_PATH" ] || [ ! -s "$APK_PATH" ]; then
-            echo "ERROR: Expected non-empty APK not found at $APK_PATH"
-            exit 1
-          fi
-          echo "Verified valid non-empty Debug APK at $APK_PATH"
-
-      - name: Upload Debug APK to private GitHub Actions Artifacts
+      - name: Upload FOSS Unit Test Report on Failure
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: unit-test-report-foss
+          path: app/build/reports/tests/testFossDebugUnitTest/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Verify debug APKs (Play & FOSS)
+        run: |
+          for APK_PATH in \
+            "app/build/outputs/apk/play/debug/app-play-debug.apk" \
+            "app/build/outputs/apk/foss/debug/app-foss-debug.apk"; do
+            if [ ! -f "$APK_PATH" ] || [ ! -s "$APK_PATH" ]; then
+              echo "ERROR: Expected non-empty APK not found at $APK_PATH"
+              exit 1
+            fi
+            echo "Verified valid non-empty Debug APK at $APK_PATH"
+          done
+
+      - name: Upload Play Debug APK to private GitHub Actions Artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-play-debug-apk
+          path: app/build/outputs/apk/play/debug/app-play-debug.apk
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload FOSS Debug APK to private GitHub Actions Artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: app-foss-debug-apk
+          path: app/build/outputs/apk/foss/debug/app-foss-debug.apk
           retention-days: 7
           if-no-files-found: error

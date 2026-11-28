@@ -26,7 +26,6 @@ import com.example.ui.BackupRestoreResult
 import com.example.ui.BackupSerializer
 import com.example.ui.DashboardState
 import com.example.ui.MasroufiViewModel
-import com.google.firebase.Timestamp
 import com.masroufi.core.Money
 import com.masroufi.credit.data.RoomCreditRepository
 import com.masroufi.credit.data.SavedCreditEntity
@@ -39,7 +38,6 @@ import com.masroufi.fiscal.domain.AnnualBillPreset
 import com.masroufi.fiscal.domain.FiscalRates
 import com.masroufi.fiscal.domain.NisabStandard
 import com.masroufi.fiscal.domain.ZakatConfig
-import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -385,7 +383,7 @@ class Phase3PortableBackupV3Test {
                 debtToIncomeRatio = 28.4,
                 maxAllowedDti = 45.0,
                 linkToMonthlyExpenses = true,
-                createdAt = Timestamp(Date(1732650000000L))
+                createdAtEpochMs = 1732650000000L
             )
             val sourceFiscal = BackupFiscalSnapshot(
                 annualBills = listOf(

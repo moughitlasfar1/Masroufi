@@ -19,17 +19,6 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.tasks.await
 
-interface CreditDataSource {
-    fun currentUid(): String?
-    suspend fun saveCredit(
-        input: CreditInput,
-        result: CreditResult,
-        linkToMonthlyExpenses: Boolean
-    ): Result<String>
-    fun observeSavedCredits(): Flow<List<SavedCreditEntity>>
-    suspend fun deleteCredit(creditId: String): Result<Unit>
-}
-
 /**
  * Isolated Firestore repository for `users/{uid}/credits/{creditId}`.
  * Always expects a named [FirebaseFirestore] instance obtained via `R.string.firestore_database_id`.

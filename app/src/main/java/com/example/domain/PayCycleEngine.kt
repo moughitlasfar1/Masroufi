@@ -1048,7 +1048,7 @@ object PayCycleEngine {
 
     fun buildLearnedCategoriesFinancialItem(
         userId: String,
-        existingCreatedAt: com.google.firebase.Timestamp? = null
+        existingCreatedAtEpochMs: Long = 0L
     ): FinancialItem {
         val (part1, part2) = exportLearnedCategoriesEncoded()
         return FinancialItem(
@@ -1062,7 +1062,7 @@ object PayCycleEngine {
             dayOrTurn = 0,
             extraInt = 0,
             dateOrCycle = part2,
-            createdAt = existingCreatedAt
+            createdAtEpochMs = existingCreatedAtEpochMs
         )
     }
 
@@ -1208,7 +1208,7 @@ object PayCycleEngine {
             val sameAmount = tx.amount == amount
             val sameCategory = (tx.envelopeKey.isNotBlank() && tx.envelopeKey == envelopeKey) ||
                 tx.category.equals(category, ignoreCase = true)
-            val createdMs = tx.createdAt?.toDate()?.time ?: 0L
+            val createdMs = tx.createdAtEpochMs
             val isWithinMinutes = if (createdMs > 0L) {
                 abs(nowEpochMs - createdMs) <= 15 * 60 * 1000L
             } else {

@@ -17,10 +17,8 @@ import com.example.domain.RecurrenceFrequency
 import com.example.domain.RecurrencePostingMode
 import com.example.domain.RecurrenceScheduleEngine
 import com.example.domain.RecurringRuleItem
-import com.google.firebase.Timestamp
 import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
-import java.util.Date
 
 internal object MasroufiEntityMappers {
 
@@ -31,17 +29,9 @@ internal object MasroufiEntityMappers {
         return if (cleaned.isNotBlank()) cleaned else "${fallbackPrefix}_$nowMs"
     }
 
-    private fun timestampToEpochMs(ts: Timestamp?): Long {
-        return ts?.toDate()?.time ?: 0L
-    }
-
-    private fun epochMsToTimestamp(epochMs: Long): Timestamp? {
-        return if (epochMs > 0L) Timestamp(Date(epochMs)) else null
-    }
-
     fun UserProfile.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): UserProfileEntity {
-        val createdMs = timestampToEpochMs(createdAt).takeIf { it > 0L } ?: nowMs
-        val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
+        val createdMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs
+        val updatedMs = updatedAtEpochMs.takeIf { it > 0L } ?: nowMs
         return UserProfileEntity(
             userId = uid,
             baseBudgetCentimes = baseBudget.coerceIn(Money.ZERO, Money.MAX_STORABLE).centimes,
@@ -64,8 +54,8 @@ internal object MasroufiEntityMappers {
         language = language,
         isDarkTheme = isDarkTheme,
         seeded = seeded,
-        createdAt = epochMsToTimestamp(createdAtEpochMs),
-        updatedAt = epochMsToTimestamp(updatedAtEpochMs)
+        createdAtEpochMs = createdAtEpochMs,
+        updatedAtEpochMs = updatedAtEpochMs
     )
 
     fun AccountItem.toEntity(
@@ -75,8 +65,8 @@ internal object MasroufiEntityMappers {
     ): AccountEntity {
         val safeId = sanitizeId(id, "acc", nowMs)
         val safeKind = if (kind in listOf("cash", "bank", "wallet")) kind else "cash"
-        val createdMs = timestampToEpochMs(createdAt).takeIf { it > 0L } ?: nowMs
-        val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
+        val createdMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs
+        val updatedMs = updatedAtEpochMs.takeIf { it > 0L } ?: nowMs
         return AccountEntity(
             id = safeId,
             userId = uid,
@@ -99,8 +89,8 @@ internal object MasroufiEntityMappers {
         kind = kind,
         initialBalance = Money.fromCentimes(initialBalanceCentimes),
         colorHex = colorHex,
-        createdAt = epochMsToTimestamp(createdAtEpochMs),
-        updatedAt = epochMsToTimestamp(updatedAtEpochMs)
+        createdAtEpochMs = createdAtEpochMs,
+        updatedAtEpochMs = updatedAtEpochMs
     )
 
     fun TransactionItem.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): TransactionEntity {
@@ -130,8 +120,8 @@ internal object MasroufiEntityMappers {
                 ?: DefaultCategoryResolver.canonicalDefaultId(category)
                 ?: envelopeKey.ifBlank { "autre" }
             ).take(60)
-        val createdMs = timestampToEpochMs(createdAt).takeIf { it > 0L } ?: nowMs
-        val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
+        val createdMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs
+        val updatedMs = updatedAtEpochMs.takeIf { it > 0L } ?: nowMs
         val cleanTransferGroup = transferGroupId?.trim()?.takeIf { it.isNotBlank() }?.take(128)
         val cleanLoanId = loanId?.trim()?.takeIf { it.isNotBlank() }?.take(128)
         val cleanOccurrenceKey = recurringOccurrenceKey?.trim()?.takeIf { it.isNotBlank() }?.take(160)
@@ -175,8 +165,8 @@ internal object MasroufiEntityMappers {
             transferGroupId = transferGroupId,
             loanId = loanId,
             recurringOccurrenceKey = recurringOccurrenceKey,
-            createdAt = epochMsToTimestamp(createdAtEpochMs),
-            updatedAt = epochMsToTimestamp(updatedAtEpochMs)
+            createdAtEpochMs = createdAtEpochMs,
+            updatedAtEpochMs = updatedAtEpochMs
         )
     }
 
@@ -184,8 +174,8 @@ internal object MasroufiEntityMappers {
         val migrated = migratedStorageCopy()
         val safeId = sanitizeId(migrated.id, "env", nowMs)
         val safeName = migrated.nameFr.ifBlank { migrated.key.ifBlank { "custom" } }.take(100)
-        val createdMs = timestampToEpochMs(migrated.createdAt).takeIf { it > 0L } ?: nowMs
-        val updatedMs = timestampToEpochMs(migrated.updatedAt).takeIf { it > 0L } ?: nowMs
+        val createdMs = migrated.createdAtEpochMs.takeIf { it > 0L } ?: nowMs
+        val updatedMs = migrated.updatedAtEpochMs.takeIf { it > 0L } ?: nowMs
         return EnvelopeEntity(
             id = safeId,
             userId = uid,
@@ -213,16 +203,16 @@ internal object MasroufiEntityMappers {
         percentage = percentage,
         hasCap = hasCap,
         colorHex = colorHex,
-        createdAt = epochMsToTimestamp(createdAtEpochMs),
-        updatedAt = epochMsToTimestamp(updatedAtEpochMs)
+        createdAtEpochMs = createdAtEpochMs,
+        updatedAtEpochMs = updatedAtEpochMs
     ).migratedStorageCopy()
 
     fun FinancialItem.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): FinancialItemEntity {
         val allowedTypes = listOf("goal", "bill", "debt", "daret", "seasonal", "preset", "custom_prefs")
         val safeType = if (itemType in allowedTypes) itemType else "goal"
         val safeId = sanitizeId(id, "item", nowMs)
-        val createdMs = timestampToEpochMs(createdAt).takeIf { it > 0L } ?: nowMs
-        val updatedMs = timestampToEpochMs(updatedAt).takeIf { it > 0L } ?: nowMs
+        val createdMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs
+        val updatedMs = updatedAtEpochMs.takeIf { it > 0L } ?: nowMs
         val resolvedSecondaryCentimes = if (safeType == "daret") {
             0L
         } else {
@@ -262,13 +252,13 @@ internal object MasroufiEntityMappers {
         dayOrTurn = dayOrTurn,
         extraInt = extraInt,
         dateOrCycle = dateOrCycle,
-        createdAt = epochMsToTimestamp(createdAtEpochMs),
-        updatedAt = epochMsToTimestamp(updatedAtEpochMs)
+        createdAtEpochMs = createdAtEpochMs,
+        updatedAtEpochMs = updatedAtEpochMs
     )
 
     fun SavedCreditEntity.toLocalEntity(uid: String, nowMs: Long = System.currentTimeMillis()): SavedCreditLocalEntity {
         val safeId = sanitizeId(id, "credit", nowMs)
-        val createdMs = timestampToEpochMs(createdAt).takeIf { it > 0L } ?: nowMs
+        val createdMs = createdAtEpochMs.takeIf { it > 0L } ?: nowMs
         return SavedCreditLocalEntity(
             id = safeId,
             userId = uid,
@@ -307,7 +297,7 @@ internal object MasroufiEntityMappers {
         debtToIncomeRatio = debtToIncomeRatio,
         maxAllowedDti = maxAllowedDti,
         linkToMonthlyExpenses = linkToMonthlyExpenses,
-        createdAt = epochMsToTimestamp(createdAtEpochMs)
+        createdAtEpochMs = createdAtEpochMs
     )
 
     fun LoanItem.toEntity(uid: String, nowMs: Long = System.currentTimeMillis()): LoanEntity {

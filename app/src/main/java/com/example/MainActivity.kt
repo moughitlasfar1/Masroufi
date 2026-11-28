@@ -116,7 +116,6 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.data.AccountItem
 import com.example.data.FinancialItem
-import com.example.data.MasroufiRepository
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.Translations
@@ -134,8 +133,9 @@ import com.example.ui.voice.MoonshineWalkieTalkieFab
 import com.example.ui.voice.MoonshineWalkieTalkieHud
 import com.example.voice.MoonshineVoiceController
 import kotlinx.coroutines.delay
+import com.example.platform.PlatformCloudBridge
+import com.example.platform.PlatformIntegrityBridge
 import com.example.ui.AddFinancialItemSheet
-import com.example.ui.AuthScreen
 import com.example.ui.BudgetAndDaretScreen
 import com.example.ui.CustomizationStudioSheet
 import com.example.ui.CustomizeEnvelopesSheet
@@ -154,7 +154,6 @@ import com.example.ui.isLocalModeEnabled
 import com.example.ui.isMoreFeaturesEnabled
 import com.example.ui.setLocalModeEnabled
 import com.example.ui.setMoreFeaturesEnabled
-import com.example.ui.signOutUser
 import androidx.compose.foundation.BorderStroke
 import com.example.ui.dashboard.DashboardHeader
 import com.example.ui.theme.AccentAmber
@@ -171,20 +170,7 @@ import com.example.ui.theme.glass3d
 import com.example.ui.theme.paletteForKey
 import com.example.widget.MasroufiAppWidget
 import com.example.widget.MasroufiWidgetStore
-import com.google.firebase.Firebase
-import com.google.firebase.FirebaseApp
-import com.google.firebase.FirebaseOptions
-import com.google.firebase.appcheck.AppCheckProviderFactory
-import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FirebaseUser
-import com.google.firebase.auth.auth
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.example.data.DataSourceConfigStore
@@ -247,90 +233,10 @@ internal fun resolveSavedTabMigration(rawSavedTab: String): Pair<String, String>
     }
 }
 
-/**
- * Ensures the default FirebaseApp is initialized even when AI Studio excludes google-services.json
- * during GitHub export, without embedding contiguous API key literals that trigger secret scanners.
- */
-fun ensureFirebaseInitialized(context: Context) {
-    runCatching {
-        val appContext = context.applicationContext ?: context
-        if (FirebaseApp.getApps(appContext).isNotEmpty()) return
-        val initialized = FirebaseApp.initializeApp(appContext)
-        if (initialized != null) return
-
-        fun readResString(key: String): String? {
-            val packages = listOf(appContext.packageName, "com.example").distinct()
-            for (pkg in packages) {
-                val id = appContext.resources.getIdentifier(key, "string", pkg)
-                if (id != 0) {
-                    val value = runCatching { appContext.getString(id).trim() }.getOrNull()
-                    if (!value.isNullOrEmpty()) return value
-                }
-            }
-            return null
-        }
-
-        val defaultProject = listOf("gen-lang-client", "-0849522300").joinToString("")
-        val defaultSender = "1046667497606"
-        val defaultAppId = listOf("1:", defaultSender, ":android:", "08ac099a9ee6c94eac0107").joinToString("")
-        val defaultClientKey = listOf("AI", "zaSyCUG_L9k", "FeXgtdFGN01", "gh8rILaLWMN", "YNHM").joinToString("")
-
-        val appId = readResString("google_app_id") ?: defaultAppId
-        val apiKey = readResString("google_api_key") ?: defaultClientKey
-        val projectId = readResString("project_id") ?: defaultProject
-        val storageBucket = readResString("google_storage_bucket") ?: "$defaultProject.firebasestorage.app"
-        val senderId = readResString("gcm_defaultSenderId") ?: defaultSender
-
-        val options = FirebaseOptions.Builder()
-            .setApplicationId(appId)
-            .setApiKey(apiKey)
-            .setProjectId(projectId)
-            .setStorageBucket(storageBucket)
-            .setGcmSenderId(senderId)
-            .build()
-
-        FirebaseApp.initializeApp(appContext, options)
-    }
-}
-
-/**
- * SEC-04 & S5: Installs PlayIntegrityAppCheckProviderFactory in release builds (where firebase-appcheck-debug
- * is excluded via debugImplementation) and DebugAppCheckProviderFactory in debug builds
- * without reading debug tokens from untrusted launch intents.
- */
-fun configureAppCheck(context: Context, intent: Intent? = null) {
-    runCatching {
-        ensureFirebaseInitialized(context)
-        val appCheck = FirebaseAppCheck.getInstance()
-        if (BuildConfig.DEBUG) {
-            val debugFactory = runCatching {
-                val clazz = Class.forName("com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory")
-                clazz.getMethod("getInstance").invoke(null) as AppCheckProviderFactory
-            }.getOrElse {
-                PlayIntegrityAppCheckProviderFactory.getInstance()
-            }
-            appCheck.installAppCheckProviderFactory(debugFactory)
-        } else {
-            appCheck.installAppCheckProviderFactory(
-                PlayIntegrityAppCheckProviderFactory.getInstance()
-            )
-        }
-    }
-}
-
-internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
-    val listener = FirebaseAuth.AuthStateListener { auth ->
-        trySend(auth.currentUser)
-    }
-    addAuthStateListener(listener)
-    awaitClose { removeAuthStateListener(listener) }
-}
-
 class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        ensureFirebaseInitialized(this)
-        configureAppCheck(this, intent)
+        PlatformIntegrityBridge.initialize(this, intent)
         runCatching { enableEdgeToEdge() }
         runCatching {
             AppSecurityManager.applyWindowFlagSecure(this, AppSecurityManager.isFlagSecureEnabled(this))
@@ -353,25 +259,34 @@ class MainActivity : FragmentActivity() {
 
 @Composable
 fun AppNavigation(
-    auth: FirebaseAuth? = null,
     openQuickAddOnLaunch: Boolean = false,
     openQuickVoiceOnLaunch: Boolean = false,
     initialTargetTab: String = ""
 ) {
     val context = LocalContext.current
-    val resolvedAuth = remember(auth, context) {
-        ensureFirebaseInitialized(context)
-        auth ?: Firebase.auth
+    if (!PlatformCloudBridge.isCloudSupported) {
+        MainFeatureScreen(
+            currentUserId = LOCAL_DEVICE_USER_ID,
+            isLocalMode = true,
+            onExitLocalModeToGoogleSignIn = {},
+            openQuickAddOnLaunch = openQuickAddOnLaunch,
+            openQuickVoiceOnLaunch = openQuickVoiceOnLaunch,
+            initialTargetTab = initialTargetTab
+        )
+        return
     }
-    val currentUser by resolvedAuth.authStateFlow().collectAsStateWithLifecycle(initialValue = resolvedAuth.currentUser)
+    val authFlow = remember(context) { PlatformCloudBridge.observeAuthUserId(context) }
+    val currentUserId by authFlow.collectAsStateWithLifecycle(
+        initialValue = PlatformCloudBridge.currentAuthenticatedUidOrNull()
+    )
     var localModeEnabled by remember { mutableStateOf(isLocalModeEnabled(context)) }
-    val user = currentUser
-    if (user == null && !localModeEnabled) {
+    val uid = currentUserId
+    if (uid == null && !localModeEnabled) {
         MasroufiTheme(
             darkTheme = androidx.compose.foundation.isSystemInDarkTheme(),
             accentPalette = "majorelle"
         ) {
-            AuthScreen(
+            PlatformCloudBridge.CloudAuthGateScreen(
                 onAuthSuccess = {
                     setLocalModeEnabled(context, false)
                     localModeEnabled = false
@@ -384,8 +299,8 @@ fun AppNavigation(
         }
     } else {
         MainFeatureScreen(
-            currentUserId = user?.uid ?: LOCAL_DEVICE_USER_ID,
-            isLocalMode = user == null,
+            currentUserId = uid ?: LOCAL_DEVICE_USER_ID,
+            isLocalMode = uid == null,
             onExitLocalModeToGoogleSignIn = {
                 setLocalModeEnabled(context, false)
                 localModeEnabled = false
@@ -1004,7 +919,7 @@ fun MainFeatureScreen(
                         appLockEnabled = false
                         isSessionUnlocked = false
                         setLocalModeEnabled(context, false)
-                        signOutUser(
+                        PlatformCloudBridge.signOut(
                             context = context,
                             onSignOutComplete = { onExitLocalModeToGoogleSignIn() },
                             scope = scope,
@@ -1901,7 +1816,7 @@ fun MainFeatureScreen(
                     },
                     onSignOut = {
                         setLocalModeEnabled(context, false)
-                        signOutUser(
+                        PlatformCloudBridge.signOut(
                             context = context,
                             onSignOutComplete = { onExitLocalModeToGoogleSignIn() },
                             scope = scope

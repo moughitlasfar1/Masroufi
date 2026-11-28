@@ -712,8 +712,8 @@ object BankMessageParser {
             tx.type == direction &&
                 tx.amount == amount &&
                 (
-                    (tx.createdAt != null && abs(nowMs - tx.createdAt.toDate().time) <= tenMinutesMs) ||
-                        (tx.createdAt == null && tx.isoDate == isoDate)
+                    (tx.createdAtEpochMs > 0L && abs(nowMs - tx.createdAtEpochMs) <= tenMinutesMs) ||
+                        (tx.createdAtEpochMs <= 0L && tx.isoDate == isoDate)
                     )
         }
     }

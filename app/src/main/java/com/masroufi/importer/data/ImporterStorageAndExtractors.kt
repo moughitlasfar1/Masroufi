@@ -9,12 +9,8 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
+import com.example.platform.PlatformReceiptOcrBridge
 import com.example.security.SecureStore
-import com.google.android.gms.tasks.Task
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.masroufi.importer.domain.AmountColumnMode
 import com.masroufi.importer.domain.BankProfile
 import com.masroufi.importer.domain.CsvColumnMapping
@@ -22,7 +18,6 @@ import com.masroufi.importer.domain.ImporterConstants
 import com.masroufi.importer.domain.ParsedReceipt
 import com.masroufi.importer.domain.PdfParseResult
 import com.masroufi.importer.domain.PdfStatementParser
-import com.masroufi.importer.domain.ReceiptParser
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
@@ -33,11 +28,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 class StatementFileTooLargeException(val maxBytes: Int) :
     IllegalArgumentException("Statement file exceeds $maxBytes bytes limit")
@@ -246,49 +238,26 @@ object StatementFileReader {
 }
 
 /**
- * On-device ML Kit Latin OCR engine for receipts and scanned PDF pages.
- * Always deletes any temporary image file immediately in `finally`.
+ * Flavor-aware receipt and bitmap OCR facade delegating to [PlatformReceiptOcrBridge]
+ * (bundled ML Kit in Play flavor; graceful no-op in FOSS flavor).
  */
 object ReceiptOcrEngine {
 
-    private suspend fun Task<Text>.awaitResult(): Text = suspendCancellableCoroutine { cont ->
-        addOnSuccessListener { text ->
-            if (cont.isActive) cont.resume(text)
-        }
-        addOnFailureListener { ex ->
-            if (cont.isActive) cont.resumeWithException(ex)
-        }
-        addOnCanceledListener {
-            cont.cancel()
-        }
-    }
+    val isSupported: Boolean
+        get() = PlatformReceiptOcrBridge.isReceiptOcrSupported
 
     suspend fun scanReceiptFromUri(
         context: Context,
         uri: Uri,
         tempFileToDelete: File? = null
-    ): ParsedReceipt = withContext(Dispatchers.IO) {
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        try {
-            val image = InputImage.fromFilePath(context.applicationContext, uri)
-            val result = recognizer.process(image).awaitResult()
-            ReceiptParser.parse(result.text)
-        } finally {
-            runCatching { recognizer.close() }
-            ReceiptFileHelper.deleteQuietly(tempFileToDelete)
-        }
-    }
+    ): ParsedReceipt = PlatformReceiptOcrBridge.scanReceiptFromUri(
+        context = context,
+        uri = uri,
+        tempFileToDelete = tempFileToDelete
+    )
 
-    suspend fun recognizeTextFromBitmap(bitmap: Bitmap): String = withContext(Dispatchers.IO) {
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        try {
-            val image = InputImage.fromBitmap(bitmap, 0)
-            val result = recognizer.process(image).awaitResult()
-            result.text
-        } finally {
-            runCatching { recognizer.close() }
-        }
-    }
+    suspend fun recognizeTextFromBitmap(bitmap: Bitmap): String =
+        PlatformReceiptOcrBridge.recognizeTextFromBitmap(bitmap)
 }
 
 sealed interface PdfExtractionOutcome {
@@ -346,7 +315,12 @@ object PdfStatementExtractor {
                 return@withContext PdfExtractionOutcome.Success(parsed)
             }
 
-            // Text layer empty or minimal -> scanned PDF fallback using PdfRenderer + ML Kit OCR
+            // Text layer empty or minimal -> scanned PDF fallback (Play OCR only; FOSS fails gracefully)
+            if (!PlatformReceiptOcrBridge.isReceiptOcrSupported) {
+                return@withContext PdfExtractionOutcome.Error(
+                    "Scanned image-only PDFs require OCR (unavailable in FOSS build). Please import a digital PDF or CSV statement."
+                )
+            }
             withContext(Dispatchers.Main) { onOcrFallbackStarted() }
 
             tempPdfForRenderer = ReceiptFileHelper.createConfinedTempFile(

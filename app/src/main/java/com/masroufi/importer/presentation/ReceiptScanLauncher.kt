@@ -62,6 +62,7 @@ fun ScanReceiptActionChip(
     onScanError: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    if (!com.example.platform.PlatformReceiptOcrBridge.isReceiptOcrSupported) return
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val uiStrings = remember(lang) { ImporterStrings.forLang(lang) }

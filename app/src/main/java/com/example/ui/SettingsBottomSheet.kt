@@ -231,7 +231,7 @@ fun SettingsBottomSheet(
                 color = MaterialTheme.colorScheme.onSurface
             )
 
-            if (isLocalMode) {
+            if (isLocalMode && com.example.platform.PlatformCloudBridge.isCloudSupported) {
                 ExpressiveGlassSurface(
                     shape = RoundedCornerShape(20.dp),
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -1600,22 +1600,28 @@ fun SettingsBottomSheet(
                     }
             }
 
-            FilledTonalButton(
-                onClick = {
-                    onDismiss()
-                    onSignOut()
-                },
-                colors = ButtonDefaults.filledTonalButtonColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(strings.signOutLabel, fontWeight = FontWeight.Bold)
+            if (com.example.platform.PlatformCloudBridge.isCloudSupported) {
+                FilledTonalButton(
+                    onClick = {
+                        onDismiss()
+                        onSignOut()
+                    },
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(strings.signOutLabel, fontWeight = FontWeight.Bold)
+                }
             }
 
             Text(
-                text = "Masroufi v${BuildConfig.VERSION_NAME}",
+                text = if (BuildConfig.IS_FOSS) {
+                    "Masroufi v${BuildConfig.VERSION_NAME} (FOSS)"
+                } else {
+                    "Masroufi v${BuildConfig.VERSION_NAME}"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,

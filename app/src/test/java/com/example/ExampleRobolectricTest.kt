@@ -581,7 +581,7 @@ class ExampleRobolectricTest {
                 accountId = "acc_cash",
                 desc = "Café Paul",
                 isoDate = "2026-05-01",
-                createdAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 60_000L))
+                createdAtEpochMs = nowMs - 60_000L
             ),
             TransactionItem(
                 id = "tx_2",
@@ -592,7 +592,7 @@ class ExampleRobolectricTest {
                 accountId = "acc_bank",
                 desc = "Marjane",
                 isoDate = "2026-05-03",
-                createdAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 120_000L))
+                createdAtEpochMs = nowMs - 120_000L
             ),
             TransactionItem(
                 id = "tx_sub_0",
@@ -893,16 +893,29 @@ class ExampleRobolectricTest {
     @Test
     fun `MainActivity launches without crashing`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        com.google.firebase.FirebaseApp.clearInstancesForTest()
-        assertTrue(com.google.firebase.FirebaseApp.getApps(context).isEmpty())
+        if (com.example.platform.PlatformCloudBridge.isCloudSupported) {
+            val firebaseAppClass = Class.forName("com.google.firebase.FirebaseApp")
+            firebaseAppClass.getMethod("clearInstancesForTest").invoke(null)
+            val appsBefore = firebaseAppClass.getMethod("getApps", Context::class.java).invoke(null, context) as List<*>
+            assertTrue(appsBefore.isEmpty())
+        }
         org.robolectric.Robolectric.buildActivity(MainActivity::class.java).use { controller ->
             controller.setup()
             val activity = controller.get()
             assertNotNull(activity)
-            assertFalse(com.google.firebase.FirebaseApp.getApps(context).isEmpty())
-            assertEquals("gen-lang-client-0849522300", com.google.firebase.FirebaseApp.getInstance().options.projectId)
-            val webClientId = com.example.ui.resolveDefaultWebClientId(activity)
-            assertTrue(webClientId.endsWith("googleusercontent.com"))
+            if (com.example.platform.PlatformCloudBridge.isCloudSupported) {
+                val firebaseAppClass = Class.forName("com.google.firebase.FirebaseApp")
+                val appsAfter = firebaseAppClass.getMethod("getApps", Context::class.java).invoke(null, context) as List<*>
+                assertFalse(appsAfter.isEmpty())
+                val appInstance = firebaseAppClass.getMethod("getInstance").invoke(null)
+                val options = appInstance.javaClass.getMethod("getOptions").invoke(appInstance)
+                val projectId = options.javaClass.getMethod("getProjectId").invoke(options) as? String
+                assertEquals("gen-lang-client-0849522300", projectId)
+                val webClientId = com.example.platform.PlatformCloudBridge.resolveWebClientId(activity)
+                assertTrue(webClientId.endsWith("googleusercontent.com"))
+            } else {
+                assertEquals("", com.example.platform.PlatformCloudBridge.resolveWebClientId(activity))
+            }
             activity.setContent {
                 MainFeatureScreen(currentUserId = "u_test_123")
             }
@@ -919,7 +932,11 @@ class ExampleRobolectricTest {
         assertFalse(com.example.ui.isLocalModeEnabled(context))
         com.example.ui.setLocalModeEnabled(context, true)
         assertTrue(com.example.ui.isLocalModeEnabled(context))
-        assertTrue(com.example.ui.resolveDefaultWebClientId(context).isNotBlank())
+        if (com.example.platform.PlatformCloudBridge.isCloudSupported) {
+            assertTrue(com.example.platform.PlatformCloudBridge.resolveWebClientId(context).isNotBlank())
+        } else {
+            assertEquals("", com.example.platform.PlatformCloudBridge.resolveWebClientId(context))
+        }
 
         // Phase 4: 4 tabs (Home, Insights, Plan, Activity) and saved tab migration ("mois" -> Insights/Month)
         assertEquals(listOf("vue", "semaine", "categories", "historique"), MAIN_TAB_KEYS)
@@ -1371,7 +1388,7 @@ class ExampleRobolectricTest {
                 envelopeKey = "marche",
                 desc = "Carrefour",
                 isoDate = "2026-05-11",
-                createdAt = com.google.firebase.Timestamp(java.util.Date(nowMs - 3 * 60_000L))
+                createdAtEpochMs = nowMs - 3 * 60_000L
             )
         )
         val matchedManual = com.example.domain.BankMessageParser.findRecentManualMatch(

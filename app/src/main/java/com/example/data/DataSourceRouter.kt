@@ -7,8 +7,7 @@ import com.example.data.local.MasroufiDatabaseProvider
 import com.example.data.local.NoOpRemoteMirror
 import com.example.data.local.RemoteMirror
 import com.example.data.local.RoomMasroufiRepository
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
+import com.example.platform.PlatformCloudBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -124,9 +123,7 @@ class LocalRoomMasroufiDataSource(
     context: Context,
     private val remoteMirror: RemoteMirror = NoOpRemoteMirror,
     private val userIdProvider: () -> String = {
-        runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+        PlatformCloudBridge.currentAuthenticatedUidOrNull() ?: LOCAL_DEVICE_USER_ID
     }
 ) : MasroufiDataSource {
 

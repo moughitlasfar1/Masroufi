@@ -1,12 +1,9 @@
 package com.example.data
 
-import com.google.firebase.Timestamp
-import com.google.firebase.firestore.DocumentId
-import com.google.firebase.firestore.IgnoreExtraProperties
-import com.google.firebase.firestore.PropertyName
-import com.google.firebase.firestore.ServerTimestamp
 import com.masroufi.core.Money
 import java.util.Locale
+
+const val LOCAL_DEVICE_USER_ID = "local_device_user"
 
 object DefaultCategoryResolver {
     private val NUMERIC_PREFIX_REGEX = Regex("^\\d+\\.\\s*")
@@ -250,24 +247,21 @@ object DefaultCategoryResolver {
     }
 }
 
-@IgnoreExtraProperties
 data class UserProfile(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val userId: String = "",
     val baseBudget: Money = Money(640_000L),
     val payCycleDay: Int = 1,
     val rolloverEnabled: Boolean = true,
     val language: String = "fr",
-    @get:PropertyName("isDarkTheme")
     val isDarkTheme: Boolean = false,
     val seeded: Boolean = true,
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L
 )
 
-@IgnoreExtraProperties
 data class TransactionItem(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val userId: String = "",
     val type: String = "expense", // "expense", "income", "transfer", "transfer_out", "transfer_in"
     val amount: Money = Money.ZERO,
@@ -281,8 +275,8 @@ data class TransactionItem(
     val transferGroupId: String? = null,
     val loanId: String? = null,
     val recurringOccurrenceKey: String? = null,
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L
 ) {
     fun isTransferType(): Boolean =
         type == "transfer" || type == "transfer_out" || type == "transfer_in"
@@ -298,27 +292,25 @@ data class TransactionItem(
 
     fun resolvedHourOfDay(): Int {
         if (hourOfDay in 0..23) return hourOfDay
-        val date = createdAt?.toDate() ?: return -1
-        val cal = java.util.Calendar.getInstance().apply { time = date }
+        if (createdAtEpochMs <= 0L) return -1
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = createdAtEpochMs }
         return cal.get(java.util.Calendar.HOUR_OF_DAY)
     }
 }
 
-@IgnoreExtraProperties
 data class AccountItem(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val userId: String = "",
     val name: String = "",
     val kind: String = "cash", // "cash", "bank", "wallet"
     val initialBalance: Money = Money.ZERO,
     val colorHex: String = "#10B981",
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L
 )
 
-@IgnoreExtraProperties
 data class EnvelopeConfig(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val userId: String = "",
     val key: String = "",
     val nameFr: String = "",
@@ -326,11 +318,10 @@ data class EnvelopeConfig(
     val nameDarija: String = "",
     val nameEn: String = "",
     val percentage: Double = 0.0,
-    @get:PropertyName("hasCap")
     val hasCap: Boolean = true,
     val colorHex: String = "#2563EB",
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L
 ) {
     fun isDefaultUnrenamed(): Boolean {
         val keyCanonical = DefaultCategoryResolver.canonicalDefaultId(key.ifBlank { id })
@@ -380,9 +371,8 @@ data class EnvelopeConfig(
     }
 }
 
-@IgnoreExtraProperties
 data class FinancialItem(
-    @DocumentId val id: String = "",
+    val id: String = "",
     val userId: String = "",
     val itemType: String = "goal", // "goal", "bill", "debt", "daret", "seasonal", "preset", "custom_prefs"
     val name: String = "",
@@ -393,8 +383,8 @@ data class FinancialItem(
     val dayOrTurn: Int = 1, // dueDay (1..31) / myTurnNumber / bitmask for visible cards
     val extraInt: Int = 0, // paidMonthsCount for Daret
     val dateOrCycle: String = "", // deadlineIso / payoutDateIso / comma-separated paidCycles / "lent"|"borrowed" / customSubtitle
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val createdAtEpochMs: Long = 0L,
+    val updatedAtEpochMs: Long = 0L
 ) {
     fun resolvedDaretMembers(): Int = (daretMembers ?: 1).coerceAtLeast(1)
 }

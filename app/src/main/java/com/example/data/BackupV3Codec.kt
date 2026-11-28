@@ -13,7 +13,6 @@ import com.example.domain.RecurrencePostingMode
 import com.example.domain.RecurringRuleItem
 import com.example.ui.DashboardState
 import com.example.ui.ParsedBackupPayload
-import com.google.firebase.Timestamp
 import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
 import com.masroufi.fiscal.domain.AnnualBillItem
@@ -251,7 +250,7 @@ object BackupV3Codec {
                         put("debtToIncomeRatio", c.debtToIncomeRatio)
                         put("maxAllowedDti", c.maxAllowedDti)
                         put("linkToMonthlyExpenses", c.linkToMonthlyExpenses)
-                        put("createdAtEpochMs", c.createdAt?.toDate()?.time ?: 0L)
+                        put("createdAtEpochMs", c.createdAtEpochMs)
                     }
                 )
             }
@@ -734,7 +733,7 @@ object BackupV3Codec {
                     debtToIncomeRatio = dti,
                     maxAllowedDti = maxDti,
                     linkToMonthlyExpenses = c.optBoolean("linkToMonthlyExpenses", false),
-                    createdAt = if (createdMs > 0L) Timestamp(Date(createdMs)) else null
+                    createdAtEpochMs = createdMs
                 )
             )
         }

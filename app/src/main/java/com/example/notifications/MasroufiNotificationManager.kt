@@ -22,14 +22,13 @@ import androidx.work.WorkerParameters
 import com.example.MainActivity
 import com.example.R
 import com.example.data.FinancialItem
-import com.example.data.MasroufiRepository
+import com.example.data.LOCAL_DEVICE_USER_ID
 import com.example.data.TransactionItem
 import com.example.domain.PayCycleEngine
 import com.example.domain.Translations
+import com.example.platform.PlatformCloudBridge
 import com.example.ui.DashboardState
 import com.example.widget.MasroufiAppWidget
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
 import com.masroufi.core.Money
 import java.math.BigDecimal
 import java.util.Calendar
@@ -1386,7 +1385,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     NotificationManagerCompat.from(appCtx).cancel(notifId)
                 }
 
-                val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull().orEmpty().ifBlank { MasroufiRepository.LOCAL_DEVICE_USER_ID }
+                val uid = PlatformCloudBridge.currentAuthenticatedUidOrNull() ?: LOCAL_DEVICE_USER_ID
                 val todayIso = PayCycleEngine.todayIso()
                 val (updatedItem, tx) = if (isBill) {
                     val cycleKey = intent.getStringExtra(EXTRA_CYCLE_KEY).orEmpty().ifBlank {

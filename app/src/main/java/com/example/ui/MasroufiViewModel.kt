@@ -923,7 +923,7 @@ class MasroufiViewModel(
     private val _lastDeletedItem = MutableStateFlow<FinancialItem?>(null)
     val lastDeletedItem: StateFlow<FinancialItem?> = _lastDeletedItem.asStateFlow()
     private val _pendingWritesCount = MutableStateFlow(0)
-    private val _learnedCategoriesCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
+    private val _learnedCategoriesCreatedAt = MutableStateFlow(0L)
     private var lastSyncedLearnedSignature: String = ""
 
     fun setVerifiedActiveDates(dates: Set<String>?) {
@@ -946,7 +946,7 @@ class MasroufiViewModel(
     private val _localEnvelopes = MutableStateFlow<List<EnvelopeConfig>?>(null)
     private val _localItems = MutableStateFlow<List<FinancialItem>?>(null)
     private val _errorMessage = MutableStateFlow<String?>(null)
-    private val _customPrefsItemCreatedAt = MutableStateFlow<com.google.firebase.Timestamp?>(null)
+    private val _customPrefsItemCreatedAt = MutableStateFlow(0L)
 
     private fun safeLaunch(tag: String, block: suspend () -> Unit) {
         viewModelScope.launch {
@@ -1213,13 +1213,13 @@ class MasroufiViewModel(
             it.id == "custom_prefs" ||
                 (it.itemType == "custom_prefs" && it.id != "learned_categories" && it.name != "learned_categories")
         }
-        if (storedPrefsItem?.createdAt != null) {
-            _customPrefsItemCreatedAt.value = storedPrefsItem.createdAt
+        if ((storedPrefsItem?.createdAtEpochMs ?: 0L) > 0L) {
+            _customPrefsItemCreatedAt.value = storedPrefsItem!!.createdAtEpochMs
         }
         val learnedCategoriesItem = finItems.find { it.id == "learned_categories" }
         if (learnedCategoriesItem != null) {
-            if (learnedCategoriesItem.createdAt != null) {
-                _learnedCategoriesCreatedAt.value = learnedCategoriesItem.createdAt
+            if (learnedCategoriesItem.createdAtEpochMs > 0L) {
+                _learnedCategoriesCreatedAt.value = learnedCategoriesItem.createdAtEpochMs
             }
             val sig = "${learnedCategoriesItem.subtitle}|${learnedCategoriesItem.dateOrCycle}"
             if (sig != lastSyncedLearnedSignature && sig != "|") {
@@ -1552,7 +1552,7 @@ class MasroufiViewModel(
         onLearnedCategoriesUpdated(json)
         val item = PayCycleEngine.buildLearnedCategoriesFinancialItem(
             userId = currentUserId,
-            existingCreatedAt = _learnedCategoriesCreatedAt.value
+            existingCreatedAtEpochMs = _learnedCategoriesCreatedAt.value
         )
         lastSyncedLearnedSignature = "${item.subtitle}|${item.dateOrCycle}"
         safeLaunch("persistLearnedCategories") {
@@ -1762,7 +1762,7 @@ class MasroufiViewModel(
 
     private fun buildCustomPrefsFinancialItem(
         prefs: CustomizationPrefs,
-        existingCreatedAt: com.google.firebase.Timestamp? = null
+        existingCreatedAtEpochMs: Long = 0L
     ): FinancialItem {
         val encodedSub = prefs.encodeSubtitlePipe().take(500)
         return FinancialItem(
@@ -1776,7 +1776,7 @@ class MasroufiViewModel(
             dayOrTurn = prefs.toVisibilityMask(),
             extraInt = 0,
             dateOrCycle = prefs.customSubtitle.take(200),
-            createdAt = existingCreatedAt
+            createdAtEpochMs = existingCreatedAtEpochMs
         )
     }
 
@@ -1859,7 +1859,7 @@ class MasroufiViewModel(
             desc = desc.ifBlank { category.ifBlank { "Opération" } },
             isoDate = validatedDate,
             hourOfDay = resolvedHour,
-            createdAt = existing?.createdAt
+            createdAtEpochMs = existing?.createdAtEpochMs ?: 0L
         )
         if (_verifiedActiveDates.value != null) {
             recordActiveOrConfirmedDate(validatedDate)
@@ -1999,8 +1999,8 @@ class MasroufiViewModel(
             id = dupId,
             isoDate = PayCycleEngine.todayIso(),
             hourOfDay = nowHour,
-            createdAt = null,
-            updatedAt = null
+            createdAtEpochMs = 0L,
+            updatedAtEpochMs = 0L
         )
         onDuplicated(duplicated)
         safeLaunch("duplicateTransaction") {
@@ -2040,7 +2040,7 @@ class MasroufiViewModel(
                 percentage = pct.coerceIn(1.0, 100.0),
                 hasCap = true,
                 colorHex = existing?.colorHex?.ifBlank { null } ?: paletteHexes.getOrElse(idx) { "#10B981" },
-                createdAt = existing?.createdAt
+                createdAtEpochMs = existing?.createdAtEpochMs ?: 0L
             )
         }
 
@@ -2069,7 +2069,7 @@ class MasroufiViewModel(
         val tx = _lastDeletedTx.value ?: return
         _lastDeletedTx.value = null
         safeLaunch("undoDeleteTransaction") {
-            repository.upsertTransaction(tx.copy(createdAt = null, updatedAt = null))
+            repository.upsertTransaction(tx.copy(createdAtEpochMs = 0L, updatedAtEpochMs = 0L))
         }
     }
 
@@ -2207,7 +2207,7 @@ class MasroufiViewModel(
                     kind = if (kind in listOf("cash", "bank", "wallet")) kind else "cash",
                     initialBalance = initialBalance,
                     colorHex = colorHex.ifBlank { "#10B981" },
-                    createdAt = existing?.createdAt
+                    createdAtEpochMs = existing?.createdAtEpochMs ?: 0L
                 )
             )
         }
@@ -2226,7 +2226,7 @@ class MasroufiViewModel(
             repository.upsertEnvelope(
                 config.copy(
                     userId = currentUserId,
-                    createdAt = config.createdAt ?: existing?.createdAt
+                    createdAtEpochMs = config.createdAtEpochMs.takeIf { it > 0L } ?: existing?.createdAtEpochMs ?: 0L
                 )
             )
         }
@@ -2272,12 +2272,12 @@ class MasroufiViewModel(
                 userId = currentUserId,
                 secondaryAmount = Money.ZERO,
                 daretMembers = item.resolvedDaretMembers(),
-                createdAt = item.createdAt ?: existing?.createdAt
+                createdAtEpochMs = item.createdAtEpochMs.takeIf { it > 0L } ?: existing?.createdAtEpochMs ?: 0L
             )
         } else {
             item.copy(
                 userId = currentUserId,
-                createdAt = item.createdAt ?: existing?.createdAt
+                createdAtEpochMs = item.createdAtEpochMs.takeIf { it > 0L } ?: existing?.createdAtEpochMs ?: 0L
             )
         }
         safeLaunch("saveFinancialItem") {
@@ -2301,7 +2301,7 @@ class MasroufiViewModel(
         val item = _lastDeletedItem.value ?: return
         _lastDeletedItem.value = null
         safeLaunch("undoDeleteFinancialItem") {
-            repository.upsertFinancialItem(item.copy(createdAt = null, updatedAt = null))
+            repository.upsertFinancialItem(item.copy(createdAtEpochMs = 0L, updatedAtEpochMs = 0L))
         }
     }
 
@@ -2402,7 +2402,7 @@ class MasroufiViewModel(
             accountId = "acc_bank",
             desc = bill.name,
             isoDate = PayCycleEngine.todayIso(),
-            createdAt = existingTx?.createdAt
+            createdAtEpochMs = existingTx?.createdAtEpochMs ?: 0L
         )
         safeLaunch("payRecurringBill") {
             repository.upsertItemAndTransactionAtomically(updatedBill, tx)
@@ -2452,7 +2452,7 @@ class MasroufiViewModel(
             accountId = "acc_bank",
             desc = "Cotisation ${daret.name} ($nextPaid/$totalMembers)",
             isoDate = PayCycleEngine.todayIso(),
-            createdAt = existingTx?.createdAt
+            createdAtEpochMs = existingTx?.createdAtEpochMs ?: 0L
         )
         safeLaunch("payDaretRound") {
             repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
@@ -2484,7 +2484,7 @@ class MasroufiViewModel(
             toAccountId = "",
             desc = "Pot Daret ${daret.name} (Tour ${daret.dayOrTurn}/$totalMembers)".take(250),
             isoDate = PayCycleEngine.todayIso(),
-            createdAt = existingTx?.createdAt
+            createdAtEpochMs = existingTx?.createdAtEpochMs ?: 0L
         )
         safeLaunch("collectDaretPot") {
             repository.upsertItemAndTransactionAtomically(updatedDaret, tx)
@@ -2812,14 +2812,14 @@ class MasroufiViewModel(
             )
         } else null
 
-        val existingAccMap = currentState.accounts.associate { it.account.id to it.account.createdAt }
-        val existingEnvMap = currentState.envelopes.associate { it.config.id to it.config.createdAt }
+        val existingAccMap = currentState.accounts.associate { it.account.id to it.account.createdAtEpochMs }
+        val existingEnvMap = currentState.envelopes.associate { it.config.id to it.config.createdAtEpochMs }
         val allExistingItems = currentState.presets + currentState.goals + currentState.bills +
             currentState.debts + currentState.darets + currentState.seasonals
-        val existingItemMap = allExistingItems.associate { it.id to it.createdAt }
-        val existingTxMap = currentState.allTransactions.associate { it.id to it.createdAt }
+        val existingItemMap = allExistingItems.associate { it.id to it.createdAtEpochMs }
+        val existingTxMap = currentState.allTransactions.associate { it.id to it.createdAtEpochMs }
 
-        val profileWithCreatedAt = parsed.profile?.copy(createdAt = currentState.profile.createdAt)
+        val profileWithCreatedAt = parsed.profile?.copy(createdAtEpochMs = currentState.profile.createdAtEpochMs)
         val customPrefsItem = parsed.customPrefs?.let {
             buildCustomPrefsFinancialItem(it, _customPrefsItemCreatedAt.value)
         }
@@ -2844,22 +2844,22 @@ class MasroufiViewModel(
                     dayOrTurn = 1,
                     extraInt = 0,
                     dateOrCycle = mergedJson.take(250),
-                    createdAt = _learnedCategoriesCreatedAt.value
+                    createdAtEpochMs = _learnedCategoriesCreatedAt.value
                 )
             )
         } else emptyList()
 
         val accountsWithCreatedAt = parsed.accounts.map { acc ->
-            acc.copy(createdAt = existingAccMap[acc.id])
+            acc.copy(createdAtEpochMs = existingAccMap[acc.id] ?: 0L)
         }
         val envelopesWithCreatedAt = parsed.envelopes.map { env ->
-            env.copy(createdAt = existingEnvMap[env.id])
+            env.copy(createdAtEpochMs = existingEnvMap[env.id] ?: 0L)
         }
         val itemsWithCreatedAt = parsed.financialItems
             .filterNot { it.id == "learned_categories" }
-            .map { item -> item.copy(createdAt = existingItemMap[item.id]) } + learnedRestoreItems
+            .map { item -> item.copy(createdAtEpochMs = existingItemMap[item.id] ?: 0L) } + learnedRestoreItems
         val txsWithCreatedAt = parsed.transactions.map { tx ->
-            tx.copy(createdAt = existingTxMap[tx.id])
+            tx.copy(createdAtEpochMs = existingTxMap[tx.id] ?: 0L)
         }
 
         val staleTxIds = if (replaceExisting) currentState.allTransactions.map { it.id } else emptyList()

@@ -5,7 +5,7 @@ import com.example.data.AccountItem
 import com.example.data.EnvelopeConfig
 import com.example.data.FinancialItem
 import com.example.data.MasroufiDataSource
-import com.example.data.MasroufiRepository
+import com.example.data.LOCAL_DEVICE_USER_ID
 import com.example.data.TransactionItem
 import com.example.data.UserProfile
 import com.example.data.local.MasroufiEntityMappers.toDomain
@@ -23,8 +23,7 @@ import com.example.domain.RecurrencePostingMode
 import com.example.domain.RecurrenceScheduleEngine
 import com.example.domain.RecurringPostResult
 import com.example.domain.RecurringRuleItem
-import com.google.firebase.Firebase
-import com.google.firebase.auth.auth
+import com.example.platform.PlatformCloudBridge
 import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
 import java.util.UUID
@@ -46,9 +45,7 @@ class RoomMasroufiRepository(
     private val dao: MasroufiDao,
     private val remoteMirror: RemoteMirror = NoOpRemoteMirror,
     private val userIdProvider: () -> String = {
-        runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: MasroufiRepository.LOCAL_DEVICE_USER_ID
+        PlatformCloudBridge.currentAuthenticatedUidOrNull() ?: LOCAL_DEVICE_USER_ID
     }
 ) : MasroufiDataSource {
 
@@ -266,8 +263,8 @@ class RoomMasroufiRepository(
 
         // When signing in with a real account, atomically adopt any local_device_user Room data first
         // so Local Mode records are never orphaned or overwritten by fresh default seeds.
-        if (uid != MasroufiRepository.LOCAL_DEVICE_USER_ID) {
-            adoptLocalDataIntoUser(MasroufiRepository.LOCAL_DEVICE_USER_ID, uid)
+        if (uid != LOCAL_DEVICE_USER_ID) {
+            adoptLocalDataIntoUser(LOCAL_DEVICE_USER_ID, uid)
         }
 
         val existing = dao.getProfile(uid)

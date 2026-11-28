@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.R
 import com.example.domain.PayCycleEngine
 import com.google.firebase.Firebase
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
@@ -13,6 +14,7 @@ import com.google.firebase.firestore.snapshots
 import com.masroufi.core.Money
 import com.masroufi.credit.data.SavedCreditEntity
 import java.math.BigDecimal
+import java.util.Date
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
@@ -42,6 +44,9 @@ object FirestoreSnapshotMappers {
         }
     }
 
+    private fun DocumentSnapshot.readEpochMs(field: String): Long =
+        getTimestamp(field, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toDate()?.time ?: 0L
+
     fun toUserProfile(doc: DocumentSnapshot, fallbackUserId: String): UserProfile {
         val isDark = doc.getBoolean("isDarkTheme")
             ?: doc.getBoolean("darkTheme")
@@ -55,8 +60,8 @@ object FirestoreSnapshotMappers {
             language = doc.getString("language") ?: "fr",
             isDarkTheme = isDark,
             seeded = doc.getBoolean("seeded") ?: true,
-            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            createdAtEpochMs = doc.readEpochMs("createdAt"),
+            updatedAtEpochMs = doc.readEpochMs("updatedAt")
         )
     }
 
@@ -68,8 +73,8 @@ object FirestoreSnapshotMappers {
             kind = doc.getString("kind") ?: "cash",
             initialBalance = doc.readMoneyDh("initialBalance", Money.ZERO),
             colorHex = doc.getString("colorHex") ?: "#10B981",
-            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            createdAtEpochMs = doc.readEpochMs("createdAt"),
+            updatedAtEpochMs = doc.readEpochMs("updatedAt")
         )
     }
 
@@ -92,8 +97,8 @@ object FirestoreSnapshotMappers {
             desc = doc.getString("desc") ?: "",
             isoDate = doc.getString("isoDate") ?: "",
             hourOfDay = (doc.getLong("hourOfDay") ?: -1L).toInt(),
-            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            createdAtEpochMs = doc.readEpochMs("createdAt"),
+            updatedAtEpochMs = doc.readEpochMs("updatedAt")
         )
     }
 
@@ -121,8 +126,8 @@ object FirestoreSnapshotMappers {
             dayOrTurn = (doc.getLong("dayOrTurn") ?: 1L).toInt(),
             extraInt = (doc.getLong("extraInt") ?: 0L).toInt(),
             dateOrCycle = doc.getString("dateOrCycle") ?: "",
-            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            createdAtEpochMs = doc.readEpochMs("createdAt"),
+            updatedAtEpochMs = doc.readEpochMs("updatedAt")
         )
     }
 
@@ -144,7 +149,7 @@ object FirestoreSnapshotMappers {
             debtToIncomeRatio = doc.getDouble("debtToIncomeRatio") ?: 0.0,
             maxAllowedDti = doc.getDouble("maxAllowedDti") ?: 45.0,
             linkToMonthlyExpenses = doc.getBoolean("linkToMonthlyExpenses") ?: false,
-            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+            createdAtEpochMs = doc.readEpochMs("createdAt")
         )
     }
 }
@@ -247,8 +252,8 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
                             percentage = doc.getDouble("percentage") ?: 0.0,
                             hasCap = hasCapVal,
                             colorHex = doc.getString("colorHex") ?: "#10B981",
-                            createdAt = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE),
-                            updatedAt = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                            createdAtEpochMs = doc.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toDate()?.time ?: 0L,
+                            updatedAtEpochMs = doc.getTimestamp("updatedAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toDate()?.time ?: 0L
                         ).migratedStorageCopy()
                     }
                 }
@@ -275,6 +280,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         )
     }
 
+    private fun createdAtFirestoreValue(epochMs: Long): Any =
+        if (epochMs > 0L) Timestamp(Date(epochMs)) else FieldValue.serverTimestamp()
+
     private fun buildProfilePayload(uid: String, profile: UserProfile): Map<String, Any> {
         return mapOf(
             "userId" to uid,
@@ -284,7 +292,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             "language" to (if (profile.language in listOf("fr", "ar", "darija", "en")) profile.language else "fr"),
             "isDarkTheme" to profile.isDarkTheme,
             "seeded" to true,
-            "createdAt" to (profile.createdAt ?: FieldValue.serverTimestamp()),
+            "createdAt" to createdAtFirestoreValue(profile.createdAtEpochMs),
             "updatedAt" to FieldValue.serverTimestamp()
         )
     }
@@ -320,7 +328,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             "toAccountId" to safeToAccountId,
             "desc" to tx.desc.take(250),
             "isoDate" to validatedDate.take(20),
-            "createdAt" to (tx.createdAt ?: FieldValue.serverTimestamp()),
+            "createdAt" to createdAtFirestoreValue(tx.createdAtEpochMs),
             "updatedAt" to FieldValue.serverTimestamp()
         )
     }
@@ -333,7 +341,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             "kind" to safeKind,
             "initialBalance" to account.initialBalance.coerceIn(Money.MIN_STORABLE, Money.MAX_STORABLE).toBigDecimalDh().toDouble(),
             "colorHex" to account.colorHex.ifBlank { "#10B981" }.take(20),
-            "createdAt" to (account.createdAt ?: FieldValue.serverTimestamp()),
+            "createdAt" to createdAtFirestoreValue(account.createdAtEpochMs),
             "updatedAt" to FieldValue.serverTimestamp()
         )
     }
@@ -351,7 +359,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             "percentage" to migrated.percentage.coerceIn(0.0, 100.0),
             "hasCap" to migrated.hasCap,
             "colorHex" to migrated.colorHex.ifBlank { "#10B981" }.take(20),
-            "createdAt" to (migrated.createdAt ?: FieldValue.serverTimestamp()),
+            "createdAt" to createdAtFirestoreValue(migrated.createdAtEpochMs),
             "updatedAt" to FieldValue.serverTimestamp()
         )
     }
@@ -374,7 +382,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             "dayOrTurn" to item.dayOrTurn.coerceIn(0, 366),
             "extraInt" to item.extraInt.coerceIn(0, 366),
             "dateOrCycle" to item.dateOrCycle.take(250),
-            "createdAt" to (item.createdAt ?: FieldValue.serverTimestamp()),
+            "createdAt" to createdAtFirestoreValue(item.createdAtEpochMs),
             "updatedAt" to FieldValue.serverTimestamp()
         )
     }
@@ -668,9 +676,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             if (snap.exists() && snap.getBoolean("seeded") == true) {
                 return
             }
-            val existingCreatedAt = if (snap.exists()) {
-                snap.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
-            } else null
+            val existingCreatedAtEpochMs = if (snap.exists()) {
+                snap.getTimestamp("createdAt", DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)?.toDate()?.time ?: 0L
+            } else 0L
 
             val batch = db.batch()
             val newProfile = UserProfile(
@@ -682,7 +690,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
                 language = "fr",
                 isDarkTheme = false,
                 seeded = true,
-                createdAt = existingCreatedAt
+                createdAtEpochMs = existingCreatedAtEpochMs
             )
             batch.set(profileRef, buildProfilePayload(uid, newProfile))
 
@@ -732,17 +740,17 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         val uid = requireUserId(userId)
         val profileRef = db.collection("users").document(uid)
         try {
-            val accCreatedAt = existingAccounts.associate { it.id to it.createdAt }
-            val envCreatedAt = existingEnvelopes.associate { it.id to it.createdAt }
-            val itemCreatedAt = existingItems.associate { it.id to it.createdAt }
-            val txCreatedAt = existingTransactions.associate { it.id to it.createdAt }
+            val accCreatedAt = existingAccounts.associate { it.id to it.createdAtEpochMs }
+            val envCreatedAt = existingEnvelopes.associate { it.id to it.createdAtEpochMs }
+            val itemCreatedAt = existingItems.associate { it.id to it.createdAtEpochMs }
+            val txCreatedAt = existingTransactions.associate { it.id to it.createdAtEpochMs }
 
             val batch = db.batch()
 
             val demoAccounts = listOf(
-                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.fromDh(1850), colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
-                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.fromDh(5200), colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
-                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.fromDh(650), colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
+                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.fromDh(1850), colorHex = "#10B981", createdAtEpochMs = accCreatedAt["acc_cash"] ?: 0L),
+                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.fromDh(5200), colorHex = "#38BDF8", createdAtEpochMs = accCreatedAt["acc_bank"] ?: 0L),
+                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.fromDh(650), colorHex = "#FBBF24", createdAtEpochMs = accCreatedAt["acc_wallet"] ?: 0L)
             )
             for (acc in demoAccounts) {
                 val ref = profileRef.collection("accounts").document(acc.id)
@@ -751,7 +759,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
 
             for (env in defaultStandardEnvelopes(uid)) {
                 val ref = profileRef.collection("envelopes").document(env.id)
-                batch.set(ref, buildEnvelopePayload(uid, env.copy(createdAt = envCreatedAt[env.id])))
+                batch.set(ref, buildEnvelopePayload(uid, env.copy(createdAtEpochMs = envCreatedAt[env.id] ?: 0L)))
             }
 
             val demoTxs = listOf(
@@ -767,7 +775,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             )
             for (tx in demoTxs) {
                 val ref = profileRef.collection("transactions").document(tx.id)
-                batch.set(ref, buildTransactionPayload(uid, tx.copy(createdAt = txCreatedAt[tx.id])))
+                batch.set(ref, buildTransactionPayload(uid, tx.copy(createdAtEpochMs = txCreatedAt[tx.id] ?: 0L)))
             }
 
             val demoItems = defaultQuickPresets() + listOf(
@@ -783,7 +791,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
             )
             for (item in demoItems) {
                 val ref = profileRef.collection("items").document(item.id)
-                batch.set(ref, buildFinancialItemPayload(uid, item.copy(createdAt = itemCreatedAt[item.id])))
+                batch.set(ref, buildFinancialItemPayload(uid, item.copy(createdAtEpochMs = itemCreatedAt[item.id] ?: 0L)))
             }
 
             batch.commit().await()
@@ -807,7 +815,7 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
         val uid = requireUserId(userId)
         val profileRef = db.collection("users").document(uid)
         try {
-            val accCreatedAt = existingAccounts.associate { it.id to it.createdAt }
+            val accCreatedAt = existingAccounts.associate { it.id to it.createdAtEpochMs }
             val refsToDelete = mutableListOf<DocumentReference>()
             existingTxIds.forEach { id ->
                 if (id.isNotBlank()) refsToDelete.add(profileRef.collection("transactions").document(id))
@@ -830,9 +838,9 @@ class MasroufiRepository(private val db: FirebaseFirestore) : MasroufiDataSource
 
             val cleanBatch = db.batch()
             val cleanAccounts = listOf(
-                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.ZERO, colorHex = "#10B981", createdAt = accCreatedAt["acc_cash"]),
-                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.ZERO, colorHex = "#38BDF8", createdAt = accCreatedAt["acc_bank"]),
-                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.ZERO, colorHex = "#FBBF24", createdAt = accCreatedAt["acc_wallet"])
+                AccountItem(id = "acc_cash", userId = uid, name = "Espèces (Cash)", kind = "cash", initialBalance = Money.ZERO, colorHex = "#10B981", createdAtEpochMs = accCreatedAt["acc_cash"] ?: 0L),
+                AccountItem(id = "acc_bank", userId = uid, name = "Compte Bancaire (CIH/Attijari)", kind = "bank", initialBalance = Money.ZERO, colorHex = "#38BDF8", createdAtEpochMs = accCreatedAt["acc_bank"] ?: 0L),
+                AccountItem(id = "acc_wallet", userId = uid, name = "Portefeuille Mobile", kind = "wallet", initialBalance = Money.ZERO, colorHex = "#FBBF24", createdAtEpochMs = accCreatedAt["acc_wallet"] ?: 0L)
             )
             for (acc in cleanAccounts) {
                 cleanBatch.set(profileRef.collection("accounts").document(acc.id), buildAccountPayload(uid, acc))
