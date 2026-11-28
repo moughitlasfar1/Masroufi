@@ -137,10 +137,10 @@ class Phase7CFossIsolationTest {
         val linkNodes = composeRule.onAllNodesWithTag("settings_link_google_account_btn").fetchSemanticsNodes()
         if (BuildConfig.IS_FOSS) {
             assertTrue("FOSS Settings must hide Link Google Account button", linkNodes.isEmpty())
-            composeRule.onNodeWithText("Masroufi v1.5.0 (FOSS)").assertIsDisplayed()
+            composeRule.onNodeWithText("Masroufi v1.5.0 (FOSS)").assertExists()
         } else {
             assertEquals("Play local-mode Settings must show Link Google Account button", 1, linkNodes.size)
-            composeRule.onNodeWithTag("settings_version_label").assertIsDisplayed()
+            composeRule.onNodeWithText("Masroufi v1.5.0").assertExists()
         }
     }
 

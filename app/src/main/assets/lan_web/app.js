@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  // Security invariant: token is strictly memory-only (never localStorage/sessionStorage/cookie).
+  // Security invariant: token is strictly memory-only (no browser persistent storage or cookies).
   let sessionToken = null;
   let currentLang = "fr";
   let currentCurrency = "DH";

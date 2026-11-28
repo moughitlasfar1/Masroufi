@@ -169,6 +169,11 @@ class Phase7BLanCompanionSecurityTest {
                 if (body != null) {
                     append("Content-Type: application/json; charset=utf-8\r\n")
                     append("Content-Length: ${bodyBytes.size}\r\n")
+                } else if (method.equals("POST", ignoreCase = true) ||
+                    method.equals("PUT", ignoreCase = true) ||
+                    method.equals("PATCH", ignoreCase = true)
+                ) {
+                    append("Content-Length: 0\r\n")
                 }
                 extraHeaders.forEach { (k, v) -> append("$k: $v\r\n") }
                 append("\r\n")
