@@ -140,10 +140,10 @@ class Phase7ARoomMigrationV4ToV5Test {
                 val dao = roomDb.masroufiDao()
 
                 // 1. Pre-existing v4 rows are immediately searchable via FTS4 (unicode61 folds diacritics)
-                val frHits = dao.searchTransactionsWithFts("u_v5", "cafe*", null, null, null, null, null, null, null, null, 0)
+                val frHits = dao.searchTransactionsWithFts("u_v5", "cafe*", null, null, null, null, null, null, null, null, false)
                 assertEquals(listOf("tx_fr"), frHits.map { it.id })
 
-                val arHits = dao.searchTransactionsWithFts("u_v5", "مرجان*", null, null, null, null, null, null, null, null, 0)
+                val arHits = dao.searchTransactionsWithFts("u_v5", "مرجان*", null, null, null, null, null, null, null, null, false)
                 assertEquals(listOf("tx_ar"), arHits.map { it.id })
 
                 // 2. Trigger sync on INSERT
@@ -163,7 +163,7 @@ class Phase7ARoomMigrationV4ToV5Test {
                         updatedAtEpochMs = 3000L
                     )
                 )
-                val insertHits = dao.searchTransactionsWithFts("u_v5", "pharmacie*", null, null, null, null, null, null, null, null, 0)
+                val insertHits = dao.searchTransactionsWithFts("u_v5", "pharmacie*", null, null, null, null, null, null, null, null, false)
                 assertEquals(listOf("tx_new"), insertHits.map { it.id })
 
                 // 3. Trigger sync on UPDATE (old term disappears, new term matches)
@@ -184,17 +184,17 @@ class Phase7ARoomMigrationV4ToV5Test {
                     )
                 )
                 assertTrue(
-                    dao.searchTransactionsWithFts("u_v5", "pharmacie*", null, null, null, null, null, null, null, null, 0).isEmpty()
+                    dao.searchTransactionsWithFts("u_v5", "pharmacie*", null, null, null, null, null, null, null, null, false).isEmpty()
                 )
                 assertEquals(
                     listOf("tx_new"),
-                    dao.searchTransactionsWithFts("u_v5", "dentaire*", null, null, null, null, null, null, null, null, 0).map { it.id }
+                    dao.searchTransactionsWithFts("u_v5", "dentaire*", null, null, null, null, null, null, null, null, false).map { it.id }
                 )
 
                 // 4. Trigger sync on DELETE
                 dao.deleteTransaction("u_v5", "tx_new")
                 assertTrue(
-                    dao.searchTransactionsWithFts("u_v5", "dentaire*", null, null, null, null, null, null, null, null, 0).isEmpty()
+                    dao.searchTransactionsWithFts("u_v5", "dentaire*", null, null, null, null, null, null, null, null, false).isEmpty()
                 )
             }
         } finally {
@@ -247,7 +247,7 @@ class Phase7ARoomMigrationV4ToV5Test {
             runBlocking {
                 val dao = roomDb.masroufiDao()
                 assertEquals(900_050L, dao.getProfile("u_chain5")!!.baseBudgetCentimes)
-                val hits = dao.searchTransactionsWithFts("u_chain5", "boulangerie*", null, null, null, null, null, null, null, null, 0)
+                val hits = dao.searchTransactionsWithFts("u_chain5", "boulangerie*", null, null, null, null, null, null, null, null, false)
                 assertEquals(1, hits.size)
                 assertEquals("tx_c5", hits.first().id)
                 assertEquals(14_975L, hits.first().amountCentimes)

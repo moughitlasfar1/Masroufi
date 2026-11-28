@@ -1,11 +1,11 @@
 package com.example
 
 import android.content.Context
+import android.os.Looper
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AccountItem
 import com.example.data.EnvelopeConfig
-import com.example.data.LocalRoomMasroufiDataSource
 import com.example.data.TransactionItem
 import com.example.data.local.MasroufiDatabase
 import com.example.data.local.NoOpRemoteMirror
@@ -20,13 +20,9 @@ import com.example.ui.dashboard.formatPercentBadge
 import com.example.ui.dashboard.formatSignedDeltaOrMask
 import com.example.ui.dashboard.insightsStringsFor
 import com.masroufi.core.Money
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.test.UnconfinedTestDispatcher
-import kotlinx.coroutines.test.resetMain
-import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +33,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 /**
@@ -57,34 +54,41 @@ import org.robolectric.annotation.Config
  * 4. Reactive `MasroufiViewModel.financialInsights` & `MasroufiViewModel.searchResults` flows.
  * 5. All 4 languages (`fr`, `ar`, `darija`, `en`) and `hideAmounts` (`••••`) privacy masking.
  */
-@OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class Phase7ASearchAndInsightsTest {
 
-    private val testDispatcher = UnconfinedTestDispatcher()
     private lateinit var db: MasroufiDatabase
     private lateinit var repo: RoomMasroufiRepository
     private val userId = "u_phase7a"
 
     @Before
     fun setUp() {
-        Dispatchers.setMain(testDispatcher)
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, MasroufiDatabase::class.java)
             .allowMainThreadQueries()
             .build()
         repo = RoomMasroufiRepository(
             dao = db.masroufiDao(),
-            database = db,
-            remoteMirror = NoOpRemoteMirror
+            remoteMirror = NoOpRemoteMirror,
+            userIdProvider = { userId }
         )
     }
 
     @After
     fun tearDown() {
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
         db.close()
-        Dispatchers.resetMain()
+    }
+
+    private suspend fun awaitMainCondition(timeoutMs: Long = 2500L, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            if (condition()) return
+            delay(25L)
+        }
+        Shadows.shadowOf(Looper.getMainLooper()).idle()
     }
 
     @Test
@@ -98,8 +102,8 @@ class Phase7ASearchAndInsightsTest {
 
     @Test
     fun `Room FTS4 search supports 4 languages and exact Long centimes multi-criteria filters`() = runBlocking {
-        repo.saveAccount(userId, AccountItem(id = "acc_cash", userId = userId, name = "Cash", kind = "cash", initialBalance = Money.fromDh(5000)))
-        repo.saveAccount(userId, AccountItem(id = "acc_cih", userId = userId, name = "CIH", kind = "bank", initialBalance = Money.fromDh(10000)))
+        repo.upsertAccount(AccountItem(id = "acc_cash", userId = userId, name = "Cash", kind = "cash", initialBalance = Money.fromDh(5000)), userId)
+        repo.upsertAccount(AccountItem(id = "acc_cih", userId = userId, name = "CIH", kind = "bank", initialBalance = Money.fromDh(10000)), userId)
 
         val txs = listOf(
             TransactionItem(
@@ -135,42 +139,42 @@ class Phase7ASearchAndInsightsTest {
                 desc = "Retrait GAB", isoDate = "2026-08-14"
             )
         )
-        txs.forEach { repo.saveTransaction(userId, it) }
+        txs.forEach { repo.upsertTransaction(it, userId) }
 
         // 1. French accent-insensitive FTS4 query
-        val frRes = repo.searchTransactions(userId, TransactionSearchCriteria(query = "cafe etoile"))
+        val frRes = repo.searchTransactions(TransactionSearchCriteria(query = "cafe etoile"), userId)
         assertEquals(listOf("t_fr"), frRes.map { it.id })
 
         // 2. Arabic FTS4 query
-        val arRes = repo.searchTransactions(userId, TransactionSearchCriteria(query = "مرجان"))
+        val arRes = repo.searchTransactions(TransactionSearchCriteria(query = "مرجان"), userId)
         assertEquals(listOf("t_ar"), arRes.map { it.id })
 
         // 3. Darija FTS4 query with hostile FTS punctuation
-        val darRes = repo.searchTransactions(userId, TransactionSearchCriteria(query = "\"9ahwa\" OR (shab)*"))
+        val darRes = repo.searchTransactions(TransactionSearchCriteria(query = "\"9ahwa\" OR (shab)*"), userId)
         assertEquals(listOf("t_darija"), darRes.map { it.id })
 
         // 4. Exact Long centimes min/max range filter (35.50 DH to 80.00 DH inclusive)
         val rangeRes = repo.searchTransactions(
-            userId,
-            TransactionSearchCriteria(minAmountCentimes = 3550L, maxAmountCentimes = 8000L)
+            TransactionSearchCriteria(minAmountCentimes = 3550L, maxAmountCentimes = 8000L),
+            userId
         )
         assertEquals(setOf("t_fr", "t_darija"), rangeRes.map { it.id }.toSet())
 
         // 5. Transfer filter matches paired transfer_out + transfer_in rows
-        val transferRes = repo.searchTransactions(userId, TransactionSearchCriteria(type = "transfer"))
+        val transferRes = repo.searchTransactions(TransactionSearchCriteria(type = "transfer"), userId)
         assertEquals(setOf("t_tr_out", "t_tr_in"), transferRes.map { it.id }.toSet())
 
         // 6. Loan-linked filter & specific loanId filter
         val loanRes = repo.searchTransactions(
-            userId,
-            TransactionSearchCriteria(loanLinkedOnly = true, loanId = "loan_car_1")
+            TransactionSearchCriteria(loanLinkedOnly = true, loanId = "loan_car_1"),
+            userId
         )
         assertEquals(listOf("t_loan"), loanRes.map { it.id })
 
         // 7. Combined date range + account filter
         val dateAccRes = repo.searchTransactions(
-            userId,
-            TransactionSearchCriteria(startIsoDate = "2026-08-06", endIsoDate = "2026-08-13", accountId = "acc_cih")
+            TransactionSearchCriteria(startIsoDate = "2026-08-06", endIsoDate = "2026-08-13", accountId = "acc_cih"),
+            userId
         )
         assertEquals(setOf("t_ar", "t_loan"), dateAccRes.map { it.id }.toSet())
     }
@@ -185,7 +189,7 @@ class Phase7ASearchAndInsightsTest {
         val todayIso = "2026-09-20"
 
         val txs = listOf(
-            // Previous pay cycle (2026-08): Alimentation = 1000 DH, Cafe = 300 DH (4 historical tx for avg)
+            // Previous pay cycle (2026-08): Alimentation = 1000 DH, Cafe = 300 DH (3 historical tx for avg)
             TransactionItem(id = "p1", type = "expense", amount = Money.fromDh(1000), category = "Alimentation", envelopeKey = "alimentation", desc = "Marjane", isoDate = "2026-08-10"),
             TransactionItem(id = "p2", type = "expense", amount = Money.fromDh(100), category = "Café", envelopeKey = "cafe", desc = "Café A", isoDate = "2026-08-05"),
             TransactionItem(id = "p3", type = "expense", amount = Money.fromDh(100), category = "Café", envelopeKey = "cafe", desc = "Café B", isoDate = "2026-08-12"),
@@ -257,43 +261,54 @@ class Phase7ASearchAndInsightsTest {
 
     @Test
     fun `MasroufiViewModel exposes reactive financialInsights and FTS4 searchResults StateFlows`() = runBlocking {
-        val dataSource = LocalRoomMasroufiDataSource(repo)
         val today = PayCycleEngine.todayIso()
         val prevCycleDate = PayCycleEngine.epochDaysToIso(PayCycleEngine.parseEpochDays(today) - 32L)
 
-        repo.saveTransaction(
-            userId,
+        repo.upsertTransaction(
             TransactionItem(
                 id = "vm_prev", type = "expense", amount = Money.fromDh(400),
                 category = "Alimentation", envelopeKey = "alimentation", accountId = "acc_cash",
                 desc = "Marjane", isoDate = prevCycleDate
-            )
+            ),
+            userId
         )
-        repo.saveTransaction(
-            userId,
+        repo.upsertTransaction(
             TransactionItem(
                 id = "vm_cur", type = "expense", amount = Money.fromDh(900),
                 category = "Alimentation", envelopeKey = "alimentation", accountId = "acc_cash",
                 desc = "Carrefour Hyper", isoDate = today
-            )
+            ),
+            userId
         )
 
-        val vm = MasroufiViewModel(repository = dataSource, currentUserId = userId)
-        delay(120)
+        val vm = MasroufiViewModel(repository = repo, currentUserId = userId)
+        val uiCollector = launch { vm.uiState.collect {} }
+        try {
+            awaitMainCondition {
+                vm.financialInsights.value.currentCycleExpenseTotal == Money.fromDh(900) &&
+                    vm.uiState.value.financialInsights.categoryTrends.any { it.envelopeKey == "alimentation" }
+            }
 
-        assertEquals(Money.fromDh(900), vm.financialInsights.value.currentCycleExpenseTotal)
-        assertTrue(vm.uiState.value.financialInsights.categoryTrends.any { it.envelopeKey == "alimentation" })
+            assertEquals(Money.fromDh(900), vm.financialInsights.value.currentCycleExpenseTotal)
+            assertTrue(vm.uiState.value.financialInsights.categoryTrends.any { it.envelopeKey == "alimentation" })
 
-        vm.updateFilter { it.copy(searchQuery = "carrefour") }
-        delay(120)
+            vm.updateFilter { it.copy(searchQuery = "carrefour") }
+            awaitMainCondition {
+                vm.searchResults.value.map { it.id } == listOf("vm_cur") &&
+                    vm.uiState.value.isFtsSearchActive &&
+                    vm.uiState.value.filteredHistory.map { it.id } == listOf("vm_cur")
+            }
 
-        assertTrue(vm.uiState.value.isFtsSearchActive)
-        assertEquals(listOf("vm_cur"), vm.searchResults.value.map { it.id })
-        assertEquals(listOf("vm_cur"), vm.uiState.value.filteredHistory.map { it.id })
+            assertTrue(vm.uiState.value.isFtsSearchActive)
+            assertEquals(listOf("vm_cur"), vm.searchResults.value.map { it.id })
+            assertEquals(listOf("vm_cur"), vm.uiState.value.filteredHistory.map { it.id })
 
-        vm.clearTransactionFilters()
-        delay(80)
-        assertFalse(vm.uiState.value.isFtsSearchActive)
+            vm.clearTransactionFilters()
+            awaitMainCondition { !vm.uiState.value.isFtsSearchActive }
+            assertFalse(vm.uiState.value.isFtsSearchActive)
+        } finally {
+            uiCollector.cancel()
+        }
     }
 
     @Test
