@@ -62,6 +62,8 @@ object PlatformIntegrityBridge {
     fun initialize(context: Context, intent: Intent? = null) {
         runCatching {
             initializeFirebaseOnly(context)
+            // Avoid starting background App Check token refresh timers in Robolectric JVM unit tests
+            if (com.example.security.AppSecurityManager.isRunningInUnitTest()) return
             val appCheck = FirebaseAppCheck.getInstance()
             if (BuildConfig.DEBUG) {
                 val debugFactory = runCatching {

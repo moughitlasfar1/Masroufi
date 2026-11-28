@@ -899,27 +899,36 @@ class ExampleRobolectricTest {
             val appsBefore = firebaseAppClass.getMethod("getApps", Context::class.java).invoke(null, context) as List<*>
             assertTrue(appsBefore.isEmpty())
         }
-        org.robolectric.Robolectric.buildActivity(MainActivity::class.java).use { controller ->
-            controller.setup()
-            val activity = controller.get()
-            assertNotNull(activity)
+        try {
+            org.robolectric.Robolectric.buildActivity(MainActivity::class.java).use { controller ->
+                controller.setup()
+                val activity = controller.get()
+                assertNotNull(activity)
+                if (com.example.platform.PlatformCloudBridge.isCloudSupported) {
+                    val firebaseAppClass = Class.forName("com.google.firebase.FirebaseApp")
+                    val appsAfter = firebaseAppClass.getMethod("getApps", Context::class.java).invoke(null, context) as List<*>
+                    assertFalse(appsAfter.isEmpty())
+                    val appInstance = firebaseAppClass.getMethod("getInstance").invoke(null)
+                    val options = appInstance.javaClass.getMethod("getOptions").invoke(appInstance)
+                    val projectId = options.javaClass.getMethod("getProjectId").invoke(options) as? String
+                    assertEquals("gen-lang-client-0849522300", projectId)
+                    val webClientId = com.example.platform.PlatformCloudBridge.resolveWebClientId(activity)
+                    assertTrue(webClientId.endsWith("googleusercontent.com"))
+                } else {
+                    assertEquals("", com.example.platform.PlatformCloudBridge.resolveWebClientId(activity))
+                }
+                activity.setContent {
+                    MainFeatureScreen(currentUserId = "u_test_123")
+                }
+                org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+            }
+        } finally {
             if (com.example.platform.PlatformCloudBridge.isCloudSupported) {
-                val firebaseAppClass = Class.forName("com.google.firebase.FirebaseApp")
-                val appsAfter = firebaseAppClass.getMethod("getApps", Context::class.java).invoke(null, context) as List<*>
-                assertFalse(appsAfter.isEmpty())
-                val appInstance = firebaseAppClass.getMethod("getInstance").invoke(null)
-                val options = appInstance.javaClass.getMethod("getOptions").invoke(appInstance)
-                val projectId = options.javaClass.getMethod("getProjectId").invoke(options) as? String
-                assertEquals("gen-lang-client-0849522300", projectId)
-                val webClientId = com.example.platform.PlatformCloudBridge.resolveWebClientId(activity)
-                assertTrue(webClientId.endsWith("googleusercontent.com"))
-            } else {
-                assertEquals("", com.example.platform.PlatformCloudBridge.resolveWebClientId(activity))
+                runCatching {
+                    val firebaseAppClass = Class.forName("com.google.firebase.FirebaseApp")
+                    firebaseAppClass.getMethod("clearInstancesForTest").invoke(null)
+                }
             }
-            activity.setContent {
-                MainFeatureScreen(currentUserId = "u_test_123")
-            }
-            org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
         }
     }
 
