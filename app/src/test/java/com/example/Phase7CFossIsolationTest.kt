@@ -126,21 +126,9 @@ class Phase7CFossIsolationTest {
                     state = DashboardState(),
                     strings = strings,
                     isLocalMode = true,
-                    pendingBankDetectionsCount = 0,
-                    onDismiss = {},
                     onLinkGoogleAccount = {},
-                    onSaveProfile = { _, _, _ -> },
-                    onChangeLanguage = {},
-                    onToggleTheme = {},
-                    onExportBackup = { _ -> "" },
-                    onExportCsv = { "" },
-                    onLoadDemoData = {},
-                    onResetToCleanAccount = {},
-                    onOpenRestoreBackup = {},
-                    onOpenCustomizationStudio = {},
-                    onOpenStatementImport = {},
-                    onOpenBankDetections = {},
-                    onOpenLanCompanion = {},
+                    onDismiss = {},
+                    onSaveSettings = { _, _, _ -> },
                     onSignOut = {}
                 )
             }
@@ -160,8 +148,9 @@ class Phase7CFossIsolationTest {
     fun `CSV import, Backup v3, and graceful scanned-PDF error work in both flavors`() = runBlocking {
         // 1. CSV import parity
         val sampleCsv = "Date;Libelle;Debit;Credit\n15/11/2026;MARJANE CASABLANCA;145,50;\n16/11/2026;VIREMENT EMPLOYEUR;;7500,00\n"
-        val csvRes = CsvStatementParser.parse(sampleCsv.toByteArray(Charsets.UTF_8))
-        assertEquals(2, csvRes.rows.size)
+        val inspection = CsvStatementParser.inspectCsv(sampleCsv.toByteArray(Charsets.UTF_8))
+        val rows = CsvStatementParser.extractRows(inspection.allRawRows, inspection.suggestedMapping, inspection.headerRowIndex)
+        assertEquals(2, rows.size)
 
         // 2. Backup v3 parity
         val backupJson = BackupV3Codec.encodeV3Backup(state = DashboardState())

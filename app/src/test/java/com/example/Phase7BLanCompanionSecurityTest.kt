@@ -77,7 +77,7 @@ class Phase7BLanCompanionSecurityTest {
             userIdProvider = { userId }
         )
         runBlocking {
-            repo.upsertProfile(
+            repo.saveProfile(
                 UserProfile(
                     userId = userId,
                     baseBudget = Money.fromDh(6000),
