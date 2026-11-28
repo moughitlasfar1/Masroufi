@@ -20,6 +20,8 @@ import com.example.domain.CashFlowForecastSnapshot
 import com.example.domain.CycleSpendProjection
 import com.example.domain.DetectedSubscription
 import com.example.domain.EnvelopeStatus
+import com.example.domain.FinancialInsightsEngine
+import com.example.domain.FinancialInsightsSnapshot
 import com.example.domain.ForecastHorizon
 import com.example.domain.InternalTransferResult
 import com.example.domain.LoanItem
@@ -35,6 +37,7 @@ import com.example.domain.RecurringPostResult
 import com.example.domain.RecurringRuleItem
 import com.example.domain.SmartInsight
 import com.example.domain.SmartReminder
+import com.example.domain.TransactionSearchCriteria
 import com.example.security.AppSecurityManager
 import com.example.security.BackupEnvelopeInfo
 import com.example.security.PortableBackupCrypto
@@ -67,8 +70,32 @@ data class FilterState(
     val selectedCategoryKey: String = "all",
     val selectedAccountId: String = "all",
     val selectedType: String = "all", // "all", "expense", "income", "transfer"
-    val minAmount: Money? = null
-)
+    val minAmount: Money? = null,
+    val maxAmount: Money? = null,
+    val startIsoDate: String? = null,
+    val endIsoDate: String? = null,
+    val loanLinkedOnly: Boolean = false,
+    val selectedLoanId: String? = null
+) {
+    fun toSearchCriteria(): TransactionSearchCriteria = TransactionSearchCriteria(
+        query = searchQuery,
+        startIsoDate = startIsoDate,
+        endIsoDate = endIsoDate,
+        minAmountCentimes = minAmount?.centimes,
+        maxAmountCentimes = maxAmount?.centimes,
+        accountId = selectedAccountId.takeIf { it != "all" },
+        envelopeKey = selectedCategoryKey.takeIf { it != "all" },
+        type = selectedType.takeIf { it != "all" },
+        loanId = selectedLoanId?.takeIf { it.isNotBlank() && it != "all" },
+        loanLinkedOnly = loanLinkedOnly
+    )
+
+    val hasAnyActiveFilter: Boolean
+        get() = toSearchCriteria().hasAnyCriteria
+
+    val activeAdvancedFilterCount: Int
+        get() = toSearchCriteria().activeFilterCount
+}
 
 data class WhatIfSimulatorState(
     val selectedEnvelopeKey: String = "cafe",
@@ -850,6 +877,8 @@ data class DashboardState(
     val darets: List<FinancialItem> = emptyList(),
     val seasonals: List<FinancialItem> = emptyList(),
     val smartInsights: List<SmartInsight> = emptyList(),
+    val financialInsights: FinancialInsightsSnapshot = FinancialInsightsSnapshot(),
+    val isFtsSearchActive: Boolean = false,
     val smartReminders: List<SmartReminder> = emptyList(),
     val noSpendStreakDays: Int = 0,
     val monthEndForecastMessage: String = "",
@@ -1084,6 +1113,67 @@ class MasroufiViewModel(
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, CashFlowForecastSnapshot())
 
+    /**
+     * Single reactive source of truth for Phase 7A local Financial Insights
+     * (category trends, anomalies, and suspected duplicates using exact `Long` centimes,
+     * strictly excluding paired/legacy internal transfers).
+     */
+    val financialInsights: StateFlow<FinancialInsightsSnapshot> = combine(
+        transactionsFlow,
+        envelopesFlow,
+        combine(profileFlow, _optimisticProfile, _selectedCycleKey) { p, optP, selCycle ->
+            Pair(optP ?: p, selCycle)
+        }
+    ) { txs, envs, (profileOpt, selCycle) ->
+        val profile = profileOpt ?: UserProfile(userId = currentUserId)
+        val todayIso = PayCycleEngine.todayIso()
+        val defaultCycle = PayCycleEngine.currentCycleKey(profile.payCycleDay, todayIso)
+        val activeCycleKey = selCycle ?: defaultCycle
+        val window = PayCycleEngine.computeWindow(activeCycleKey, profile.payCycleDay, todayIso)
+        val prevWindow = PayCycleEngine.computeWindow(
+            PayCycleEngine.shiftCycleKey(activeCycleKey, -1),
+            profile.payCycleDay,
+            todayIso
+        )
+        FinancialInsightsEngine.compute(
+            transactions = txs,
+            envelopes = envs,
+            payCycleDay = profile.payCycleDay,
+            todayIso = todayIso,
+            activeWindowOverride = window,
+            previousWindowOverride = prevWindow
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, FinancialInsightsSnapshot())
+
+    /**
+     * Reactive Room FTS4 + multi-criteria exact-centimes search stream driven by [_filterState].
+     * Emits `null` when no filter/search criteria are active so normal cycle browsing remains untouched.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val ftsSearchResultsInternal: StateFlow<List<TransactionItem>?> = _filterState
+        .flatMapLatest { filter ->
+            val criteria = filter.toSearchCriteria()
+            if (!criteria.hasAnyCriteria) {
+                kotlinx.coroutines.flow.flowOf<List<TransactionItem>?>(null)
+            } else {
+                repository.observeSearchTransactions(criteria, currentUserId)
+                    .catch {
+                        if (com.example.BuildConfig.DEBUG) {
+                            Log.w("MasroufiVM", "FTS4 search fallback")
+                        }
+                        emit(emptyList())
+                    }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val searchResults: StateFlow<List<TransactionItem>> = combine(
+        ftsSearchResultsInternal,
+        transactionsFlow
+    ) { ftsMatched, allTxs ->
+        ftsMatched ?: allTxs
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val uiState: StateFlow<DashboardState> = combine(
         combine(profileFlow, _optimisticProfile, transactionsFlow) { p, optP, t -> Triple(optP ?: p, t, Unit) },
         combine(accountsFlow, envelopesFlow, itemsFlow) { a, e, i -> Triple(a, e, i) },
@@ -1094,9 +1184,11 @@ class MasroufiViewModel(
             combine(_pendingWritesCount, _dismissedSubscriptions, _verifiedActiveDates) { pCount, dismissed, verified ->
                 Triple(pCount, dismissed, verified)
             },
-            _forecastHorizon
-        ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs, verifiedDates), horizon ->
-            listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs, verifiedDates, horizon)
+            combine(_forecastHorizon, ftsSearchResultsInternal, financialInsights) { h, fts, ins ->
+                Triple(h, fts, ins)
+            }
+        ) { (c, f, w), (cp, err, hide), (pendingCount, dismissedSubs, verifiedDates), (horizon, ftsList, insightsSnap) ->
+            listOf(c, f, w, cp, err, hide, pendingCount > 0, dismissedSubs, verifiedDates, horizon, ftsList, insightsSnap)
         }
     ) { (profileOpt, txs, _), (accs, envs, finItems), (loans, loanRepayments, recurringRules), extraList ->
         val selCycle = extraList[0] as? String
@@ -1111,6 +1203,10 @@ class MasroufiViewModel(
         @Suppress("UNCHECKED_CAST")
         val verifiedDates = extraList.getOrNull(8) as? Set<String>
         val activeHorizon = (extraList.getOrNull(9) as? ForecastHorizon) ?: ForecastHorizon.ACTIVE_PAY_CYCLE
+        @Suppress("UNCHECKED_CAST")
+        val ftsMatchedList = extraList.getOrNull(10) as? List<TransactionItem>
+        val computedFinancialInsights = (extraList.getOrNull(11) as? FinancialInsightsSnapshot)
+            ?: FinancialInsightsSnapshot()
 
         val profile = profileOpt ?: UserProfile(userId = currentUserId)
         val storedPrefsItem = finItems.find {
@@ -1310,12 +1406,30 @@ class MasroufiViewModel(
                 else -> tx.type == filter.selectedType
             }
             val matchesMin = filter.minAmount == null || tx.amount >= filter.minAmount
-            return matchesQuery && matchesCat && matchesAcc && matchesType && matchesMin
+            val matchesMax = filter.maxAmount == null || tx.amount <= filter.maxAmount
+            val matchesStart = filter.startIsoDate.isNullOrBlank() || tx.isoDate >= filter.startIsoDate
+            val matchesEnd = filter.endIsoDate.isNullOrBlank() || tx.isoDate <= filter.endIsoDate
+            val matchesLoanOnly = !filter.loanLinkedOnly || !tx.loanId.isNullOrBlank()
+            val matchesLoanId = filter.selectedLoanId.isNullOrBlank() || filter.selectedLoanId == "all" ||
+                tx.loanId == filter.selectedLoanId
+            return matchesQuery && matchesCat && matchesAcc && matchesType &&
+                matchesMin && matchesMax && matchesStart && matchesEnd &&
+                matchesLoanOnly && matchesLoanId
         }
 
-        val filteredList = pastOrTodayCycleTxs.filter { matchesFilter(it) }
-        val upcomingList = txs.filter { it.isoDate > todayIso && matchesFilter(it) }
-            .sortedWith(compareBy<TransactionItem> { it.isoDate }.thenByDescending { it.id })
+        val useFtsSqlResults = filter.hasAnyActiveFilter && ftsMatchedList != null
+        val filteredList = if (useFtsSqlResults) {
+            ftsMatchedList!!.filter { it.isoDate <= todayIso }
+        } else {
+            pastOrTodayCycleTxs.filter { matchesFilter(it) }
+        }
+        val upcomingList = if (useFtsSqlResults) {
+            ftsMatchedList!!.filter { it.isoDate > todayIso }
+                .sortedWith(compareBy<TransactionItem> { it.isoDate }.thenByDescending { it.id })
+        } else {
+            txs.filter { it.isoDate > todayIso && matchesFilter(it) }
+                .sortedWith(compareBy<TransactionItem> { it.isoDate }.thenByDescending { it.id })
+        }
 
         val postedOccurrenceKeys = txs.mapNotNull { it.recurringOccurrenceKey?.takeIf(String::isNotBlank) }.toSet()
         val loansById = loans.associateBy { it.id }
@@ -1389,6 +1503,8 @@ class MasroufiViewModel(
             darets = darets,
             seasonals = seasonals,
             smartInsights = smartInsights,
+            financialInsights = computedFinancialInsights,
+            isFtsSearchActive = useFtsSqlResults,
             smartReminders = smartReminders,
             noSpendStreakDays = noSpendStreak,
             monthEndForecastMessage = forecastMsg,
@@ -2414,6 +2530,10 @@ class MasroufiViewModel(
 
     fun updateFilter(update: (FilterState) -> FilterState) {
         _filterState.value = update(_filterState.value)
+    }
+
+    fun clearTransactionFilters() {
+        _filterState.value = FilterState()
     }
 
     fun updateWhatIf(envelopeKey: String, cutPct: Int) {

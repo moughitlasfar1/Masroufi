@@ -367,4 +367,48 @@ object MasroufiDatabaseMigrations {
             }
         }
     }
+
+    /**
+     * Lossless Room v4 -> v5 migration:
+     * 1. Creates external-content FTS4 virtual table `transactions_fts` (`tokenize=unicode61`)
+     *    indexing `transactions` (`desc`, `category`, `envelopeKey`) for fast offline search across
+     *    French accents, Arabic, Darija, and English.
+     * 2. Installs Room's content-sync triggers (`BEFORE UPDATE`, `BEFORE DELETE`, `AFTER UPDATE`,
+     *    `AFTER INSERT`) so every mutation stays strictly synchronized with `transactions_fts`.
+     * 3. Runs `INSERT INTO transactions_fts(transactions_fts) VALUES('rebuild')` to index all
+     *    pre-existing transactions losslessly.
+     */
+    val MIGRATION_4_5: Migration = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS `transactions_fts` USING FTS4(" +
+                    "`desc` TEXT NOT NULL, `category` TEXT NOT NULL, `envelopeKey` TEXT NOT NULL, " +
+                    "tokenize=unicode61, content=`transactions`)"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_transactions_fts_BEFORE_UPDATE " +
+                    "BEFORE UPDATE ON `transactions` BEGIN " +
+                    "DELETE FROM `transactions_fts` WHERE `docid`=OLD.`rowid`; END"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_transactions_fts_BEFORE_DELETE " +
+                    "BEFORE DELETE ON `transactions` BEGIN " +
+                    "DELETE FROM `transactions_fts` WHERE `docid`=OLD.`rowid`; END"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_transactions_fts_AFTER_UPDATE " +
+                    "AFTER UPDATE ON `transactions` BEGIN " +
+                    "INSERT INTO `transactions_fts`(`docid`, `desc`, `category`, `envelopeKey`) " +
+                    "VALUES (NEW.`rowid`, NEW.`desc`, NEW.`category`, NEW.`envelopeKey`); END"
+            )
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_transactions_fts_AFTER_INSERT " +
+                    "AFTER INSERT ON `transactions` BEGIN " +
+                    "INSERT INTO `transactions_fts`(`docid`, `desc`, `category`, `envelopeKey`) " +
+                    "VALUES (NEW.`rowid`, NEW.`desc`, NEW.`category`, NEW.`envelopeKey`); END"
+            )
+            db.execSQL("INSERT INTO `transactions_fts`(`transactions_fts`) VALUES('rebuild')")
+        }
+    }
 }
+

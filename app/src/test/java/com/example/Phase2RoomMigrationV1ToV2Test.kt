@@ -290,7 +290,8 @@ class Phase2RoomMigrationV1ToV2Test {
             .addMigrations(
                 MasroufiDatabase.MIGRATION_1_2,
                 MasroufiDatabase.MIGRATION_2_3,
-                MasroufiDatabase.MIGRATION_3_4
+                MasroufiDatabase.MIGRATION_3_4,
+                MasroufiDatabase.MIGRATION_4_5
             )
             .allowMainThreadQueries()
             .build()

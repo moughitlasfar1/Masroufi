@@ -229,6 +229,7 @@ sealed interface ActiveSheet {
     data object StatementImport : ActiveSheet
     data object DashboardLayout : ActiveSheet
     data class RecurringRuleEditor(val existingRule: com.example.domain.RecurringRuleItem? = null) : ActiveSheet
+    data object FinancialInsightsDetail : ActiveSheet
 }
 
 /**
@@ -1462,6 +1463,9 @@ fun MainFeatureScreen(
                                                 ruleId = occ.rule.id,
                                                 occurrenceIsoDate = occ.occurrenceIsoDate
                                             )
+                                        },
+                                        onOpenFinancialInsights = {
+                                            activeSheet = ActiveSheet.FinancialInsightsDetail
                                         }
                                     )
 
@@ -2001,6 +2005,17 @@ fun MainFeatureScreen(
                     },
                     onDelete = { ruleId ->
                         viewModel.deleteRecurringRule(ruleId)
+                    },
+                    onDismiss = { activeSheet = ActiveSheet.None }
+                )
+
+                ActiveSheet.FinancialInsightsDetail -> com.example.ui.dashboard.FinancialInsightsDetailSheet(
+                    state = state,
+                    onInspectFilter = { filterFn ->
+                        viewModel.updateFilter(filterFn)
+                        scope.launch {
+                            pagerState.animateScrollToPage(3)
+                        }
                     },
                     onDismiss = { activeSheet = ActiveSheet.None }
                 )

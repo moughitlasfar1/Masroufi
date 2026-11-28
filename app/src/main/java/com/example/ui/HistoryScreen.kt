@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Swipe
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -73,6 +74,8 @@ import com.example.data.EnvelopeConfig
 import com.example.data.TransactionItem
 import com.example.domain.AppStrings
 import com.example.domain.PayCycleEngine
+import com.example.ui.dashboard.AdvancedTransactionFilterSheet
+import com.example.ui.dashboard.insightsStringsFor
 import com.example.ui.theme.AccentAmber
 import com.example.ui.theme.AccentCoral
 import com.example.ui.theme.AccentEmerald
@@ -125,10 +128,11 @@ fun HistoryScreen(
         }
     }
 
-    val hasActiveFilter = state.filterState.searchQuery.isNotBlank() ||
-        state.filterState.selectedCategoryKey != "all" ||
-        state.filterState.selectedAccountId != "all"
+    val hasActiveFilter = state.filterState.hasAnyActiveFilter
+    val activeAdvancedCount = state.filterState.activeAdvancedFilterCount
+    val insightsUi = remember(lang) { insightsStringsFor(lang) }
     var searchExpanded by remember { mutableStateOf(hasActiveFilter) }
+    var showAdvancedFilterSheet by remember { mutableStateOf(false) }
     // Tesler's Law single-open accordion: day groups start collapsed with live count + net badges,
     // and auto-expand automatically when a search or filter is active.
     var expandedDayGroupKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -322,6 +326,56 @@ fun HistoryScreen(
                                         selected = state.filterState.selectedAccountId == acc.account.id,
                                         onClick = { onUpdateFilter { it.copy(selectedAccountId = acc.account.id) } },
                                         label = { Text(acc.account.name.take(14), fontSize = 12.sp) }
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilterChip(
+                                    selected = activeAdvancedCount > 0,
+                                    onClick = { showAdvancedFilterSheet = true },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = Icons.Default.Tune,
+                                            contentDescription = insightsUi.filtersBtnLabel,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    },
+                                    label = {
+                                        Text(
+                                            text = if (activeAdvancedCount > 0) {
+                                                "${insightsUi.filtersBtnLabel} ($activeAdvancedCount)"
+                                            } else {
+                                                insightsUi.filtersBtnLabel
+                                            },
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("history_advanced_filters_btn")
+                                )
+                                if (hasActiveFilter) {
+                                    FilterChip(
+                                        selected = false,
+                                        onClick = { onUpdateFilter { FilterState() } },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = insightsUi.clearFiltersLabel,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = insightsUi.clearFiltersLabel,
+                                                fontSize = 12.sp
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("history_clear_filters_btn")
                                     )
                                 }
                             }
@@ -659,6 +713,15 @@ fun HistoryScreen(
                 Spacer(modifier = Modifier.height(88.dp))
             }
         }
+    }
+
+    if (showAdvancedFilterSheet) {
+        AdvancedTransactionFilterSheet(
+            state = state,
+            onApplyFilter = onUpdateFilter,
+            onResetAll = { onUpdateFilter { FilterState() } },
+            onDismiss = { showAdvancedFilterSheet = false }
+        )
     }
 }
 

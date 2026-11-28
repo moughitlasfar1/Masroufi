@@ -85,6 +85,129 @@ interface MasroufiDao {
     @Query("SELECT COUNT(*) FROM transactions WHERE userId = :userId")
     suspend fun countTransactions(userId: String): Int
 
+    // --- Phase 7A: Room FTS4 + Multi-Criteria Exact-Centimes Search ---
+    @Query(
+        """
+        SELECT t.* FROM transactions t
+        JOIN transactions_fts ON t.rowid = transactions_fts.docid
+        WHERE t.userId = :userId
+          AND transactions_fts MATCH :ftsQuery
+          AND (:startIsoDate IS NULL OR t.isoDate >= :startIsoDate)
+          AND (:endIsoDate IS NULL OR t.isoDate <= :endIsoDate)
+          AND (:minAmountCentimes IS NULL OR t.amountCentimes >= :minAmountCentimes)
+          AND (:maxAmountCentimes IS NULL OR t.amountCentimes <= :maxAmountCentimes)
+          AND (:accountId IS NULL OR t.accountId = :accountId OR t.toAccountId = :accountId)
+          AND (:envelopeKey IS NULL OR t.envelopeKey = :envelopeKey)
+          AND (:txType IS NULL OR (:txType = 'transfer' AND t.type IN ('transfer', 'transfer_out', 'transfer_in')) OR t.type = :txType)
+          AND (:loanId IS NULL OR t.loanId = :loanId)
+          AND (:loanLinkedOnly = 0 OR (t.loanId IS NOT NULL AND t.loanId != ''))
+        ORDER BY t.isoDate DESC, t.createdAtEpochMs DESC
+        """
+    )
+    fun observeSearchTransactionsWithFts(
+        userId: String,
+        ftsQuery: String,
+        startIsoDate: String?,
+        endIsoDate: String?,
+        minAmountCentimes: Long?,
+        maxAmountCentimes: Long?,
+        accountId: String?,
+        envelopeKey: String?,
+        txType: String?,
+        loanId: String?,
+        loanLinkedOnly: Boolean
+    ): Flow<List<TransactionEntity>>
+
+    @Query(
+        """
+        SELECT t.* FROM transactions t
+        JOIN transactions_fts ON t.rowid = transactions_fts.docid
+        WHERE t.userId = :userId
+          AND transactions_fts MATCH :ftsQuery
+          AND (:startIsoDate IS NULL OR t.isoDate >= :startIsoDate)
+          AND (:endIsoDate IS NULL OR t.isoDate <= :endIsoDate)
+          AND (:minAmountCentimes IS NULL OR t.amountCentimes >= :minAmountCentimes)
+          AND (:maxAmountCentimes IS NULL OR t.amountCentimes <= :maxAmountCentimes)
+          AND (:accountId IS NULL OR t.accountId = :accountId OR t.toAccountId = :accountId)
+          AND (:envelopeKey IS NULL OR t.envelopeKey = :envelopeKey)
+          AND (:txType IS NULL OR (:txType = 'transfer' AND t.type IN ('transfer', 'transfer_out', 'transfer_in')) OR t.type = :txType)
+          AND (:loanId IS NULL OR t.loanId = :loanId)
+          AND (:loanLinkedOnly = 0 OR (t.loanId IS NOT NULL AND t.loanId != ''))
+        ORDER BY t.isoDate DESC, t.createdAtEpochMs DESC
+        """
+    )
+    suspend fun searchTransactionsWithFts(
+        userId: String,
+        ftsQuery: String,
+        startIsoDate: String?,
+        endIsoDate: String?,
+        minAmountCentimes: Long?,
+        maxAmountCentimes: Long?,
+        accountId: String?,
+        envelopeKey: String?,
+        txType: String?,
+        loanId: String?,
+        loanLinkedOnly: Boolean
+    ): List<TransactionEntity>
+
+    @Query(
+        """
+        SELECT t.* FROM transactions t
+        WHERE t.userId = :userId
+          AND (:startIsoDate IS NULL OR t.isoDate >= :startIsoDate)
+          AND (:endIsoDate IS NULL OR t.isoDate <= :endIsoDate)
+          AND (:minAmountCentimes IS NULL OR t.amountCentimes >= :minAmountCentimes)
+          AND (:maxAmountCentimes IS NULL OR t.amountCentimes <= :maxAmountCentimes)
+          AND (:accountId IS NULL OR t.accountId = :accountId OR t.toAccountId = :accountId)
+          AND (:envelopeKey IS NULL OR t.envelopeKey = :envelopeKey)
+          AND (:txType IS NULL OR (:txType = 'transfer' AND t.type IN ('transfer', 'transfer_out', 'transfer_in')) OR t.type = :txType)
+          AND (:loanId IS NULL OR t.loanId = :loanId)
+          AND (:loanLinkedOnly = 0 OR (t.loanId IS NOT NULL AND t.loanId != ''))
+        ORDER BY t.isoDate DESC, t.createdAtEpochMs DESC
+        """
+    )
+    fun observeSearchTransactionsFiltered(
+        userId: String,
+        startIsoDate: String?,
+        endIsoDate: String?,
+        minAmountCentimes: Long?,
+        maxAmountCentimes: Long?,
+        accountId: String?,
+        envelopeKey: String?,
+        txType: String?,
+        loanId: String?,
+        loanLinkedOnly: Boolean
+    ): Flow<List<TransactionEntity>>
+
+    @Query(
+        """
+        SELECT t.* FROM transactions t
+        WHERE t.userId = :userId
+          AND (:startIsoDate IS NULL OR t.isoDate >= :startIsoDate)
+          AND (:endIsoDate IS NULL OR t.isoDate <= :endIsoDate)
+          AND (:minAmountCentimes IS NULL OR t.amountCentimes >= :minAmountCentimes)
+          AND (:maxAmountCentimes IS NULL OR t.amountCentimes <= :maxAmountCentimes)
+          AND (:accountId IS NULL OR t.accountId = :accountId OR t.toAccountId = :accountId)
+          AND (:envelopeKey IS NULL OR t.envelopeKey = :envelopeKey)
+          AND (:txType IS NULL OR (:txType = 'transfer' AND t.type IN ('transfer', 'transfer_out', 'transfer_in')) OR t.type = :txType)
+          AND (:loanId IS NULL OR t.loanId = :loanId)
+          AND (:loanLinkedOnly = 0 OR (t.loanId IS NOT NULL AND t.loanId != ''))
+        ORDER BY t.isoDate DESC, t.createdAtEpochMs DESC
+        """
+    )
+    suspend fun searchTransactionsFiltered(
+        userId: String,
+        startIsoDate: String?,
+        endIsoDate: String?,
+        minAmountCentimes: Long?,
+        maxAmountCentimes: Long?,
+        accountId: String?,
+        envelopeKey: String?,
+        txType: String?,
+        loanId: String?,
+        loanLinkedOnly: Boolean
+    ): List<TransactionEntity>
+
     // --- Envelopes ---
     @Query("SELECT * FROM envelopes WHERE userId = :userId ORDER BY createdAtEpochMs ASC")
     fun observeEnvelopes(userId: String): Flow<List<EnvelopeEntity>>

@@ -1,6 +1,8 @@
 package com.example.data.local
 
 import androidx.room.Entity
+import androidx.room.Fts4
+import androidx.room.FtsOptions
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
@@ -243,3 +245,19 @@ data class RecurringRuleEntity(
     val createdAtEpochMs: Long = 0L,
     val updatedAtEpochMs: Long = 0L
 )
+
+/**
+ * Room v5 external-content FTS4 virtual table indexing [TransactionEntity] text columns
+ * with SQLite's `unicode61` tokenizer (handling French accents, Arabic, Darija, and English).
+ */
+@Fts4(
+    contentEntity = TransactionEntity::class,
+    tokenizer = FtsOptions.TOKENIZER_UNICODE61
+)
+@Entity(tableName = "transactions_fts")
+data class TransactionFtsEntity(
+    val desc: String,
+    val category: String,
+    val envelopeKey: String
+)
+

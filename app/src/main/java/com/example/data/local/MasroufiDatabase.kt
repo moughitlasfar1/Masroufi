@@ -27,9 +27,10 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         ImportMetadataEntity::class,
         LoanEntity::class,
         LoanRepaymentEntity::class,
-        RecurringRuleEntity::class
+        RecurringRuleEntity::class,
+        TransactionFtsEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = true
 )
 abstract class MasroufiDatabase : RoomDatabase() {
@@ -257,6 +258,8 @@ abstract class MasroufiDatabase : RoomDatabase() {
         val MIGRATION_2_3: Migration = MasroufiDatabaseMigrations.MIGRATION_2_3
 
         val MIGRATION_3_4: Migration = MasroufiDatabaseMigrations.MIGRATION_3_4
+
+        val MIGRATION_4_5: Migration = MasroufiDatabaseMigrations.MIGRATION_4_5
     }
 }
 
@@ -367,7 +370,8 @@ object MasroufiDatabaseProvider {
             ).addMigrations(
                 MasroufiDatabase.MIGRATION_1_2,
                 MasroufiDatabase.MIGRATION_2_3,
-                MasroufiDatabase.MIGRATION_3_4
+                MasroufiDatabase.MIGRATION_3_4,
+                MasroufiDatabase.MIGRATION_4_5
             )
             if (customFactory != null) {
                 passphrase.fill(0)

@@ -744,6 +744,82 @@ class RoomMasroufiRepository(
         return postedCount
     }
 
+    // --- Phase 7A: Room FTS4 + Multi-Criteria Exact-Centimes Search ---
+
+    override fun observeSearchTransactions(
+        criteria: com.example.domain.TransactionSearchCriteria,
+        userId: String
+    ): Flow<List<TransactionItem>> {
+        val uid = requireUserId(userId)
+        val ftsMatch = com.example.domain.FtsQuerySanitizer.buildFtsMatchExpression(criteria.query)
+        val flow = if (ftsMatch != null) {
+            dao.observeSearchTransactionsWithFts(
+                userId = uid,
+                ftsQuery = ftsMatch,
+                startIsoDate = criteria.normalizedStartIso,
+                endIsoDate = criteria.normalizedEndIso,
+                minAmountCentimes = criteria.minAmountCentimes,
+                maxAmountCentimes = criteria.maxAmountCentimes,
+                accountId = criteria.normalizedAccountId,
+                envelopeKey = criteria.normalizedEnvelopeKey,
+                txType = criteria.normalizedType,
+                loanId = criteria.normalizedLoanId,
+                loanLinkedOnly = criteria.loanLinkedOnly
+            )
+        } else {
+            dao.observeSearchTransactionsFiltered(
+                userId = uid,
+                startIsoDate = criteria.normalizedStartIso,
+                endIsoDate = criteria.normalizedEndIso,
+                minAmountCentimes = criteria.minAmountCentimes,
+                maxAmountCentimes = criteria.maxAmountCentimes,
+                accountId = criteria.normalizedAccountId,
+                envelopeKey = criteria.normalizedEnvelopeKey,
+                txType = criteria.normalizedType,
+                loanId = criteria.normalizedLoanId,
+                loanLinkedOnly = criteria.loanLinkedOnly
+            )
+        }
+        return flow.map { list -> list.map { it.toDomain() } }
+    }
+
+    override suspend fun searchTransactions(
+        criteria: com.example.domain.TransactionSearchCriteria,
+        userId: String
+    ): List<TransactionItem> {
+        val uid = requireUserId(userId)
+        val ftsMatch = com.example.domain.FtsQuerySanitizer.buildFtsMatchExpression(criteria.query)
+        val entities = if (ftsMatch != null) {
+            dao.searchTransactionsWithFts(
+                userId = uid,
+                ftsQuery = ftsMatch,
+                startIsoDate = criteria.normalizedStartIso,
+                endIsoDate = criteria.normalizedEndIso,
+                minAmountCentimes = criteria.minAmountCentimes,
+                maxAmountCentimes = criteria.maxAmountCentimes,
+                accountId = criteria.normalizedAccountId,
+                envelopeKey = criteria.normalizedEnvelopeKey,
+                txType = criteria.normalizedType,
+                loanId = criteria.normalizedLoanId,
+                loanLinkedOnly = criteria.loanLinkedOnly
+            )
+        } else {
+            dao.searchTransactionsFiltered(
+                userId = uid,
+                startIsoDate = criteria.normalizedStartIso,
+                endIsoDate = criteria.normalizedEndIso,
+                minAmountCentimes = criteria.minAmountCentimes,
+                maxAmountCentimes = criteria.maxAmountCentimes,
+                accountId = criteria.normalizedAccountId,
+                envelopeKey = criteria.normalizedEnvelopeKey,
+                txType = criteria.normalizedType,
+                loanId = criteria.normalizedLoanId,
+                loanLinkedOnly = criteria.loanLinkedOnly
+            )
+        }
+        return entities.map { it.toDomain() }
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,

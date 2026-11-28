@@ -150,6 +150,17 @@ interface MasroufiDataSource {
         userId: String = requireUserId()
     ): Int = 0
 
+    // --- Phase 7A: Room FTS4 + Multi-Criteria Search ---
+    fun observeSearchTransactions(
+        criteria: com.example.domain.TransactionSearchCriteria,
+        userId: String = requireUserId()
+    ): Flow<List<TransactionItem>> = observeTransactions(userId)
+
+    suspend fun searchTransactions(
+        criteria: com.example.domain.TransactionSearchCriteria,
+        userId: String = requireUserId()
+    ): List<TransactionItem> = emptyList()
+
     suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,

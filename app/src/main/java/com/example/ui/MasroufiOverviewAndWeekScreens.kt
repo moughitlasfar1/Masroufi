@@ -81,6 +81,7 @@ import com.example.domain.SmartReminder
 import com.example.ui.dashboard.CashFlowForecastCard
 import com.example.ui.dashboard.DashboardHeroCard
 import com.example.ui.dashboard.DashboardRecentTransactions
+import com.example.ui.dashboard.FinancialInsightsDashboardCard
 import com.example.ui.dashboard.UpcomingRecurringCard
 import com.example.ui.theme.CardTier
 import com.example.ui.theme.ExpressiveAccordionCard
@@ -279,7 +280,8 @@ fun OverviewScreen(
     onSetForecastHorizon: (ForecastHorizon) -> Unit = {},
     onOpenRecurringRuleEditor: (RecurringRuleItem?) -> Unit = {},
     onPostRecurringOccurrence: (RecurringOccurrence) -> Unit = {},
-    onSkipRecurringOccurrence: (RecurringOccurrence) -> Unit = {}
+    onSkipRecurringOccurrence: (RecurringOccurrence) -> Unit = {},
+    onOpenFinancialInsights: () -> Unit = {}
 ) {
     val cur = state.customPrefs.currencySymbol.ifBlank { "DH" }
     val lang = state.profile.language
@@ -707,44 +709,22 @@ fun OverviewScreen(
                     }
                 }
 
-                "insights" -> if (state.smartInsights.isNotEmpty()) {
+                "insights" -> if (
+                    state.financialInsights.hasEnoughHistory ||
+                    state.financialInsights.hasAnyAlerts ||
+                    state.smartInsights.isNotEmpty()
+                ) {
                     item(key = "home_section_insights") {
-                        ExpressiveGlassCard(
-                            cornerRadius = 26.dp,
-                            accentRimColor = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("dashboard_insights_card")
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Lightbulb,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = dashboardSectionLabel("insights", lang),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                state.smartInsights.forEach { insight ->
-                                    Text(
-                                        text = "${insight.title} — ${insight.body}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
+                        FinancialInsightsDashboardCard(
+                            snapshot = state.financialInsights,
+                            smartInsights = state.smartInsights,
+                            envelopes = state.envelopes.map { it.config },
+                            currency = cur,
+                            lang = lang,
+                            isDark = isDark,
+                            hideAmounts = hide,
+                            onOpenDetail = onOpenFinancialInsights
+                        )
                     }
                 }
 

@@ -405,6 +405,21 @@ class LocalRoomMasroufiDataSource(
         return requireOpenRepo()?.processDueAutoPostRules(todayIso, userId) ?: 0
     }
 
+    override fun observeSearchTransactions(
+        criteria: com.example.domain.TransactionSearchCriteria,
+        userId: String
+    ): Flow<List<TransactionItem>> =
+        MasroufiDatabaseProvider.dbGeneration.flatMapLatest {
+            currentOpenRepoOrNull()?.observeSearchTransactions(criteria, userId) ?: flowOf(emptyList())
+        }
+
+    override suspend fun searchTransactions(
+        criteria: com.example.domain.TransactionSearchCriteria,
+        userId: String
+    ): List<TransactionItem> {
+        return requireOpenRepo()?.searchTransactions(criteria, userId) ?: emptyList()
+    }
+
     override suspend fun restoreFullBackupAtomically(
         profile: UserProfile?,
         customPrefsItem: FinancialItem?,
