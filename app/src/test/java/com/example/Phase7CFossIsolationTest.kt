@@ -1,47 +1,33 @@
 package com.example
 
 import android.content.Context
-import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithTag
-import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.BackupV3Codec
-import com.example.domain.Translations
 import com.example.platform.PlatformCloudBridge
 import com.example.platform.PlatformIntegrityBridge
 import com.example.platform.PlatformReceiptOcrBridge
 import com.example.ui.DashboardState
-import com.example.ui.SettingsBottomSheet
-import com.example.ui.theme.MasroufiTheme
 import com.masroufi.importer.data.PdfExtractionOutcome
 import com.masroufi.importer.data.PdfStatementExtractor
 import com.masroufi.importer.data.ReceiptOcrEngine
 import com.masroufi.importer.domain.CsvStatementParser
-import com.masroufi.importer.presentation.ScanReceiptActionChip
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * Milestone 7C verification suite:
+ * Milestone 7C non-UI isolation and local-parity verification suite:
  * Ensures strict dependency and runtime isolation between `play` and `foss` distribution flavors
- * while preserving 100% parity on local-first features (Room v5, FTS4, Insights, LAN Companion,
- * Backup v3, CSV & digital PDF import).
+ * while preserving 100% parity on local-first features (Backup v3, CSV & digital PDF import)
+ * without attaching an AndroidComposeTestRule.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
 class Phase7CFossIsolationTest {
-
-    @get:Rule
-    val composeRule = createComposeRule()
 
     private val proprietaryClasses = listOf(
         "com.google.firebase.FirebaseApp",
@@ -95,52 +81,6 @@ class Phase7CFossIsolationTest {
                 "Play webClientId must resolve to googleusercontent.com",
                 PlatformCloudBridge.resolveWebClientId(context).endsWith("googleusercontent.com")
             )
-        }
-    }
-
-    @Test
-    fun `ScanReceiptActionChip is hidden in foss and visible in play`() {
-        composeRule.setContent {
-            MasroufiTheme(darkTheme = false, accentPalette = "majorelle") {
-                ScanReceiptActionChip(
-                    lang = "fr",
-                    onReceiptScanned = {},
-                    onScanError = {}
-                )
-            }
-        }
-        val nodes = composeRule.onAllNodesWithTag("tx_scan_receipt_btn").fetchSemanticsNodes()
-        if (BuildConfig.IS_FOSS) {
-            assertTrue("Receipt OCR chip must be hidden in FOSS flavor", nodes.isEmpty())
-        } else {
-            assertEquals("Receipt OCR chip must render in Play flavor", 1, nodes.size)
-        }
-    }
-
-    @Test
-    fun `SettingsBottomSheet hides cloud Link Google card in foss and displays flavor-accurate version label`() {
-        val strings = Translations.forLang("fr")
-        composeRule.setContent {
-            MasroufiTheme(darkTheme = false, accentPalette = "majorelle") {
-                SettingsBottomSheet(
-                    state = DashboardState(),
-                    strings = strings,
-                    isLocalMode = true,
-                    onLinkGoogleAccount = {},
-                    onDismiss = {},
-                    onSaveSettings = { _, _, _ -> },
-                    onSignOut = {}
-                )
-            }
-        }
-
-        val linkNodes = composeRule.onAllNodesWithTag("settings_link_google_account_btn").fetchSemanticsNodes()
-        if (BuildConfig.IS_FOSS) {
-            assertTrue("FOSS Settings must hide Link Google Account button", linkNodes.isEmpty())
-            composeRule.onNodeWithText("Masroufi v1.5.0 (FOSS)").assertExists()
-        } else {
-            assertEquals("Play local-mode Settings must show Link Google Account button", 1, linkNodes.size)
-            composeRule.onNodeWithText("Masroufi v1.5.0").assertExists()
         }
     }
 

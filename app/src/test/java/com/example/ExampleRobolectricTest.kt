@@ -920,9 +920,13 @@ class ExampleRobolectricTest {
                 activity.setContent {
                     MainFeatureScreen(currentUserId = "u_test_123")
                 }
-                org.robolectric.shadows.ShadowLooper.runUiThreadTasksIncludingDelayedTasks()
+                org.robolectric.shadows.ShadowLooper.idleMainLooper()
+                // Detach ComposeView before destroying Activity so WindowRecomposer cancels cleanly
+                activity.findViewById<android.view.ViewGroup>(android.R.id.content)?.removeAllViews()
             }
         } finally {
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            runCatching { com.example.data.local.MasroufiDatabaseProvider.resetForTesting() }
             if (com.example.platform.PlatformCloudBridge.isCloudSupported) {
                 runCatching {
                     val firebaseAppClass = Class.forName("com.google.firebase.FirebaseApp")
