@@ -76,6 +76,14 @@ android {
     includeInApk = false
     includeInBundle = true
   }
+  packaging {
+    resources {
+      excludes += setOf(
+        "META-INF/INDEX.LIST",
+        "META-INF/io.netty.versions.properties"
+      )
+    }
+  }
 }
 
 ksp {
@@ -157,6 +165,8 @@ dependencies {
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.mlkit.text.recognition)
   implementation(libs.pdfbox.android)
+  implementation(libs.ktor.server.core)
+  implementation(libs.ktor.server.cio)
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   // implementation(libs.okhttp)

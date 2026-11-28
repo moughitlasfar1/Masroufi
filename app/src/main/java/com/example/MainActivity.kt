@@ -230,6 +230,7 @@ sealed interface ActiveSheet {
     data object DashboardLayout : ActiveSheet
     data class RecurringRuleEditor(val existingRule: com.example.domain.RecurringRuleItem? = null) : ActiveSheet
     data object FinancialInsightsDetail : ActiveSheet
+    data object LanCompanion : ActiveSheet
 }
 
 /**
@@ -1895,6 +1896,9 @@ fun MainFeatureScreen(
                     onOpenBankDetections = {
                         activeSheet = ActiveSheet.BankDetections
                     },
+                    onOpenLanCompanion = {
+                        activeSheet = ActiveSheet.LanCompanion
+                    },
                     onSignOut = {
                         setLocalModeEnabled(context, false)
                         signOutUser(
@@ -2015,6 +2019,19 @@ fun MainFeatureScreen(
                         viewModel.updateFilter(filterFn)
                         scope.launch {
                             pagerState.animateScrollToPage(3)
+                        }
+                    },
+                    onDismiss = { activeSheet = ActiveSheet.None }
+                )
+
+                ActiveSheet.LanCompanion -> com.example.ui.LanCompanionBottomSheet(
+                    state = state,
+                    currentUserId = currentUserId,
+                    onCopyUrl = { url, copiedMsg ->
+                        val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText("Masroufi LAN URL", url))
+                        scope.launch {
+                            snackbarHostState.showSnackbar(copiedMsg)
                         }
                     },
                     onDismiss = { activeSheet = ActiveSheet.None }

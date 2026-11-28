@@ -73,6 +73,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.BuildConfig
 import com.example.data.CustomizationPrefs
 import com.example.domain.AppStrings
@@ -116,6 +117,7 @@ fun SettingsBottomSheet(
     onExportCsvFile: () -> Unit = {},
     onOpenRestoreModal: () -> Unit = {},
     onOpenBankDetections: () -> Unit = {},
+    onOpenLanCompanion: () -> Unit = {},
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
@@ -1097,6 +1099,26 @@ fun SettingsBottomSheet(
                             } else {
                                 strings.bankDetectSectionTitle
                             },
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    // Phase 7B: Local LAN Companion (opt-in Wi-Fi web companion, off by default)
+                    val lanState by com.example.lan.LanCompanionController.state.collectAsStateWithLifecycle()
+                    val lanStrings = remember(lang) { lanCompanionStringsFor(lang) }
+                    FilledTonalButton(
+                        onClick = {
+                            onDismiss()
+                            onOpenLanCompanion()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_open_lan_companion_btn")
+                    ) {
+                        val badge = if (lanState.isRunning) lanStrings.statusOn else lanStrings.statusOff
+                        Text(
+                            text = "${lanStrings.title} · $badge",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold
                         )

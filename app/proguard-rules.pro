@@ -99,3 +99,12 @@
 -keep class com.google.mlkit.vision.text.** { *; }
 -dontwarn com.google.mlkit.vision.text.**
 
+# Phase 7B: Embedded Local LAN Companion (Ktor CIO + Foreground Service)
+-keep class com.example.lan.LanCompanionService { *; }
+-keep class io.ktor.server.cio.** { *; }
+-keep class io.ktor.network.** { *; }
+-dontwarn io.ktor.**
+-dontwarn org.slf4j.**
+-dontwarn java.lang.management.**
+
+

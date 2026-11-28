@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="fr" dir="ltr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Masroufi · Local LAN Companion</title>
+  <link rel="stylesheet" href="/app.css" />
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <strong id="brandTitle">Masroufi LAN</strong>
+    </div>
+    <div class="topbar-actions">
+      <button id="themeToggleBtn" type="button" class="btn-ghost"></button>
+      <button id="logoutBtn" type="button" class="btn-danger hidden"></button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="authCard" class="card auth-card">
+      <h1 id="authHeading"></h1>
+      <p id="authSub" class="muted"></p>
+      <form id="loginForm" class="stack" autocomplete="off">
+        <label for="pinInput" id="pinLabel"></label>
+        <input id="pinInput" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="••••••" />
+        <button id="unlockBtn" type="submit" class="btn-primary"></button>
+      </form>
+      <p id="authError" class="error hidden" role="alert"></p>
+    </section>
+
+    <section id="appShell" class="hidden">
+      <nav id="navTabs" class="tabs" role="tablist">
+        <button type="button" class="tab active" data-tab="dashboard" id="tabDashboard"></button>
+        <button type="button" class="tab" data-tab="accounts" id="tabAccounts"></button>
+        <button type="button" class="tab" data-tab="loans" id="tabLoans"></button>
+        <button type="button" class="tab" data-tab="recurring" id="tabRecurring"></button>
+        <button type="button" class="tab" data-tab="search" id="tabSearch"></button>
+      </nav>
+
+      <div id="toastBanner" class="toast hidden" role="status"></div>
+
+      <section id="panel-dashboard" class="panel"></section>
+      <section id="panel-accounts" class="panel hidden"></section>
+      <section id="panel-loans" class="panel hidden"></section>
+      <section id="panel-recurring" class="panel hidden"></section>
+      <section id="panel-search" class="panel hidden"></section>
+    </section>
+  </main>
+</body>
+</html>
